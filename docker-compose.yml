@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  postgres-paylure:
+    image: postgres:15
+    container_name: postgres-paylure
+    ports:
+      - "5433:5432" # Expõe o banco na porta 5433 da sua máquina
+    environment:
+      POSTGRES_USER: paylure_user
+      POSTGRES_PASSWORD: paylure_password
+      POSTGRES_DB: paylure_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

@@ -1,0 +1,57 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Modelo de Usuário (O Dono da Conta)
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  merchant  Merchant? // 1 User pode ter 1 Merchant
+}
+
+// Modelo de Lojista (A Loja)
+model Merchant {
+  id        String   @id @default(uuid())
+  storeName String
+  cnpj      String   @unique
+  logoUrl   String?
+  pixKey    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String   @unique // 1 Loja pertence a 1 Usuário
+
+  // 1. A LIGAÇÃO: 1 Loja pode ter VÁRIOS links de pagamento
+  paymentLinks PaymentLink[]
+}
+
+// 2. NOSSO NOVO MODELO (O Link de Pagamento)
+model PaymentLink {
+  id        String   @id @default(uuid())
+  title     String // Ex: "E-book de Finanças"
+
+  // Vamos salvar o valor em CENTAVOS para evitar problemas com vírgula.
+  // Ex: R$ 10,00 será salvo como 1000
+  amount    Int      
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 3. A "CHAVE ESTRANGEIRA" (A LIGAÇÃO DE VOLTA)
+  // Diz que este link pertence a UMA loja (Merchant)
+  merchant    Merchant @relation(fields: [merchantId], references: [id])
+  merchantId  String
+}

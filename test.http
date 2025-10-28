@@ -1,0 +1,42 @@
+### @name registerUser
+# Envia uma requisição para cadastrar um novo usuário
+POST http://localhost:3000/auth/register
+Content-Type: application/json
+
+{
+  "name": "Braz Teste",
+  "email": "teste123@paylure.com",
+  "password": "senhaForte123"
+}
+
+### -------------------------------------------
+### @name loginSuccess
+# Teste de LOGIN COM SUCESSO
+POST http://localhost:3000/auth/login
+Content-Type: application/json
+
+{
+  "email": "teste123@paylure.com",
+  "password": "senhaForte123"
+}
+
+### -------------------------------------------
+### @name getMeSuccess
+# Teste para "Pegar meus dados" (GET /auth/me)
+GET http://localhost:3000/auth/me
+# ATENÇÃO: COPIE E COLE O TOKEN DO LOGIN MANUALMENTE AQUI
+Authorization: Bearer [COLE_SEU_TOKEN_AQUI]
+
+
+### -------------------------------------------
+### @name createMerchant
+# Teste para CRIAR UMA LOJA (POST /merchant)
+POST http://localhost:3000/merchant
+Content-Type: application/json
+# ATENÇÃO: COPIE E COLE O MESMO TOKEN DO LOGIN AQUI
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZTNlOTYyNS1lZDA0LTQ5NTktYjVkNy1iYjBhODU0NjVjZGIiLCJlbWFpbCI6InRlc3RlMTIzQHBheWx1cmUuY29tIiwibmFtZSI6IkJyYXogVGVzdGUiLCJpYXQiOjE3NjE2MjIwOTAsImV4cCI6MTc2MTcwODQ5MH0.ff106XR-P7YbHEhZfSMqb07LfJ8BUN9RVkEnWC7qVBw
+
+{
+  "storeName": "Loja do Braz",
+  "cnpj": "12.345.678/0001-99"
+}
