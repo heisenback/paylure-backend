@@ -10,7 +10,7 @@ COPY package*.json ./
 # Copiar a pasta prisma inteira
 COPY prisma ./prisma/
 
-# Instalar TODAS as dependências (incluindo dev), pode demorar mais
+# Instalar TODAS as dependências (incluindo dev)
 RUN npm install --legacy-peer-deps
 
 # Copiar o resto do código-fonte
@@ -18,6 +18,10 @@ COPY . .
 
 # Rodar o comando de build (cria a pasta /dist)
 RUN npm run build
+
+# === TESTE: MOSTRAR O CONTEÚDO DA PASTA /dist ===
+RUN echo "Conteúdo da pasta dist:" && ls -la dist || echo "Pasta dist NÃO encontrada!"
+# ===============================================
 
 # Rodar o prisma generate DEPOIS do build e da cópia
 RUN npx prisma generate
