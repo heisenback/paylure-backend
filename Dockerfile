@@ -1,26 +1,21 @@
-# Usar a imagem oficial do Node.js Alpine
-FROM node:20-alpine
-
-# Definir o diretório de trabalho
+# FASE DE BUILD (builder) - Cria o /dist
+FROM node:20-alpine AS builder
 WORKDIR /usr/src/app
-
-# Copiar package.json e package-lock.json
 COPY package*.json ./
-
-# Copiar a pasta prisma inteira
 COPY prisma ./prisma/
-
-# Instalar TODAS as dependências (incluindo dev)
 RUN npm install --legacy-peer-deps
-
-# Copiar o resto do código-fonte
 COPY . .
-
-# Rodar o comando de build (cria a pasta /dist)
 RUN npm run build
 
-# Expor a porta 3000
-EXPOSE 3000
+# FASE DE PRODUÇÃO (production) - Onde a API roda
+FROM node:20-alpine AS production
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm install --omit=dev --legacy-peer-deps
+COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/prisma ./prisma
+COPY --from=builder /usr/src/app/node_modules/.prisma/ ./node_modules/.prisma/
+COPY --from=builder /usr/src/app/node_modules/prisma/ ./node_modules/prisma/
 
-# Comando de inicialização: PREPARA O PRISMA E SÓ DEPOIS LIGA A API
-CMD ["sh", "-c", "npx prisma generate && npx prisma migrate deploy && node dist/main.js"]
+# Comando de inicialização: APENAS LIGA A API
+CMD [ "node", "dist/main.js" ]
