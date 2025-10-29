@@ -1,17 +1,29 @@
-# ---------- Etapa base ----------
-FROM node:22-alpine AS base
-WORKDIR /app
+# Usar a imagem oficial do Node.js Alpine
+FROM node:20-alpine
 
-# Copia apenas arquivos de dependências
+# Definir o diretório de trabalho
+WORKDIR /usr/src/app
+
+# Copiar package.json e package-lock.json
 COPY package*.json ./
 
-# Instala o Nest CLI e as dependências do projeto
-RUN npm install -g @nestjs/cli && npm install
+# Copiar a pasta prisma inteira
+COPY prisma ./prisma/
 
-# ---------- Etapa de build ----------
+# Instalar TODAS as dependências (incluindo dev), pode demorar mais
+RUN npm install --legacy-peer-deps
+
+# Copiar o resto do código-fonte
 COPY . .
+
+# Rodar o comando de build (cria a pasta /dist)
 RUN npm run build
 
-# ---------- Etapa final ----------
+# Rodar o prisma generate DEPOIS do build e da cópia
+RUN npx prisma generate
+
+# Expor a porta 3000
 EXPOSE 3000
-CMD ["npm", "run", "start:prod"]
+
+# Comando de inicialização: APENAS LIGA A API
+CMD [ "node", "dist/main.js" ]
