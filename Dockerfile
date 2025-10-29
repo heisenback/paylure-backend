@@ -28,4 +28,4 @@ COPY --from=builder /usr/src/app/dist ./dist
 # Comando de inicialização
 # 1. Roda as migrations (seus logs mostram que isso está rodando)
 # 2. Inicia a aplicação (usando o comando exato do seu package.json)
-CMD sh -c "npx prisma migrate deploy && node dist/main"
+CMD sh -c "npx prisma migrate deploy && node dist/main.js"
