@@ -1,18 +1,17 @@
 # ---------- Etapa base ----------
-FROM node:22-alpine
+FROM node:22-alpine AS base
 WORKDIR /app
 
 # Copia apenas arquivos de dependências
 COPY package*.json ./
 
-# Instala dependências + tsx
-RUN npm install && npm install -g tsx
+# Instala o Nest CLI e as dependências do projeto
+RUN npm install -g @nestjs/cli && npm install
 
-# Copia o restante do código
+# ---------- Etapa de build ----------
 COPY . .
+RUN npm run build
 
-# Exposição da porta
+# ---------- Etapa final ----------
 EXPOSE 3000
-
-# Comando para rodar direto o TypeScript
-CMD ["tsx", "src/main.ts"]
+CMD ["npm", "run", "start:prod"]
