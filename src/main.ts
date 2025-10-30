@@ -19,11 +19,12 @@ async function bootstrap() {
   
   // 3. CONFIGURAÇÃO DE CORS (O Ajuste Crítico de Segurança e Conexão)
   
-  // 🚨 CORRIGIDO: Agora usando seu domínio real do Vercel!
+  // 🚨 AJUSTE: Incluímos portas locais adicionais para o teste (3000, 3001, 4000)
   const allowedOrigins = [
-      'https://paylure.vercel.app', // <--- SEU DOMÍNIO VERCEL CORRIGIDO!
-      'http://localhost:3000',      // Dev local do Backend
-      'http://localhost:3001'       // Dev local do Frontend (ou a porta que você usa)
+      'https://paylure.vercel.app', // Mantido para quando o Vercel estiver pronto para HTTPS
+      'http://localhost:3000',      // Dev local comum
+      'http://localhost:3001',      // Dev local Next.js padrão
+      'http://localhost:4000',      // Outra porta comum de dev
   ];
 
   app.enableCors({
