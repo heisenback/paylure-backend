@@ -1,30 +1,41 @@
-# Usar a imagem oficial do Node.js Alpine
-FROM node:20-alpine
+# ----------------------------------------------------
+# 1. FASE DE BUILD (Criação da Imagem e Compilação)
+# ----------------------------------------------------
+# Usamos o node 20-alpine para ter um ambiente pequeno
+FROM node:20-alpine AS builder
 
-# Definir o diretório de trabalho
+# Define o diretório de trabalho dentro do container
 WORKDIR /usr/src/app
 
-# Copiar package.json e package-lock.json
+# Copia e instala dependências de produção e desenvolvimento
 COPY package*.json ./
+# O 'npm ci' é mais rápido e garante que a versão correta seja usada
+RUN npm ci
 
-# Copiar a pasta prisma inteira
-COPY prisma ./prisma/
-
-# Instalar TODAS as dependências (incluindo dev)
-RUN npm install --legacy-peer-deps
-
-# Copiar o resto do código-fonte
+# Copia o restante dos arquivos (código fonte .ts)
 COPY . .
 
-# --- ETAPA ADICIONADA ---
-# Gerar o Prisma Client antes do build
-RUN npx prisma generate
-
-# Rodar o comando de build (cria a pasta /dist)
+# Executa o build (compila TypeScript para JavaScript na pasta 'dist')
+# 🚨 ESTE PASSO GERA O 'dist/main.js' QUE ESTAVA FALTANDO
 RUN npm run build
 
-# Expor a porta 3000
-EXPOSE 3000
+# ----------------------------------------------------
+# 2. FASE DE PRODUÇÃO (Imagem Final Enxuta e Segura)
+# ----------------------------------------------------
+# Usamos uma imagem base leve (apenas para execução)
+FROM node:20-alpine AS production
 
-# Comando de inicialização: APENAS LIGA A API
-CMD [ "node", "dist/main.js" ]
+# Define o diretório de trabalho
+WORKDIR /usr/src/app
+
+# Copia APENAS as dependências de PRODUÇÃO e as instala
+COPY package*.json ./
+RUN npm install --only=production
+
+# Copia a pasta 'dist' (o código compilado) da fase de 'builder'
+# 🚨 ISSO RESOLVE O "Cannot find module '/src/main.js'"
+COPY --from=builder /usr/src/app/dist ./dist
+
+# Comando para rodar a aplicação
+# 🚨 COMANDO DE START CORRETO: Aponta para o arquivo .js na pasta 'dist'
+CMD ["node", "dist/main.js"]
