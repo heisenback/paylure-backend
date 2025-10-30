@@ -1,18 +1,21 @@
 // src/app.module.ts
+
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { AuthModule } from './auth/auth.module';
 import { MerchantModule } from './merchant/merchant.module';
-import { PaymentLinkModule } from './payment-link/payment-link.module'; // 1. IMPORTAR O NOVO MÓDULO
+import { PaymentLinkModule } from './payment-link/payment-link.module';
+import { DepositModule } from './deposit/deposit.module'; // <-- DEVE ESTAR AQUI
 
 @Module({
   imports: [
-    AuthModule,
-    PrismaModule,
-    MerchantModule,
-    PaymentLinkModule, // 2. ADICIONAR ELE AQUI
+    PrismaModule, 
+    AuthModule, 
+    MerchantModule, 
+    PaymentLinkModule,
+    DepositModule, // <-- E AQUI!
   ],
   controllers: [AppController],
   providers: [AppService],
