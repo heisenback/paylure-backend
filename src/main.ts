@@ -7,24 +7,23 @@ import { ValidationPipe } from '@nestjs/common';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // 1. CONFIGURAÇÃO BASE
-  // Liga a validação automática para todos os DTOs
+  // 1. CONFIGURAÇÃO BASE (Melhora a segurança e tipagem)
   app.useGlobalPipes(new ValidationPipe({
-    whitelist: true, // Remove propriedades que não existem no DTO
-    forbidNonWhitelisted: true, // Retorna erro se receber propriedades não esperadas
-    transform: true, // Converte tipos automaticamente (ex: '123' para 123)
+    whitelist: true, 
+    forbidNonWhitelisted: true, 
+    transform: true, 
   }));
   
-  // 2. PREFIXO GLOBAL DE ROTAS (Boa Prática)
-  app.setGlobalPrefix('api'); // Todas as suas rotas agora serão /api/...
+  // 2. PREFIXO GLOBAL DE ROTAS
+  app.setGlobalPrefix('api');
   
   // 3. CONFIGURAÇÃO DE CORS (O Ajuste Crítico de Segurança e Conexão)
   
-  // 🚨 ATENÇÃO: SUBSTITUA O DOMÍNIO FALSO ABAIXO PELO SEU ENDEREÇO REAL DO VERCEL!
+  // 🚨 CORRIGIDO: Agora usando seu domínio real do Vercel!
   const allowedOrigins = [
-      'https://seu-dominio-vercel-real.vercel.app', // <--- SUBSTITUA AQUI!
-      'http://localhost:3000',                      // Dev local do Backend
-      'http://localhost:3001'                       // Dev local do Frontend (ou a porta que você usa)
+      'https://paylure.vercel.app', // <--- SEU DOMÍNIO VERCEL CORRIGIDO!
+      'http://localhost:3000',      // Dev local do Backend
+      'http://localhost:3001'       // Dev local do Frontend (ou a porta que você usa)
   ];
 
   app.enableCors({
@@ -38,14 +37,14 @@ async function bootstrap() {
         callback(new Error('Not allowed by CORS policy.'));
       }
     },
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE', // Métodos HTTP permitidos
-    credentials: true, // Permite o envio de cookies/auth headers
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE', 
+    credentials: true,
   });
 
   // 4. INICIALIZAÇÃO DO SERVIDOR NA VPS
   const PORT = process.env.PORT || 3000;
   
-  // '0.0.0.0' é fundamental para que o servidor escute conexões externas na sua VPS.
+  // '0.0.0.0' é fundamental para escutar conexões externas na sua VPS.
   await app.listen(PORT, '0.0.0.0'); 
   
   console.log(`🚀 Gateway de Pagamento (NestJS) rodando em http://0.0.0.0:${PORT}/api`);
