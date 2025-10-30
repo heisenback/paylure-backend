@@ -1,9 +1,14 @@
 // src/prisma/prisma.module.ts
-import { Module } from '@nestjs/common';
+
+import { Global, Module } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
 
+// 🚨 Ajuste Crítico: O decorador @Global()
+// Torna o PrismaService disponível para injeção em
+// QUALQUER outro módulo, sem precisar importá-lo toda vez.
+@Global() 
 @Module({
-  providers: [PrismaService],
-  exports: [PrismaService], // Exporta o serviço para outros módulos usarem
+  providers: [PrismaService], // O service que criamos
+  exports: [PrismaService],   // Permite que outros módulos o injetem
 })
 export class PrismaModule {}

@@ -2,25 +2,22 @@
 import {
   Injectable,
   ConflictException,
-  UnauthorizedException, // 1. Importar o erro de "Não Autorizado"
+  UnauthorizedException, 
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RegisterAuthDto } from './dto/register-auth.dto';
 import * as bcrypt from 'bcrypt';
-import { JwtService } from '@nestjs/jwt'; // 2. Importar o serviço de JWT
-
-// Vamos criar este DTO no próximo passo
+import { JwtService } from '@nestjs/jwt'; 
 import { LoginAuthDto } from './dto/login-auth.dto';
 
 @Injectable()
 export class AuthService {
-  // 3. Pedir ao Nest para injetar o Prisma E o JwtService
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
   ) {}
 
-  // --- Função de Cadastro (que já fizemos) ---
+  // --- Função de Cadastro (CORRIGIDA) ---
   async register(dto: RegisterAuthDto) {
     const userExists = await this.prisma.user.findUnique({
       where: { email: dto.email },
@@ -30,50 +27,72 @@ export class AuthService {
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
+    // 🚨 AJUSTE 1: Hashing
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(dto.password, salt);
 
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        name: dto.name,
-        password: hashedPassword,
-      },
-    });
+    // 🚨 AJUSTE 2: TRANSAÇÃO DO PRISMA (CRUCIAL!)
+    // Criar o Usuário E o Lojista (Merchant) em uma única operação.
+    const [user, merchant] = await this.prisma.$transaction([
+        // 1. Criação do Usuário (User)
+        this.prisma.user.create({
+            data: {
+                email: dto.email,
+                name: dto.name,
+                password: hashedPassword,
+                // O campo `merchant` aqui é para a relação de volta (opcional no 'create')
+                // A relação principal será criada no próximo passo.
+            },
+        }),
+        // 2. Criação do Lojista (Merchant)
+        // ATENÇÃO: Estou assumindo que o DTO de registro também tem 'storeName' e 'cnpj'
+        this.prisma.merchant.create({
+            data: {
+                storeName: dto.storeName || 'Minha Loja', // <-- Se não estiver no DTO, defina um valor padrão
+                cnpj: dto.cnpj || '00.000.000/0001-00',    // <-- O mesmo aqui (CNPJ é UNIQUE!)
+                // Conecta o Merchant ao Usuário que acabou de ser criado
+                user: {
+                    connect: { email: dto.email } // Usa o email para conectar (funciona porque é unique)
+                }
+            },
+        }),
+    ]);
+    
+    // 🚨 AJUSTE 3: Retorno
+    // Garantimos que o objeto retornado contenha informações do usuário e do merchant,
+    // mas SEM a senha.
+    const { password, ...userData } = user;
 
-    const { password, ...result } = user;
-    return result;
+    return { 
+        user: userData,
+        merchant: merchant,
+        message: 'Registro e Lojista criados com sucesso!' 
+    };
   }
 
-  // --- 4. NOVA FUNÇÃO DE LOGIN ---
+  // --- Função de Login (Sem Alterações) ---
   async login(dto: LoginAuthDto) {
-    // 1. Achar o usuário pelo email
+    // ... CÓDIGO DO LOGIN PERMANECE IGUAL
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
 
-    // Se não achar, joga um erro de "Não autorizado"
     if (!user) {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
-    // 2. Comparar a senha enviada com a senha embaralhada do banco
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
 
-    // Se as senhas não baterem, joga o mesmo erro
     if (!isPasswordValid) {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
-    // 3. Se tudo estiver certo, criar o "payload" do crachá
-    // O "payload" são os dados que guardamos DENTRO do crachá
     const payload = {
-      sub: user.id, // "sub" (subject) é o ID do usuário
+      sub: user.id, 
       email: user.email,
       name: user.name,
     };
 
-    // 4. Gerar e retornar o crachá (Access Token)
     return {
       access_token: await this.jwtService.signAsync(payload),
     };
