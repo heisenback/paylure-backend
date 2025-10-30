@@ -1,17 +1,50 @@
 version: '3.8'
 services:
+  # 1. SERVIÇO DE BANCO DE DADOS
   postgres-paylure:
-    image: postgres:15
+    image: postgres:15-alpine # Use alpine para imagem menor
     container_name: postgres-paylure
+    restart: unless-stopped
     ports:
-      - "5433:5432" # Expõe o banco na porta 5433 da sua máquina
+      - "5433:5432" # Expõe o banco na porta 5433
     environment:
       POSTGRES_USER: paylure_user
       POSTGRES_PASSWORD: paylure_password
       POSTGRES_DB: paylure_db
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    networks:
+      - paylure-network # Conecta à rede interna para comunicação
+    
+  # 2. SERVIÇO DO BACKEND (NESTJS)
+  api: # <-- NOME DO SERVIÇO CORRIGIDO E DEFINIDO
+    image: node:18-alpine # Imagem Node.js para rodar seu código
+    container_name: paylure-api
     restart: unless-stopped
+    depends_on:
+      - postgres-paylure # Garante que o DB inicie primeiro
+    environment:
+      # URL de Conexão: Usa o nome do serviço do DB (postgres-paylure)
+      DATABASE_URL: postgres://paylure_user:paylure_password@postgres-paylure:5432/paylure_db?schema=public
+      JWT_SECRET: sua_chave_secreta_aqui # Sua chave JWT
+    ports:
+      - "3000:3000" # Mapeia a porta da API
+    networks:
+      - paylure-network
+    volumes:
+      - .:/usr/src/app # Mapeia o código local para dentro do container
+      - /usr/src/app/node_modules # Garante que as dependências fiquem no container
+    working_dir: /usr/src/app
+    
+    # Comando para iniciar a aplicação (instalar dependências e rodar em modo dev)
+    command: sh -c "npm install && npm run start:dev"
 
+# Volumes para persistência de dados
 volumes:
   postgres-data:
+    driver: local
+
+# Rede interna
+networks:
+  paylure-network:
+    driver: bridges
