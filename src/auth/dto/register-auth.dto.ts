@@ -1,20 +1,22 @@
-// src/auth/dto/register-auth.dto.ts
-
-// Vamos instalar isso no próximo passo.
-// É um "validador" que garante que o email é um email de verdade.
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
 
 export class RegisterAuthDto {
-  @IsEmail({}, { message: 'O e-mail informado não é válido' })
-  @IsNotEmpty({ message: 'O e-mail é obrigatório' })
+  @IsEmail()
   email: string;
 
   @IsString()
-  @IsNotEmpty({ message: 'A senha é obrigatória' })
-  @MinLength(6, { message: 'A senha deve ter no mínimo 6 caracteres' })
+  @MinLength(6)
   password: string;
 
   @IsString()
-  @IsNotEmpty({ message: 'O nome é obrigatório' })
-  name: string;
+  @IsOptional()
+  name?: string; // <-- ADICIONADO
+
+  @IsString()
+  @IsOptional()
+  storeName?: string; // <-- ADICIONADO
+
+  @IsString()
+  @IsOptional()
+  cnpj?: string; // <-- ADICIONADO
 }

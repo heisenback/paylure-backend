@@ -27,54 +27,67 @@ export class AuthService {
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
-    // 🚨 AJUSTE 1: Hashing
+    // 🚨 Hashing de Senha
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(dto.password, salt);
 
-    // 🚨 AJUSTE 2: TRANSAÇÃO DO PRISMA (CRUCIAL!)
-    // Criar o Usuário E o Lojista (Merchant) em uma única operação.
-    const [user, merchant] = await this.prisma.$transaction([
-        // 1. Criação do Usuário (User)
-        this.prisma.user.create({
+    // 🚨 AJUSTE SÊNIOR: Criação ANINHADA para garantir transacionalidade
+    // Usamos a criação do usuário para ANINHAR a criação do Merchant.
+    // Isso garante que se uma falhar, a outra falha automaticamente.
+    // Presume-se que o modelo 'User' tenha um campo de relacionamento 'merchant'
+    // ou que o modelo 'Merchant' tenha um campo 'user' para a relação.
+    try {
+        const userWithMerchant = await this.prisma.user.create({
             data: {
                 email: dto.email,
-                name: dto.name,
+                name: dto.name || 'Usuário Padrão',
                 password: hashedPassword,
-                // O campo `merchant` aqui é para a relação de volta (opcional no 'create')
-                // A relação principal será criada no próximo passo.
+                // Criação Aninhada do Merchant
+                merchant: {
+                    create: {
+                        storeName: dto.storeName || 'Minha Loja', 
+                        cnpj: dto.cnpj || '00.000.000/0001-00',
+                    },
+                },
             },
-        }),
-        // 2. Criação do Lojista (Merchant)
-        // ATENÇÃO: Estou assumindo que o DTO de registro também tem 'storeName' e 'cnpj'
-        this.prisma.merchant.create({
-            data: {
-                storeName: dto.storeName || 'Minha Loja', // <-- Se não estiver no DTO, defina um valor padrão
-                cnpj: dto.cnpj || '00.000.000/0001-00',    // <-- O mesmo aqui (CNPJ é UNIQUE!)
-                // Conecta o Merchant ao Usuário que acabou de ser criado
-                user: {
-                    connect: { email: dto.email } // Usa o email para conectar (funciona porque é unique)
-                }
-            },
-        }),
-    ]);
-    
-    // 🚨 AJUSTE 3: Retorno
-    // Garantimos que o objeto retornado contenha informações do usuário e do merchant,
-    // mas SEM a senha.
-    const { password, ...userData } = user;
+            // Selecionamos o que queremos retornar, incluindo o Merchant, mas excluindo a senha
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                createdAt: true,
+                updatedAt: true,
+                merchant: true, // Incluímos o Merchant criado
+            }
+        });
 
-    return { 
-        user: userData,
-        merchant: merchant,
-        message: 'Registro e Lojista criados com sucesso!' 
-    };
+        // 🚨 Retorno Simplificado
+        // O objeto já vem limpo (sem a senha) graças ao `select` acima.
+        const { merchant, ...userData } = userWithMerchant;
+
+        return { 
+            user: userData,
+            merchant: merchant,
+            message: 'Registro e Lojista criados com sucesso!' 
+        };
+    } catch (error) {
+        // Em um ambiente real, você logaria esse erro.
+        // Se houver um problema com UNIQUE (ex: CNPJ), ele será capturado aqui.
+        if (error.code === 'P2002') { // Código de erro UNIQUE do Prisma
+            throw new ConflictException('O CNPJ fornecido já está em uso.');
+        }
+        throw error; // Re-lança outros erros
+    }
   }
 
   // --- Função de Login (Sem Alterações) ---
   async login(dto: LoginAuthDto) {
-    // ... CÓDIGO DO LOGIN PERMANECE IGUAL
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
+      // 🚨 AJUSTE SÊNIOR: Incluir o Merchant no Login para retornar dados completos
+      include: {
+        merchant: true, 
+      }
     });
 
     if (!user) {
@@ -87,14 +100,20 @@ export class AuthService {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
+    // 🚨 AJUSTE NO PAYLOAD: Adicionar merchantId ao token é crucial para o Gateway!
     const payload = {
       sub: user.id, 
       email: user.email,
       name: user.name,
+      merchantId: user.merchant?.id, // Adicionamos o ID do Merchant
     };
+
+    const { password, merchant, ...userData } = user;
 
     return {
       access_token: await this.jwtService.signAsync(payload),
+      user: userData,
+      merchant: merchant,
     };
   }
 }
