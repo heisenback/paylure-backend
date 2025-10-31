@@ -9,8 +9,8 @@ import { RegisterAuthDto } from './dto/register-auth.dto';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt'; 
 import { LoginAuthDto } from './dto/login-auth.dto';
-// 🚨 NOVO: Importar UUID para gerar IDs únicos (CNPJ falso)
-import { v4 as uuidv4 } from 'uuid'; 
+// 🚨 CORREÇÃO CRÍTICA: MUDANÇA NA IMPORTAÇÃO para resolver ERR_REQUIRE_ESM
+import * as uuid from 'uuid'; 
 
 @Injectable()
 export class AuthService {
@@ -19,9 +19,9 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  // --- Função de Cadastro (CORRIGIDA E MINIMALISTA) ---
+  // --- Função de Cadastro (CORRIGIDA) ---
   async register(dto: RegisterAuthDto) {
-    // 1. Verificar E-mail Único (Regra mantida)
+    // 1. Verificar E-mail Único
     const userExists = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -30,9 +30,9 @@ export class AuthService {
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
-    // 2. 🚨 Geração de Dados FALSOS ÚNICOS (Para o Merchant)
-    // Isso garante que o Merchant seja criado sem quebrar a restrição UNIQUE.
-    const uniqueCnpj = uuidv4().replace(/-/g, '').substring(0, 14); // CNPJ único de 14 dígitos (falso)
+    // 2. 🚨 Geração de Dados FALSOS ÚNICOS
+    // Agora usando a sintaxe corrigida: uuid.v4()
+    const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14); 
     const defaultStoreName = `Loja-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
     // 3. Hashing de Senha
@@ -44,7 +44,7 @@ export class AuthService {
         const userWithMerchant = await this.prisma.user.create({
             data: {
                 email: dto.email,
-                name: dto.name || 'Usuário Padrão', // Usa o nome fornecido
+                name: dto.name || 'Usuário Padrão', 
                 password: hashedPassword,
                 
                 // Criação Aninhada do Merchant com dados únicos gerados
@@ -55,7 +55,6 @@ export class AuthService {
                     },
                 },
             },
-            // Selecionamos o que queremos retornar
             select: {
                 id: true,
                 email: true,
@@ -74,7 +73,6 @@ export class AuthService {
             message: 'Registro e Lojista criados com sucesso!' 
         };
     } catch (error) {
-        // 🚨 REMOVEMOS A CHECAGEM ESPECÍFICA DE CNPJ
         if (error.code === 'P2002') { 
             throw new ConflictException('O e-mail fornecido já está em uso.');
         }
@@ -86,7 +84,6 @@ export class AuthService {
   async login(dto: LoginAuthDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      // Inclui o Merchant no Login para retornar dados completos
       include: {
         merchant: true, 
       }
@@ -102,7 +99,6 @@ export class AuthService {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
-    // Adicionar merchantId ao payload
     const payload = {
       sub: user.id, 
       email: user.email,
