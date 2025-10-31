@@ -6,7 +6,6 @@ services:
     container_name: postgres-paylure
     restart: unless-stopped
     ports:
-      # Expor na porta 5433 da sua VPS
       - "5433:5432" 
     environment:
       POSTGRES_USER: paylure_user
@@ -14,7 +13,6 @@ services:
       POSTGRES_DB: paylure_db
     volumes:
       - postgres-data:/var/lib/postgresql/data
-    # 🚨 BLOCO 'networks' REMOVIDO
     
   # 2. SERVIÇO DO BACKEND (NESTJS)
   api: 
@@ -24,12 +22,10 @@ services:
     depends_on:
       - postgres-paylure
     environment:
-      # Conexão direta usando o nome do serviço
       DATABASE_URL: postgres://paylure_user:paylure_password@postgres-paylure:5432/paylure_db?schema=public
       JWT_SECRET: sua_chave_secreta_aqui 
     ports:
       - "3000:3000"
-    # 🚨 BLOCO 'networks' REMOVIDO
     volumes:
       - .:/usr/src/app
       - /usr/src/app/node_modules
@@ -42,5 +38,4 @@ volumes:
   postgres-data:
     driver: local
 
-# 🚨 BLOCO DE REDE REMOVIDO TOTALMENTE
-# (Não deve haver a seção 'networks:' no final)
+# Nenhuma seção 'networks'
