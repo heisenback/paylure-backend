@@ -15,9 +15,9 @@ services:
       - postgres-data:/var/lib/postgresql/data
     
   # 2. SERVIÇO DO BACKEND (NESTJS)
-  api: 
+  api-app:  # 🚨 MUDANÇA DE NOME AQUI: AGORA É api-app
     image: node:18-alpine
-    container_name: paylure-api
+    container_name: paylure-app
     restart: unless-stopped
     depends_on:
       - postgres-paylure
