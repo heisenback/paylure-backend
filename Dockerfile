@@ -29,11 +29,14 @@ RUN npm run build
 # ===== Runtime (Imagem final, mais leve) =====
 FROM node:20-alpine AS production
 
-# 🚨 CORREÇÃO CRÍTICA AQUI: Define o diretório de trabalho para /app
+# Define o diretório de trabalho
 WORKDIR /app 
 
 # Copia o lockfile para permitir que 'npm ci' funcione
 COPY package-lock.json ./ 
+
+# 🚨 CORREÇÃO FINAL AQUI: Copia o package.json para o WORKDIR /app
+COPY package.json ./
 
 # Copia apenas as dependências de produção
 RUN npm ci --omit=dev
