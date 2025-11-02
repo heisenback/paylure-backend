@@ -1,46 +1,44 @@
-version: "3.9"
-
+version: "3.8"
 services:
-  database:
-    image: postgres:16
+  # SERVIÇO DE BANCO DE DADOS
+  db:
+    image: postgres:15-alpine
     container_name: paylure-db
-    restart: unless-stopped
+    restart: always
     environment:
-      POSTGRES_USER: paylure_user
-      POSTGRES_PASSWORD: paylure_password
-      POSTGRES_DB: paylure_db
-    ports:
-      - "5433:5432"
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
     volumes:
-      - db_data:/var/lib/postgresql/data
-
+      - paylure-db-data:/var/lib/postgresql/data
+    networks:
+      - paylure-network
+  # SERVIÇO DO BACKEND (NESTJS)
   api:
-    build: ./backend
+    # 🚨 CORREÇÃO ESSENCIAL: Adicionar a instrução 'build' para construir a imagem localmente
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: paylure-backend
     container_name: paylure-api
+    restart: always
     depends_on:
-      - database
-    env_file:
-      - ./.env
+      - db
     environment:
-      # Garante que o Nest escute em todas as interfaces
-      HOST: 0.0.0.0
+      # As variáveis de ambiente serão lidas do arquivo .env
+      JWT_SECRET: ${JWT_SECRET}
+      DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?schema=public
+      # Adicionando a variável de ambiente para o NestJS saber em qual porta rodar
       PORT: 3000
     ports:
-      - "3000:3000"
-    restart: unless-stopped
+      - 3000:3000
+    networks:
+      - paylure-network
 
-  # Opcional: seu proxy reverso/NPM pode ficar fora ou aqui.
-  # proxy:
-  #   image: jc21/nginx-proxy-manager:latest
-  #   container_name: nginx-proxy-manager
-  #   restart: unless-stopped
-  #   ports:
-  #     - "80:80"
-  #     - "443:443"
-  #     - "81:81"
-  #   volumes:
-  #     - ./data:/data
-  #     - ./letsencrypt:/etc/letsencrypt
-
+# Volumes: Necessário para persistir os dados do Banco de Dados
 volumes:
-  db_data:
+  paylure-db-data:
+    driver: local
+networks:
+  paylure-network:
+    driver: bridge

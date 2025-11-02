@@ -1,53 +1,42 @@
-# Use a imagem node:20-alpine como base
-FROM node:20-alpine AS build
+# --- STAGE 1: Build ---
+FROM node:20-alpine AS builder
 
-# Define o diretório de trabalho
-WORKDIR /app
+# Define o diretório de trabalho dentro do container
+WORKDIR /usr/src/app
 
-# Copia package.json e package-lock.json (ou yarn.lock)
+# Copia os arquivos de configuração do projeto
 COPY package*.json ./
+COPY prisma ./prisma/
 
-# Instala todas as dependências (incluindo devDependencies para o build)
-RUN npm ci
+# Instala as dependências
+RUN npm install
 
-# Copia os arquivos de configuração do TypeScript
-COPY tsconfig*.json ./
+# Copia o restante do código-fonte
+COPY . .
 
-# Copia o schema do prisma
-COPY prisma/schema.prisma ./prisma/
-
-# Gera o Prisma Client com os modelos
+# Gera o cliente Prisma e faz o build do NestJS
+# O comando 'npx prisma generate' deve ser executado antes do build
 RUN npx prisma generate
-
-# Copia o código fonte
-COPY src ./src
-
-# Executa a compilação do NestJS (TypeScript -> JavaScript)
 RUN npm run build
 
-
-# ===== Runtime (Imagem final, mais leve) =====
+# --- STAGE 2: Production ---
 FROM node:20-alpine AS production
 
 # Define o diretório de trabalho
-WORKDIR /app 
+WORKDIR /usr/src/app
 
-# Copia o lockfile para permitir que 'npm ci' funcione
-COPY package-lock.json ./ 
+# Copia apenas os arquivos necessários para a produção
+COPY --from=builder /usr/src/app/package*.json ./
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/prisma ./prisma
 
-# 🚨 CORREÇÃO FINAL AQUI: Copia o package.json para o WORKDIR /app
-COPY package.json ./
+# O comando 'npx prisma generate' deve ser executado novamente na imagem final
+# para garantir que o cliente Prisma esteja presente e configurado corretamente
+RUN npx prisma generate
 
-# Copia apenas as dependências de produção
-RUN npm ci --omit=dev
+# Expõe a porta que o NestJS vai usar (3000 por padrão)
+EXPOSE 3000
 
-# Copia os arquivos de build e o node_modules de produção
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/dist ./dist
-
-# Garante que o Prisma Client compilado esteja presente
-COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
-
-# Define o comando de inicialização
-CMD ["node", "dist/main"]
+# Comando para iniciar a aplicação em modo de produção
+CMD [ "node", "dist/main" ]

@@ -26,4 +26,4 @@ export class CreateDepositDto {
   @IsNotEmpty({ message: 'Documento (CPF/CNPJ) do pagador é obrigatório.' })
   payerDocument: string;
   */
-}
+} 
