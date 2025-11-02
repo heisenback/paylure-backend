@@ -16,7 +16,7 @@ COPY tsconfig*.json ./
 # Copia o schema do prisma
 COPY prisma/schema.prisma ./prisma/
 
-# 🚨 Gerar o Prisma Client com os modelos
+# Gera o Prisma Client com os modelos
 RUN npx prisma generate
 
 # Copia o código fonte
@@ -29,7 +29,9 @@ RUN npm run build
 # ===== Runtime (Imagem final, mais leve) =====
 FROM node:20-alpine AS production
 
-# 🚨 CORREÇÃO CRÍTICA AQUI
+# 🚨 CORREÇÃO CRÍTICA AQUI: Define o diretório de trabalho para /app
+WORKDIR /app 
+
 # Copia o lockfile para permitir que 'npm ci' funcione
 COPY package-lock.json ./ 
 
