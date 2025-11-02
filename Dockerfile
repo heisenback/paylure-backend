@@ -1,35 +1,45 @@
-# ===== Build =====
+# Use a imagem node:20-alpine como base
 FROM node:20-alpine AS build
+
+# Define o diretório de trabalho
 WORKDIR /app
 
-# Copia e instala
+# Copia package.json e package-lock.json (ou yarn.lock)
 COPY package*.json ./
+
+# Instala todas as dependências (incluindo devDependencies para o build)
 RUN npm ci
 
-# Copia código e compila
+# Copia os arquivos de configuração do TypeScript
 COPY tsconfig*.json ./
+
+# Copia o schema do prisma
+COPY prisma/schema.prisma ./prisma/
+
+# 🚨 CORREÇÃO CRÍTICA: Gerar o Prisma Client com os modelos
+# Isso resolve o erro TS2305
+RUN npx prisma generate
+
+# Copia o código fonte
 COPY src ./src
+
+# Executa a compilação do NestJS (TypeScript -> JavaScript)
 RUN npm run build
 
-# ===== Runtime =====
-FROM node:20-alpine
-WORKDIR /app
 
-ENV NODE_ENV=production
-ENV HOST=0.0.0.0
-ENV PORT=3000
+# ===== Runtime (Imagem final, mais leve) =====
+FROM node:20-alpine AS production
 
-# Só dependências de produção
-COPY package*.json ./
+# Copia apenas as dependências de produção
 RUN npm ci --omit=dev
 
-# Copia dist e prisma (se houver)
+# Copia os arquivos de build e o node_modules de produção
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/dist ./dist
-COPY prisma ./prisma
 
-# Gera prisma client se necessário
-RUN npx prisma generate || true
+# Garante que o Prisma Client compilado esteja presente
+COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 
-EXPOSE 3000
-
-CMD ["node", "dist/main.js"]
+# Define o comando de inicialização
+CMD ["node", "dist/main"]
