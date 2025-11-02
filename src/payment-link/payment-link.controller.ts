@@ -1,32 +1,27 @@
 // src/payment-link/payment-link.controller.ts
-import {
-  Controller,
-  Post,
-  Body,
-  UseGuards,
-  Req,
-  HttpCode,
-  HttpStatus,
-} from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { Controller, Post, Body, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { PaymentLinkService } from './payment-link.service';
 import { CreatePaymentLinkDto } from './dto/create-payment-link.dto';
+import { AuthGuard } from '@nestjs/passport';
+import { GetUser } from 'src/auth/decorators/get-user.decorator';
+import type { User } from '@prisma/client';
 
-// Define o prefixo da rota para /payment-links
-@Controller('payment-links')
+@Controller('payment-links') // 🚨 CORREÇÃO: Usamos o nome base do módulo, o prefixo /api/ será adicionado pelo main.ts
+@UseGuards(AuthGuard('jwt'))
 export class PaymentLinkController {
-  constructor(private readonly paymentLinkService: PaymentLinkService) {}
+    constructor(private readonly paymentLinkService: PaymentLinkService) {}
 
-  // Vamos criar a rota POST /payment-links
-  @UseGuards(AuthGuard('jwt')) // 1. "SEGURANÇA" NA PORTA! (Só logado)
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  async createPaymentLink(@Body() dto: CreatePaymentLinkDto, @Req() req) {
-    // 2. Pegamos o ID do usuário que o "segurança" (JwtStrategy)
-    // anexou no "req.user"
-    const userId = req.user.id;
-
-    // 3. Chamamos o "trabalhador" para criar o link
-    return this.paymentLinkService.createPaymentLink(dto, userId);
-  }
+    @Post()
+    @HttpCode(HttpStatus.CREATED)
+    async create(
+        @Body() dto: CreatePaymentLinkDto,
+        @GetUser() user: User & { merchant?: { id: string } },
+    ) {
+        if (!user.merchant?.id) {
+            throw new Error('Merchant ID não encontrado no usuário.');
+        }
+        
+        // CORREÇÃO: Chama o novo método 'create' do serviço
+        return this.paymentLinkService.create(dto, user.merchant.id); 
+    }
 }

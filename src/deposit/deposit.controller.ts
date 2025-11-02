@@ -1,26 +1,35 @@
 // src/deposit/deposit.controller.ts
 
-import { Controller, Post, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Req, Get } from '@nestjs/common'; 
 import { DepositService } from './deposit.service';
-import { AuthGuard } from '@nestjs/passport'; // Usaremos o padrão JWT de segurança
+import { AuthGuard } from '@nestjs/passport';
+import { CreateDepositDto } from './dto/create-deposit.dto';
 
-// DTO BEM SIMPLES para o depósito
-class SimulateDepositDto {
-  amount: number; // Valor em centavos
-}
-
-@Controller('deposit')
+@Controller('deposits') 
+@UseGuards(AuthGuard('jwt'))
 export class DepositController {
   constructor(private readonly depositService: DepositService) {}
 
-  // 🚨 Usamos o AuthGuard('jwt') para garantir que só usuários logados acessem!
-  @UseGuards(AuthGuard('jwt'))
-  @Post('simulate')
-  async simulate(@Req() req, @Body() dto: SimulateDepositDto) {
-    // O 'req.user.sub' contém o 'id' do usuário do payload JWT que definimos no login.
-    const userId = req.user.sub; 
+  @Post() 
+  async create(@Req() req, @Body() dto: CreateDepositDto) { // 🚨 Agora usa o DTO com o campo 'amount'
+    
+    const userId = req.user.sub || req.user.id || (req.user as any).user?.id;
 
-    // O valor 'amount' deve estar em centavos (ex: 1000 para R$ 10,00)
-    return this.depositService.simulateDeposit(userId, dto.amount);
+    if (!userId) {
+        throw new Error('Usuário autenticado, mas o ID do usuário está faltando no Token.');
+    }
+    
+    return this.depositService.createDeposit(userId, dto);
+  }
+
+  @Get('history')
+  async getHistory(@Req() req) {
+    const userId = req.user.sub || req.user.id || (req.user as any).user?.id;
+
+    if (!userId) {
+        throw new Error('Usuário autenticado, mas o ID do usuário está faltando no Token.');
+    }
+
+    return this.depositService.getHistory(userId);
   }
 }

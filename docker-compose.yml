@@ -1,41 +1,46 @@
-version: '3.8'
+version: "3.9"
+
 services:
-  # 1. SERVIÇO DE BANCO DE DADOS
-  postgres-paylure:
-    image: postgres:15-alpine
-    container_name: postgres-paylure
+  database:
+    image: postgres:16
+    container_name: paylure-db
     restart: unless-stopped
-    ports:
-      - "5433:5432" 
     environment:
       POSTGRES_USER: paylure_user
       POSTGRES_PASSWORD: paylure_password
       POSTGRES_DB: paylure_db
+    ports:
+      - "5433:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-    
-  # 2. SERVIÇO DO BACKEND (NESTJS)
-  api-app:  # 🚨 MUDANÇA DE NOME AQUI: AGORA É api-app
-    image: node:18-alpine
-    container_name: paylure-app
-    restart: unless-stopped
+      - db_data:/var/lib/postgresql/data
+
+  api:
+    build: ./backend
+    container_name: paylure-api
     depends_on:
-      - postgres-paylure
+      - database
+    env_file:
+      - ./.env
     environment:
-      DATABASE_URL: postgres://paylure_user:paylure_password@postgres-paylure:5432/paylure_db?schema=public
-      JWT_SECRET: sua_chave_secreta_aqui 
+      # Garante que o Nest escute em todas as interfaces
+      HOST: 0.0.0.0
+      PORT: 3000
     ports:
       - "3000:3000"
-    volumes:
-      - .:/usr/src/app
-      - /usr/src/app/node_modules
-    working_dir: /usr/src/app
-    
-    command: sh -c "npm install && npm run start:dev"
+    restart: unless-stopped
 
-# Volumes para persistência de dados
+  # Opcional: seu proxy reverso/NPM pode ficar fora ou aqui.
+  # proxy:
+  #   image: jc21/nginx-proxy-manager:latest
+  #   container_name: nginx-proxy-manager
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #     - "81:81"
+  #   volumes:
+  #     - ./data:/data
+  #     - ./letsencrypt:/etc/letsencrypt
+
 volumes:
-  postgres-data:
-    driver: local
-
-# Nenhuma seção 'networks'
+  db_data:

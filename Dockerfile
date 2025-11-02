@@ -1,41 +1,35 @@
-# ----------------------------------------------------
-# 1. FASE DE BUILD (Criação da Imagem e Compilação)
-# ----------------------------------------------------
-# Usamos o node 20-alpine para ter um ambiente pequeno
-FROM node:20-alpine AS builder
+# ===== Build =====
+FROM node:20-alpine AS build
+WORKDIR /app
 
-# Define o diretório de trabalho dentro do container
-WORKDIR /usr/src/app
-
-# Copia e instala dependências de produção e desenvolvimento
+# Copia e instala
 COPY package*.json ./
-# O 'npm ci' é mais rápido e garante que a versão correta seja usada
 RUN npm ci
 
-# Copia o restante dos arquivos (código fonte .ts)
-COPY . .
-
-# Executa o build (compila TypeScript para JavaScript na pasta 'dist')
-# 🚨 ESTE PASSO GERA O 'dist/main.js' QUE ESTAVA FALTANDO
+# Copia código e compila
+COPY tsconfig*.json ./
+COPY src ./src
 RUN npm run build
 
-# ----------------------------------------------------
-# 2. FASE DE PRODUÇÃO (Imagem Final Enxuta e Segura)
-# ----------------------------------------------------
-# Usamos uma imagem base leve (apenas para execução)
-FROM node:20-alpine AS production
+# ===== Runtime =====
+FROM node:20-alpine
+WORKDIR /app
 
-# Define o diretório de trabalho
-WORKDIR /usr/src/app
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=3000
 
-# Copia APENAS as dependências de PRODUÇÃO e as instala
+# Só dependências de produção
 COPY package*.json ./
-RUN npm install --only=production
+RUN npm ci --omit=dev
 
-# Copia a pasta 'dist' (o código compilado) da fase de 'builder'
-# 🚨 ISSO RESOLVE O "Cannot find module '/src/main.js'"
-COPY --from=builder /usr/src/app/dist ./dist
+# Copia dist e prisma (se houver)
+COPY --from=build /app/dist ./dist
+COPY prisma ./prisma
 
-# Comando para rodar a aplicação
-# 🚨 COMANDO DE START CORRETO: Aponta para o arquivo .js na pasta 'dist'
+# Gera prisma client se necessário
+RUN npx prisma generate || true
+
+EXPOSE 3000
+
 CMD ["node", "dist/main.js"]

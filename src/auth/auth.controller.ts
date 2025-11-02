@@ -1,45 +1,47 @@
 // src/auth/auth.controller.ts
-import {
-  Controller,
-  Post,
-  Body,
-  HttpCode,
-  HttpStatus,
-  Get, // 1. IMPORTAR O GET
-  UseGuards, // 2. IMPORTAR O "SEGURANÇA" (GUARD)
-  Req, // 3. IMPORTAR O "REQUEST" (REQUISIÇÃO)
-} from '@nestjs/common';
+
+import { Controller, Get, UseGuards, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { GetUser } from './decorators/get-user.decorator';
+// Importa o tipo 'User' corretamente
+import type { User } from '@prisma/client'; 
+
 import { AuthService } from './auth.service';
-import { RegisterAuthDto } from './dto/register-auth.dto';
 import { LoginAuthDto } from './dto/login-auth.dto';
-import { AuthGuard } from '@nestjs/passport'; // 4. IMPORTAR O AuthGuard
+import { RegisterAuthDto } from './dto/register-auth.dto';
 
-@Controller('auth')
+// 🚨 CORREÇÃO DE PREFIXO: Removendo o 'api/' que causava a duplicação
+// A rota final será /api/auth ou /api/v1/auth, dependendo do que você quer usar
+// Sugestão: Vamos usar 'auth' e o prefixo global do main.ts fará o trabalho.
+@Controller('auth') 
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+    constructor(private readonly authService: AuthService) {}
 
-  // --- Rota de Cadastro (pública) ---
-  @Post('register')
-  @HttpCode(HttpStatus.CREATED)
-  async register(@Body() dto: RegisterAuthDto) {
-    return this.authService.register(dto);
-  }
+    /**
+     * POST /api/auth/register
+     */
+    @Post('register')
+    @HttpCode(HttpStatus.CREATED)
+    register(@Body() dto: RegisterAuthDto) {
+        return this.authService.register(dto);
+    }
 
-  // --- Rota de Login (pública) ---
-  @Post('login')
-  @HttpCode(HttpStatus.OK)
-  async login(@Body() dto: LoginAuthDto) {
-    return this.authService.login(dto);
-  }
-
-  // --- 5. NOVA ROTA PROTEGIDA ---
-  @UseGuards(AuthGuard('jwt')) // 6. "SEGURANÇA" NA PORTA!
-  @Get('me') // A rota será GET /auth/me
-  @HttpCode(HttpStatus.OK)
-  async getMe(@Req() req) {
-    // O @Req() pega a "requisição" inteira.
-    // A nossa JwtStrategy (Passo 1) já validou o crachá
-    // e anexou o usuário em "req.user".
-    return req.user;
-  }
+    /**
+     * POST /api/auth/login
+     */
+    @Post('login')
+    @HttpCode(HttpStatus.OK)
+    login(@Body() dto: LoginAuthDto) {
+        return this.authService.login(dto);
+    }
+    
+    /**
+     * GET /api/auth/me (Perfil do Usuário Logado)
+     */
+    @Get('me')
+    @UseGuards(AuthGuard('jwt')) 
+    getProfile(@GetUser() user: User) { 
+        // Retorna o usuário que foi validado pelo JwtStrategy
+        return { success: true, user: user };
+    }
 }

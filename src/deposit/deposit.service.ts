@@ -1,26 +1,157 @@
 // src/deposit/deposit.service.ts
-
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  ForbiddenException,
+  InternalServerErrorException,
+  Logger,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { KeyclubService } from 'src/keyclub/keyclub.service';
+import { CreateDepositDto } from './dto/create-deposit.dto'; // 🚨 USANDO O DTO CORRIGIDO
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class DepositService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(DepositService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly keyclubService: KeyclubService,
+  ) {}
 
   /**
-   * Simula um depósito. Por enquanto, apenas retorna sucesso.
-   * Em uma fase futura, você atualizará o saldo do Merchant.
+   * Cria um novo depósito (PIX) para um Usuário/Seller.
    */
-  async simulateDeposit(userId: string, amount: number) {
-    // 🚨 NOTA SÊNIOR: Aqui, você deveria buscar o Merchant pelo userId
-    // e atualizar o saldo dele no banco de dados.
+  async createDeposit(userId: string, dto: CreateDepositDto) { // 🚨 CORREÇÃO: Usando o CreateDepositDto
     
-    // Como estamos pulando etapas, retornamos um mock de sucesso.
+    // Agora o amount vem do DTO
+    const amountAsAny = dto.amount;
+
+    // 1. ENCONTRAR O USUÁRIO (User) logado
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        document: true, 
+      },
+    });
+
+    if (!user) {
+      throw new ForbiddenException('Usuário não encontrado.');
+    }
+
+    if (!user.document || user.document.length < 11) {
+      throw new ForbiddenException(
+        'Seu perfil precisa ter um CPF/Documento cadastrado e válido para realizar depósitos.',
+      );
+    }
+    
+    if (typeof amountAsAny !== 'number' || amountAsAny <= 0) {
+      throw new BadRequestException('Valor de depósito inválido.');
+    }
+
+    const amountInBrl = amountAsAny / 100;
+    const webhookToken = uuidv4();
+
+    let pendingDeposit;
+    try {
+      // 2. Criar o registro do Depósito no seu banco como "PENDENTE"
+      pendingDeposit = await this.prisma.deposit.create({
+        data: {
+          amountInCents: amountAsAny, 
+          status: 'PENDING',
+          user: {
+            connect: { id: user.id },
+          },
+          payerName: user.name || 'N/A', 
+          payerEmail: user.email,
+          payerDocument: user.document, 
+          webhookToken: webhookToken,
+          externalId: 'DEP-' + user.id + '-' + Date.now(), 
+          netAmountInCents: amountAsAny, 
+        },
+      });
+    } catch (e) {
+      this.logger.error('Erro ao salvar depósito PENDENTE no Prisma', e);
+      throw new InternalServerErrorException(
+        'Erro ao iniciar o depósito. Migração do Prisma falhou ou DB fora do ar.',
+      );
+    }
+
+    try {
+      // 3. Chamar o KeyclubService
+      const keyclubResponse = await this.keyclubService.createDeposit({
+        amount: amountInBrl,
+        externalId: pendingDeposit.id,
+        payer: {
+          name: user.name || 'N/A',
+          email: user.email,
+          document: user.document
+        }
+      });
+
+      // 4. Atualizar nosso depósito com os dados recebidos da KeyClub
+      const updatedDeposit = await this.prisma.deposit.update({
+        where: { id: pendingDeposit.id },
+        data: {
+          externalId: keyclubResponse.transactionId, 
+          status: 'PENDING',
+        },
+      });
+
+      // 5. Retornar apenas o PIX "copia e cola" para o frontend
+      return {
+        pixCode: keyclubResponse.pixCode,
+        depositId: updatedDeposit.id,
+      };
+    } catch (keyclubError: any) {
+      this.logger.error('Erro da API da KeyClub', keyclubError.message || keyclubError);
+
+      await this.prisma.deposit.update({
+        where: { id: pendingDeposit.id },
+        data: { status: 'FAILED' },
+      });
+
+      const errorMessage =
+        keyclubError.response?.data?.message ||
+        'Erro desconhecido ao comunicar com o Gateway. (Verifique logs)';
+      throw new InternalServerErrorException(errorMessage);
+    }
+  }
+
+  /**
+   * Busca o histórico de depósitos (transações) para o usuário logado.
+   */
+  async getHistory(userId: string) {
+    if (!userId) {
+      throw new BadRequestException('ID do usuário não fornecido.');
+    }
+    
+    this.logger.log(`Buscando histórico de depósitos para o usuário: ${userId}`);
+    
+    const deposits = await this.prisma.deposit.findMany({
+      where: {
+        userId: userId,
+      },
+      orderBy: {
+        createdAt: 'desc', 
+      },
+      take: 50,
+    });
+
+    const history = deposits.map(d => ({
+        id: d.id,
+        type: 'DEPOSIT', 
+        amount: d.amountInCents / 100, 
+        status: d.status,
+        date: d.createdAt.toISOString(),
+    }));
+    
     return {
-      success: true,
-      message: `Depósito de R$ ${amount / 100} simulado com sucesso!`,
-      userId: userId,
-      transactionId: `TXN-${Date.now()}`,
+      data: history
     };
   }
 }

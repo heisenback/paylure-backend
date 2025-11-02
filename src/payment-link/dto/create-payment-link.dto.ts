@@ -1,14 +1,21 @@
 // src/payment-link/dto/create-payment-link.dto.ts
-import { IsNotEmpty, IsString, IsInt, IsPositive } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsUUID } from 'class-validator';
 
 export class CreatePaymentLinkDto {
+  // --- CAMPOS QUE VOCÊ JÁ DEVE TER ---
   @IsString()
-  @IsNotEmpty({ message: 'O título (title) é obrigatório.' })
-  title: string;
+  @IsNotEmpty()
+  title: string; // O 'name' do link
 
-  @IsInt({ message: 'O valor (amount) deve ser um número inteiro.' })
-  @IsPositive({ message: 'O valor (amount) deve ser um número positivo.' })
-  @IsNotEmpty({ message: 'O valor (amount) é obrigatório.' })
-  // Lembrete: este valor é em CENTAVOS. (Ex: R$ 10,00 = 1000)
-  amount: number;
+  @IsNumber()
+  amount: number; // O 'amountInCents'
+
+  // --- 🚨 CORREÇÃO: CAMPOS QUE FALTAVAM (TS2339) ---
+  @IsString()
+  @IsNotEmpty()
+  slug: string;
+
+  @IsUUID()
+  @IsNotEmpty()
+  productId: string;
 }

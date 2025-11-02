@@ -4,54 +4,288 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Configuração do seu banco de dados
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// Modelo de Usuário (O Dono da Conta)
+// ===================================
+// 1. MODELO USER (O Dono da Conta)
+// ===================================
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String       @id @default(uuid())
+  email            String       @unique
+  password         String
+  name             String
+  document         String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  balance          Int          @default(0) 
 
-  merchant  Merchant? // 1 User pode ter 1 Merchant
+  // --- CAMPOS PARA API KEY ---
+  apiKey           String       @unique 
+  apiSecret        String       @unique 
+  // ---------------------------------
+
+  // Relações
+  merchant         Merchant?
+  deposits         Deposit[]
+  withdrawals      Withdrawal[] // Relacionamento com saques
 }
 
-// Modelo de Lojista (A Loja)
+// ===================================
+// 2. MODELO MERCHANT (A Loja / O Seller)
+// ===================================
 model Merchant {
-  id        String   @id @default(uuid())
-  storeName String
-  cnpj      String   @unique
-  logoUrl   String?
-  pixKey    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String       @id @default(uuid())
+  storeName        String
+  cnpj             String       @unique
+  logoUrl          String?
+  pixKey           String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 
-  user      User     @relation(fields: [userId], references: [id])
-  userId    String   @unique // 1 Loja pertence a 1 Usuário
+  // Relação 1:1 com User
+  user             User         @relation(fields: [userId], references: [id])
+  userId           String       @unique
 
-  // 1. A LIGAÇÃO: 1 Loja pode ter VÁRIOS links de pagamento
-  paymentLinks PaymentLink[]
+  // Relações N:1
+  products         Product[]
+  paymentLinks     PaymentLink[]
+  deposits         Deposit[]
+  integrations     MembershipIntegration[]
+  subscriptionPlans SubscriptionPlan[] 
 }
 
-// 2. NOSSO NOVO MODELO (O Link de Pagamento)
+// ===================================
+// 3. MODELO PRODUCT (O Produto Digital)
+// ===================================
+model Product {
+  id               String       @id @default(uuid())
+  name             String
+  description      String?
+  priceInCents     Int          // Preço do produto em CENTAVOS
+  isAvailable      Boolean      @default(true)
+  
+  // Relação N:1 com Merchant
+  merchant         Merchant     @relation(fields: [merchantId], references: [id])
+  merchantId       String
+  
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  // Relação 1:N
+  paymentLinks     PaymentLink[]
+  // Relação 1:1 com MarketplaceProduct
+  marketplaceProduct MarketplaceProduct?
+}
+
+
+// ===================================
+// 4. MODELO PAYMENT LINK
+// ===================================
 model PaymentLink {
-  id        String   @id @default(uuid())
-  title     String // Ex: "E-book de Finanças"
+  id               String       @id @default(uuid())
+  slug             String       @unique
+  name             String
+  
+  // --- CORREÇÃO PARA O ERRO TypeScript ---
+  amountInCents    Int          // Valor em centavos 
+  // --- FIM DA CORREÇÃO ---
+  
+  isActive         Boolean      @default(true)
+  
+  // Taxa de processamento definida pelo Seller (em porcentagem)
+  sellerFeeRate    Float        @default(0) 
+  
+  // Relação N:1 com Product
+  product          Product      @relation(fields: [productId], references: [id])
+  productId        String
+  
+  // Relação N:1 com Merchant
+  merchant         Merchant     @relation(fields: [merchantId], references: [id])
+  merchantId       String
 
-  // Vamos salvar o valor em CENTAVOS para evitar problemas com vírgula.
-  // Ex: R$ 10,00 será salvo como 1000
-  amount    Int      
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  // Relação 1:N
+  deposits         Deposit[] // O depósito (pagamento) que usou este link
+}
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
-  // 3. A "CHAVE ESTRANGEIRA" (A LIGAÇÃO DE VOLTA)
-  // Diz que este link pertence a UMA loja (Merchant)
-  merchant    Merchant @relation(fields: [merchantId], references: [id])
-  merchantId  String
+// ===================================
+// 5. MODELO DEPOSIT (O Pagamento PIX)
+// ===================================
+model Deposit {
+  id                   String      @id @default(uuid())
+  externalId           String      @unique // ID externo da KeyClub
+  amountInCents        Int         // Valor do depósito em CENTAVOS
+  feeInCents           Int         @default(0) // Taxa Paylure em CENTAVOS
+  sellerFeeInCents     Int         @default(0) // Taxa do Seller em CENTAVOS
+  netAmountInCents     Int         // Valor líquido para o Seller
+  status               String      @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  
+  // Dados do pagador final
+  payerName            String
+  payerEmail           String
+  payerDocument        String
+
+  // Token para validar o webhook (garante unicidade)
+  webhookToken         String      @unique
+
+ 
+  // Relação com User
+  user                 User        @relation(fields: [userId], references: [id])
+  userId               String
+
+  // Relação com Merchant
+  merchant             Merchant?   @relation(fields: [merchantId], references: [id])
+  merchantId           String?
+  // --- CAMPO: Para vincular à Venda ---
+  paymentLink          PaymentLink? @relation(fields: [paymentLinkId], references: [id])
+  paymentLinkId        String?
+  // --------------------------------------------------------------------------
+
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+}
+
+// ===================================
+// 6. MODELO WITHDRAWAL (O Saque PIX)
+// ===================================
+model Withdrawal {
+  id               String       @id @default(uuid())
+  userId           String
+  user             User         @relation(fields: [userId], references: [id])
+  amount           Int          // Valor do saque em CENTAVOS
+  status           String       @default("PENDING") // PENDING, COMPLETED, FAILED, REVERSED
+  pixKey           String    
+  keyType          String       // Tipo da chave (CPF, EMAIL, etc)
+  description      String?
+  externalId       String       @unique // ID externo para a KeyClub
+  webhookToken     String?      @unique // Token para o webhook de confirmação
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  failureReason    String?
+}
+
+// ===================================
+// 7. MODELO MEMBERSHIP INTEGRATION
+// ===================================
+model MembershipIntegration {
+  id               String       @id @default(uuid())
+  name             String
+  webhookUrl       String
+  platform         String       // Ex: HOTMART_CLUB, MEMBERKIT, MOCK
+  secretKey        String?      // Chave secreta para validação (opcional)
+
+  // Relação N:1 com Merchant
+  merchant         Merchant     @relation(fields: [merchantId], references: [id])
+  merchantId       String
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+}
+
+
+// ===================================
+// 8. MODELO MARKETPLACE PRODUCT
+// ===================================
+model MarketplaceProduct {
+  id               String       @id @default(uuid())
+  
+  // Regras de comissão para o afiliado (em porcentagem - 0 a 100)
+  commissionRate   Float        
+  // Status: AVAILABLE (disponível para afiliação), PENDING (aguardando aprovação)
+  status           String       @default("AVAILABLE") 
+
+  // Tipo de afiliação (Ex: LAST_CLICK, FIRST_CLICK)
+  attributionType  String       @default("LAST_CLICK") 
+
+  // Relação 1:1 com o Produto (Product)
+  product          Product      @relation(fields: [productId], references: [id])
+  productId        String       @unique // Garante que cada produto só tenha 1 registro de Marketplace
+
+  // Relação 1:N com Affiliates (Lista de afiliados que promovem este produto)
+  affiliates       Affiliate[]
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+}
+
+// ===================================
+// 9. MODELO AFFILIATE
+// ===================================
+model Affiliate {
+  id               String       @id @default(uuid())
+
+  // ID do usuário que é o Afiliado (promove)
+  promoterId       String       
+
+  // ID do produto no Marketplace que está sendo promovido
+  marketplaceProductId String
+  marketplaceProduct   MarketplaceProduct @relation(fields: [marketplaceProductId], references: [id])
+
+  // Status de Afiliação (Ex: APPROVED, PENDING, BLOCKED)
+  status           String       @default("APPROVED") 
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  // Restrição para garantir que um Afiliado só promova um produto uma vez
+  @@unique([promoterId, marketplaceProductId])
+}
+
+// ===================================
+// 10. MODELO SUBSCRIPTION PLAN
+// ===================================
+model SubscriptionPlan {
+  id               String       @id @default(uuid())
+  name             String
+  interval         String       // Ex: MONTHLY, ANNUALLY, WEEKLY
+  priceInCents     Int          // Valor da recorrência em CENTAVOS
+  trialPeriodDays  Int          @default(0) // Período de teste gratuito
+  
+  // Relação N:1 com Merchant (dono do plano)
+  merchant         Merchant     @relation(fields: [merchantId], references: [id])
+  merchantId       String
+
+  // Relação 1:N com Assinaturas ativas
+  subscriptions    Subscription[]
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  @@unique([merchantId, name]) // Garante que o nome do plano seja único por Merchant
+}
+
+// ===================================
+// 11. MODELO SUBSCRIPTION (Assinatura Ativa do Cliente)
+// ===================================
+model Subscription {
+  id               String       @id @default(uuid())
+  
+  // Dados do cliente
+  subscriberEmail  String       
+  subscriberName   String       
+  
+  // Status: ACTIVE, CANCELED, INACTIVE, DELINQUENT (inadimplente)
+  status           String       @default("ACTIVE") 
+  
+  // Data da próxima cobrança
+  nextBillingDate  DateTime     
+  
+  // Gateway ID de Recorrência (ID da KeyClub/Stripe etc)
+  gatewaySubscriptionId String?
+  
+  // Relação N:1 com Plano
+  plan             SubscriptionPlan @relation(fields: [planId], references: [id])
+  planId           String
+
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
 }
