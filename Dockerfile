@@ -16,8 +16,7 @@ COPY tsconfig*.json ./
 # Copia o schema do prisma
 COPY prisma/schema.prisma ./prisma/
 
-# 🚨 CORREÇÃO CRÍTICA: Gerar o Prisma Client com os modelos
-# Isso resolve o erro TS2305
+# 🚨 Gerar o Prisma Client com os modelos
 RUN npx prisma generate
 
 # Copia o código fonte
@@ -29,6 +28,10 @@ RUN npm run build
 
 # ===== Runtime (Imagem final, mais leve) =====
 FROM node:20-alpine AS production
+
+# 🚨 CORREÇÃO CRÍTICA AQUI
+# Copia o lockfile para permitir que 'npm ci' funcione
+COPY package-lock.json ./ 
 
 # Copia apenas as dependências de produção
 RUN npm ci --omit=dev
