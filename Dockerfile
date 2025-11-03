@@ -29,5 +29,5 @@ COPY --from=builder /usr/src/app/prisma ./prisma
 
 EXPOSE 3000
 
-# 🚨 CORREÇÃO FINAL: Usa 'sh -c' com 'sleep 5' para resolver o erro de timing na inicialização
-CMD ["sh", "-c", "sleep 5 && node dist/main.js"]
+# 🚨 CORREÇÃO FINAL: Aponta para o caminho CORRETO 'dist/src/main.js'. O 'sleep 5' é opcional aqui, mas ajuda na robustez.
+CMD ["sh", "-c", "sleep 5 && node dist/src/main.js"]
