@@ -37,5 +37,5 @@ RUN npx prisma generate
 # Expõe a porta que o NestJS vai usar (3000 por padrão)
 EXPOSE 3000
 
-# Comando para iniciar a aplicação em modo de produção
-CMD [ "node", "dist/main" ]
+# 🚨 CORREÇÃO FINAL: Comando para iniciar a aplicação em modo de produção
+CMD [ "node", "dist/main.js" ]
