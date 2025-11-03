@@ -13,17 +13,24 @@ services:
       - paylure-db-data:/var/lib/postgresql/data
     networks:
       - paylure-network
+    # 🚨 CORREÇÃO: Adicionando Healthcheck para garantir que o DB esteja pronto
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   # SERVIÇO DO BACKEND (NESTJS)
   api:
-    # 🚨 CORREÇÃO ESSENCIAL: Adicionar a instrução 'build' para construir a imagem localmente
     build:
       context: .
       dockerfile: Dockerfile
     image: paylure-backend
     container_name: paylure-api
     restart: always
+    # 🚨 CORREÇÃO: Usando depends_on com condition: service_healthy
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       # As variáveis de ambiente serão lidas do arquivo .env
       JWT_SECRET: ${JWT_SECRET}

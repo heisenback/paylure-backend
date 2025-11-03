@@ -15,7 +15,6 @@ RUN npm install
 COPY . .
 
 # Gera o cliente Prisma e faz o build do NestJS
-# O comando 'npx prisma generate' deve ser executado antes do build
 RUN npx prisma generate
 RUN npm run build
 
@@ -27,12 +26,12 @@ WORKDIR /usr/src/app
 
 # Copia apenas os arquivos necessários para a produção
 COPY --from=builder /usr/src/app/package*.json ./
+# 🚨 CORREÇÃO: Garante que o node_modules seja copiado do estágio de build
 COPY --from=builder /usr/src/app/node_modules ./node_modules
 COPY --from=builder /usr/src/app/dist ./dist
 COPY --from=builder /usr/src/app/prisma ./prisma
 
 # O comando 'npx prisma generate' deve ser executado novamente na imagem final
-# para garantir que o cliente Prisma esteja presente e configurado corretamente
 RUN npx prisma generate
 
 # Expõe a porta que o NestJS vai usar (3000 por padrão)
