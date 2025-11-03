@@ -1,10 +1,6 @@
 name: paylure
-version: "3.8"
 
 services:
-  # ================
-  # Banco de Dados
-  # ================
   db:
     image: postgres:15-alpine
     container_name: paylure-db
@@ -18,14 +14,11 @@ services:
     networks:
       - paylure-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: ["CMD-SHELL","pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ================
-  # Backend (NestJS)
-  # ================
   api:
     build:
       context: .
@@ -40,13 +33,10 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?schema=public
       PORT: 3000
-      NODE_ENV: production
     ports:
       - "3000:3000"
     networks:
       - paylure-network
-    # NENHUM bind mount de código aqui (evita sobrescrever a build).
-    # Tudo roda com a imagem já construída.
 
 volumes:
   paylure-db-data:
