@@ -11,7 +11,7 @@ COPY prisma ./prisma/
 RUN npm ci
 
 # código + build
-COPY . . [cite: 3]
+COPY . .
 RUN npx prisma generate
 RUN npm run build
 
@@ -29,5 +29,5 @@ COPY --from=builder /usr/src/app/prisma ./prisma
 
 EXPOSE 3000
 
-# 🚨 CORREÇÃO: Usar apenas dist/main.js, pois o build está correto agora.
-CMD ["node","dist/main.js"]
+# 🚨 CORREÇÃO FINAL: Usa 'sh -c' com 'sleep 5' para resolver o erro de timing na inicialização
+CMD ["sh", "-c", "sleep 5 && node dist/main.js"]
