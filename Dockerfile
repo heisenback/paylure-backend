@@ -1,41 +1,48 @@
-# --- STAGE 1: Build ---
+# =========================
+# 1) STAGE: builder
+# =========================
 FROM node:20-alpine AS builder
 
-# Define o diretório de trabalho dentro do container
 WORKDIR /usr/src/app
 
-# Copia os arquivos de configuração do projeto
+# Instala dependências nativas necessárias para o prisma no build
+RUN apk add --no-cache openssl libc6-compat
+
+# Copia apenas o que é necessário para resolver dependências
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Instala as dependências
-RUN npm install
+# Dependências completas para build
+RUN npm ci
 
-# Copia o restante do código-fonte
+# Copia o restante do projeto e gera o cliente do Prisma
 COPY . .
-
-# Gera o cliente Prisma e faz o build do NestJS
 RUN npx prisma generate
+
+# Compila o Nest para produção
 RUN npm run build
 
-# --- STAGE 2: Production ---
+# =========================
+# 2) STAGE: production
+# =========================
 FROM node:20-alpine AS production
 
-# Define o diretório de trabalho
 WORKDIR /usr/src/app
+ENV NODE_ENV=production
 
-# Copia apenas os arquivos necessários para a produção
+# Dependências do prisma em runtime
+RUN apk add --no-cache openssl libc6-compat
+
+# Copia apenas o que é necessário para rodar
 COPY --from=builder /usr/src/app/package*.json ./
-# 🚨 CORREÇÃO: Garante que o node_modules seja copiado do estágio de build
 COPY --from=builder /usr/src/app/node_modules ./node_modules
 COPY --from=builder /usr/src/app/dist ./dist
 COPY --from=builder /usr/src/app/prisma ./prisma
 
-# O comando 'npx prisma generate' deve ser executado novamente na imagem final
+# Gera o client do Prisma dentro da imagem final (garante compatibilidade)
 RUN npx prisma generate
 
-# Expõe a porta que o NestJS vai usar (3000 por padrão)
 EXPOSE 3000
 
-# 🚨 CORREÇÃO FINAL: Comando para iniciar a aplicação em modo de produção
-CMD [ "node", "dist/main.js" ]
+# Se seu main.ts usa process.env.PORT, esse CMD serve:
+CMD ["node", "dist/main.js"]

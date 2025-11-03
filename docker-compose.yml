@@ -1,5 +1,10 @@
+name: paylure
+version: "3.8"
+
 services:
-  # SERVIÇO DE BANCO DE DADOS
+  # ================
+  # Banco de Dados
+  # ================
   db:
     image: postgres:15-alpine
     container_name: paylure-db
@@ -12,14 +17,15 @@ services:
       - paylure-db-data:/var/lib/postgresql/data
     networks:
       - paylure-network
-    # 🚨 CORREÇÃO FINAL: Healthcheck para garantir que o DB esteja pronto
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s # Damos mais tempo para o DB iniciar
-  # SERVIÇO DO BACKEND (NESTJS)
+
+  # ================
+  # Backend (NestJS)
+  # ================
   api:
     build:
       context: .
@@ -27,23 +33,25 @@ services:
     image: paylure-backend
     container_name: paylure-api
     restart: always
-    # 🚨 CORREÇÃO FINAL: Depende do DB estar saudável antes de iniciar
     depends_on:
       db:
         condition: service_healthy
     environment:
       JWT_SECRET: ${JWT_SECRET}
       DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?schema=public
-      PORT: 3000 # Lendo a porta do .env
+      PORT: 3000
+      NODE_ENV: production
     ports:
-      - 3000:3000
+      - "3000:3000"
     networks:
       - paylure-network
+    # NENHUM bind mount de código aqui (evita sobrescrever a build).
+    # Tudo roda com a imagem já construída.
 
-# Volumes: Necessário para persistir os dados do Banco de Dados
 volumes:
   paylure-db-data:
     driver: local
+
 networks:
   paylure-network:
     driver: bridge
