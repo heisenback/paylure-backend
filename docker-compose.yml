@@ -36,7 +36,7 @@ services:
       DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?schema=public
       PORT: 3000
     ports:
-      - "3000:3000"
+      - "8080:3000"
     networks: [paylure-network]
 
 volumes:
