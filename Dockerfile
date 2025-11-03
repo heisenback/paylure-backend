@@ -11,7 +11,7 @@ COPY prisma ./prisma/
 RUN npm ci
 
 # código + build
-COPY . .
+COPY . . [cite: 3]
 RUN npx prisma generate
 RUN npm run build
 
@@ -29,5 +29,5 @@ COPY --from=builder /usr/src/app/prisma ./prisma
 
 EXPOSE 3000
 
-# tenta dist/main.js; se não existir, usa dist/src/main.js
-CMD ["sh","-lc","node dist/main.js || node dist/src/main.js"]
+# 🚨 CORREÇÃO: Usar apenas dist/main.js, pois o build está correto agora.
+CMD ["node","dist/main.js"]

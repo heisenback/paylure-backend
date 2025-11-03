@@ -1,3 +1,4 @@
+version: "3.8"
 name: paylure
 
 services:
@@ -6,6 +7,7 @@ services:
     container_name: paylure-db
     restart: always
     environment:
+      # 🚨 Estas variáveis AGORA serão lidas do seu .env corrigido
       POSTGRES_USER: ${DATABASE_USER}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
       POSTGRES_DB: ${DATABASE_NAME}
@@ -30,6 +32,7 @@ services:
         condition: service_healthy
     environment:
       JWT_SECRET: ${JWT_SECRET}
+      # Esta DATABASE_URL usará as variáveis que você acabou de adicionar no .env
       DATABASE_URL: postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?schema=public
       PORT: 3000
     ports:
