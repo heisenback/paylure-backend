@@ -1,18 +1,25 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
+// 🚨 CORREÇÃO: Importar os pacotes de segurança que instalamos
+import helmet from 'helmet';
+import * as cookieParser from 'cookie-parser';
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // 👉 Define o prefixo global para todas as rotas
+  // --- CORREÇÕES DEPLOY FINAL ---
+
+  // 1. CORREÇÃO DE ROTA 404: Define o prefixo global
   app.setGlobalPrefix('api/v1');
 
+  // 2. CORREÇÃO DE CORS: Permite a conexão do Frontend
   app.enableCors({
     origin: [
       'https://paylure.com.br',       // 👈 FRONT Principal
       'https://www.paylure.com.br',
-      'https://app.paylure.com.br',
       'https://api.paylure.com.br',
+      'https://paylure.vercel.app',  // 👈 Vercel (se ainda usar)
       'http://localhost:3000',        // 👈 Desenvolvimento local
       'http://localhost:5173',        // 👈 Vite local
     ],
@@ -25,13 +32,23 @@ async function bootstrap() {
       'Authorization',
     ],
     credentials: true,
-    preflightContinue: false, // Nest responde o OPTIONS automaticamente
+    preflightContinue: false,
     optionsSuccessStatus: 204,
   });
 
+  // 3. PACOTES DE SEGURANÇA (Estabiliza a aplicação)
+  app.use(helmet());
+  app.use(cookieParser());
+
+  // --- FIM DAS CORREÇÕES ---
+  
   const port = process.env.PORT || 3000;
-  await app.listen(port);
-  console.log(`🚀 Servidor rodando em http://localhost:${port}`);
-  console.log(`📡 API disponível em http://localhost:${port}/api/v1`);
+  
+  // 🚨 CORREÇÃO CRÍTICA (DOCKER): Ouvir em '0.0.0.0'
+  // Substitui 'await app.listen(port);'
+  await app.listen(port, '0.0.0.0'); 
+  
+  console.log(`🚀 Servidor rodando na porta ${port}`);
+  console.log(`📡 API disponível em /api/v1`);
 }
 bootstrap();

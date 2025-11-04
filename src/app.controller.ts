@@ -2,8 +2,8 @@ import { Controller, Get } from '@nestjs/common';
 
 @Controller()
 export class AppController {
-  @Get('/health')
+  @Get('health')
   health() {
-    return { ok: true, ts: Date.now() };
+    return { ok: true, ts: new Date().toISOString() };
   }
 }
