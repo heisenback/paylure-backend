@@ -10,6 +10,10 @@ COPY package*.json ./
 COPY prisma ./prisma/
 RUN npm ci
 
+# 🚨 CACHE BUSTER: Adiciona um argumento para forçar o rebuild da camada de código
+# Você pode alterar o valor a cada vez que o Docker ignorar uma mudança de código.
+ARG CACHE_BUST=2025-11-03-22h58m
+
 # código + build
 COPY . .
 RUN npx prisma generate
@@ -29,5 +33,5 @@ COPY --from=builder /usr/src/app/prisma ./prisma
 
 EXPOSE 3000
 
-# 🚨 CORREÇÃO FINAL: Aponta para o caminho CORRETO 'dist/src/main.js'. O 'sleep 5' é opcional aqui, mas ajuda na robustez.
+# 🚨 CORREÇÃO FINAL: Aponta para o caminho CORRETO 'dist/src/main.js' e usa o sleep.
 CMD ["sh", "-c", "sleep 5 && node dist/src/main.js"]
