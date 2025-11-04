@@ -8,11 +8,11 @@ RUN apk add --no-cache openssl libc6-compat
 # deps e prisma
 COPY package*.json ./
 COPY prisma ./prisma/
-RUN npm ci
+# 🚨 CORREÇÃO: Trocado 'npm ci' por 'npm install' para garantir que o package.json seja lido
+RUN npm install
 
 # 🚨 CACHE BUSTER: Adiciona um argumento para forçar o rebuild da camada de código
-# Você pode alterar o valor a cada vez que o Docker ignorar uma mudança de código.
-ARG CACHE_BUST=2025-11-03-22h58m
+ARG CACHE_BUST=2025-11-04-09h25m
 
 # código + build
 COPY . .
