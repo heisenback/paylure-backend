@@ -13,7 +13,7 @@ async function bootstrap() {
   // --- CORREÇÕES DEPLOY FINAL ---
 
   // 1. CORREÇÃO DE ROTA 404: Define o prefixo global
-  app.setGlobalPrefix('api');
+  app.setGlobalPrefix('api/v1');
 
   // 2. CORREÇÃO DE CORS: Permite a conexão do Frontend
   app.enableCors({
@@ -50,6 +50,6 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0'); 
   
   console.log(`🚀 Servidor rodando na porta ${port}`);
-  console.log(`📡 API disponível em /api`);
+  console.log(`📡 API disponível em /api/v1`);
 }
 bootstrap();
