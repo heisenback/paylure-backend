@@ -50,6 +50,6 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0'); 
   
   console.log(`🚀 Servidor rodando na porta ${port}`);
-  console.log(`📡 API disponível em /api/v1`);
+  console.log(`📡 API disponível em /api`);
 }
 bootstrap();
