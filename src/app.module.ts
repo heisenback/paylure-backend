@@ -5,30 +5,30 @@ import { AppController } from './app.controller';
 import { AuthModule } from './auth/auth.module';
 import { PrismaModule } from './prisma/prisma.module';
 
-// 🚨 ADICIONE ESTAS IMPORTAÇÕES (BASEADO NAS ROTAS FALTANTES)
-import { DepositsModule } from './deposit/deposit.module'; 
+// 🚨 CORREÇÃO: Ajustando para o nome singular correto
+import { DepositModule } from './deposit/deposit.module'; 
 import { TransactionsModule } from './transactions/transactions.module'; 
-import { ProductsModule } from './product/product.module'; 
+import { ProductModule } from './product/product.module'; 
 import { MarketplaceModule } from './marketplace/marketplace.module';
-import { AffiliatesModule } from './affiliate/affiliate.module';
+import { AffiliateModule } from './affiliate/affiliate.module';
 import { SalesModule } from './sales/sales.module';
-import { ReportsModule } from './report/report.module';
-import { MembershipModule } from './membership/membership.module'; // Exemplo para /membership/integrations
+import { ReportModule } from './report/report.module';
+import { MembershipModule } from './membership/membership.module';
 
 @Module({
   imports: [
     PrismaModule,  
     AuthModule,    
-    // 🚨 LISTA COMPLETA DOS MÓDULOS DE NEGÓCIO
-    DepositsModule, 
+    // 🚨 LISTA DE IMPORTS CORRIGIDA (AGORA NO SINGULAR)
+    DepositModule, 
     TransactionsModule,
-    ProductsModule,
+    ProductModule,
     MarketplaceModule,
-    AffiliatesModule,
+    AffiliateModule,
     SalesModule,
-    ReportsModule,
+    ReportModule,
     MembershipModule,
-    // (Adicione qualquer outro módulo que seu projeto tenha, como WithdrawalModule)
+    // ... (e outros módulos da sua aplicação)
   ],
   controllers: [AppController],
   providers: [],
