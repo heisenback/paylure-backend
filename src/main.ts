@@ -1,9 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
-// 🚨 CORREÇÃO: Importar os pacotes de segurança que instalamos
+// 🚨 CORREÇÃO: Importar 'helmet' como default
 import helmet from 'helmet';
-import * as cookieParser from 'cookie-parser';
+
+// 🚨 CORREÇÃO: Importar 'cookie-parser' como default (sem o * as)
+import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -36,7 +38,7 @@ async function bootstrap() {
     optionsSuccessStatus: 204,
   });
 
-  // 3. PACOTES DE SEGURANÇA (Estabiliza a aplicação)
+  // 3. PACOTES DE SEGURANÇA (Agora importados corretamente)
   app.use(helmet());
   app.use(cookieParser());
 
@@ -45,7 +47,6 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   
   // 🚨 CORREÇÃO CRÍTICA (DOCKER): Ouvir em '0.0.0.0'
-  // Substitui 'await app.listen(port);'
   await app.listen(port, '0.0.0.0'); 
   
   console.log(`🚀 Servidor rodando na porta ${port}`);
