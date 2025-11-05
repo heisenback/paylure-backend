@@ -34,7 +34,7 @@ export class KeyclubService {
   // Configuração do axios com bypass SSL
   private readonly axiosConfig = {
     httpsAgent: new https.Agent({
-      rejectUnauthorized: false, // Temporário para debug
+      rejectUnauthorized: false,
     }),
     timeout: 30000,
   };
@@ -45,69 +45,92 @@ export class KeyclubService {
       'Content-Type': 'application/json',
       Accept: 'application/json',
       'User-Agent': 'Paylure-Gateway/1.0',
-      'X-Forwarded-For': '177.11.0.1', // IP brasileiro simulado
     };
   }
 
   private async ensureToken(): Promise<string> {
     if (this.token) return this.token;
 
-    const clientId = (process.env.KEY_CLUB_CLIENT_ID || '').trim();
-    const clientSecret = (process.env.KEY_CLUB_CLIENT_SECRET || '').trim();
+    const clientId = process.env.KEY_CLUB_CLIENT_ID?.trim();
+    const clientSecret = process.env.KEY_CLUB_CLIENT_SECRET?.trim();
 
     if (!clientId || !clientSecret) {
+      this.logger.error('[KeyclubService] ❌ Credenciais ausentes no .env');
       throw new Error(
         'Credenciais da KeyClub ausentes. Configure KEY_CLUB_CLIENT_ID e KEY_CLUB_CLIENT_SECRET no .env.',
       );
     }
 
     try {
-      this.logger.log(`[KeyclubService] Autenticando com KeyClub...`);
+      this.logger.log(`[KeyclubService] 🔐 Tentando autenticar...`);
       this.logger.log(`[KeyclubService] URL: ${this.baseUrl}/api/auth/login`);
-      this.logger.log(`[KeyclubService] Client ID: ${clientId.substring(0, 20)}...`);
+      this.logger.log(`[KeyclubService] Client ID: ${clientId.substring(0, 30)}...`);
+      this.logger.log(`[KeyclubService] Client Secret (primeiros 20 chars): ${clientSecret.substring(0, 20)}...`);
 
       const url = `${this.baseUrl}/api/auth/login`;
-      const { data, status } = await axios.post(
+      
+      const payload = {
+        client_id: clientId,
+        client_secret: clientSecret,
+      };
+
+      this.logger.log(`[KeyclubService] Payload: ${JSON.stringify({ client_id: clientId, client_secret: clientSecret.substring(0, 20) + '...' })}`);
+
+      const { data, status, headers } = await axios.post(
         url,
-        {
-          client_id: clientId,
-          client_secret: clientSecret,
-        },
+        payload,
         {
           ...this.axiosConfig,
           headers: {
             'Content-Type': 'application/json',
             Accept: 'application/json',
             'User-Agent': 'Paylure-Gateway/1.0',
-            'X-Forwarded-For': '177.11.0.1',
           },
         },
       );
 
-      this.logger.log(`[KeyclubService] Resposta da autenticação: status=${status}`);
+      this.logger.log(`[KeyclubService] ✅ Resposta HTTP: status=${status}`);
+      this.logger.log(`[KeyclubService] Response headers: ${JSON.stringify(headers)}`);
+      this.logger.log(`[KeyclubService] Response data: ${JSON.stringify(data).substring(0, 200)}`);
 
-      const accessToken = data?.token;
+      const accessToken = data?.token || data?.access_token || data?.accessToken;
+      
       if (!accessToken) {
-        this.logger.error(`[KeyclubService] Resposta sem token: ${JSON.stringify(data)}`);
-        throw new Error('Resposta sem token.');
+        this.logger.error(`[KeyclubService] ❌ Token não encontrado na resposta`);
+        this.logger.error(`[KeyclubService] Resposta completa: ${JSON.stringify(data)}`);
+        throw new Error('Resposta da API não contém token de acesso.');
       }
 
       this.token = accessToken as string;
       this.logger.log('[KeyclubService] ✅ Token obtido com sucesso!');
+      this.logger.log(`[KeyclubService] Token (primeiros 20 chars): ${this.token.substring(0, 20)}...`);
       return this.token;
+      
     } catch (e) {
       const ax = e as AxiosError<any>;
+      
       if (ax.response) {
-        this.logger.error(
-          `[KeyclubService] Erro HTTP: status=${ax.response.status}`,
-        );
-        this.logger.error(
-          `[KeyclubService] Response data: ${JSON.stringify(ax.response.data).substring(0, 500)}`,
-        );
-        throw new Error('Falha na autenticação da KeyClub - verifique as credenciais.');
+        this.logger.error(`[KeyclubService] ❌ Erro HTTP: status=${ax.response.status}`);
+        this.logger.error(`[KeyclubService] Response headers: ${JSON.stringify(ax.response.headers)}`);
+        this.logger.error(`[KeyclubService] Response data: ${JSON.stringify(ax.response.data)}`);
+        
+        if (ax.response.status === 403) {
+          this.logger.error(`[KeyclubService] 🚫 ERRO 403: Credenciais inválidas ou acesso negado`);
+          this.logger.error(`[KeyclubService] Verifique se o Client ID e Secret estão corretos no painel da KeyClub`);
+          this.logger.error(`[KeyclubService] Client ID usado: ${clientId}`);
+        }
+        
+        throw new Error(`Erro ${ax.response.status}: ${ax.response.data?.message || 'Falha na autenticação'}`);
       }
-      this.logger.error(`[KeyclubService] Erro de rede: ${ax.message}`);
-      throw new Error('Falha de rede ao comunicar com KeyClub.');
+      
+      if (ax.request) {
+        this.logger.error(`[KeyclubService] ❌ Sem resposta do servidor`);
+        this.logger.error(`[KeyclubService] Request: ${JSON.stringify(ax.request).substring(0, 200)}`);
+        throw new Error('Sem resposta da KeyClub API - Verifique a conectividade');
+      }
+      
+      this.logger.error(`[KeyclubService] ❌ Erro ao configurar requisição: ${ax.message}`);
+      throw new Error(`Erro na requisição: ${ax.message}`);
     }
   }
 
@@ -142,7 +165,7 @@ export class KeyclubService {
 
     try {
       this.logger.log(
-        `[KeyclubService] Criando depósito: ${payload.external_id} - R$ ${payload.amount}`,
+        `[KeyclubService] 💰 Criando depósito: ${payload.external_id} - R$ ${payload.amount}`,
       );
       const url = `${this.baseUrl}/api/payments/deposit`;
       const { data, status } = await axios.post(url, payload, {
@@ -150,13 +173,16 @@ export class KeyclubService {
         headers: this.authHeaders(),
       });
 
-      this.logger.log(`[KeyclubService] Depósito criado: status=${status}`);
+      this.logger.log(`[KeyclubService] ✅ Depósito criado: status=${status}`);
       return data;
     } catch (error) {
       const ax = error as AxiosError<any>;
       if (ax.response) {
         this.logger.error(
-          `[KeyclubService] Erro ao criar depósito: ${ax.response.status}`,
+          `[KeyclubService] ❌ Erro ao criar depósito: ${ax.response.status}`,
+        );
+        this.logger.error(
+          `[KeyclubService] Response: ${JSON.stringify(ax.response.data)}`,
         );
         throw new Error(ax.response.data?.message || 'Erro da API da KeyClub');
       }
@@ -183,7 +209,7 @@ export class KeyclubService {
 
     try {
       this.logger.log(
-        `[KeyclubService] Solicitando saque: ${payload.external_id} - R$ ${payload.amount}`,
+        `[KeyclubService] 💸 Solicitando saque: ${payload.external_id} - R$ ${payload.amount}`,
       );
       const url = `${this.baseUrl}/api/withdrawals/withdraw`;
       const { data, status } = await axios.post(url, payload, {
@@ -191,13 +217,16 @@ export class KeyclubService {
         headers: this.authHeaders(),
       });
 
-      this.logger.log(`[KeyclubService] Saque criado: status=${status}`);
+      this.logger.log(`[KeyclubService] ✅ Saque criado: status=${status}`);
       return data;
     } catch (error) {
       const ax = error as AxiosError<any>;
       if (ax.response) {
         this.logger.error(
-          `[KeyclubService] Erro ao criar saque: ${ax.response.status}`,
+          `[KeyclubService] ❌ Erro ao criar saque: ${ax.response.status}`,
+        );
+        this.logger.error(
+          `[KeyclubService] Response: ${JSON.stringify(ax.response.data)}`,
         );
         throw new Error(ax.response.data?.message || 'Erro da API da KeyClub');
       }
