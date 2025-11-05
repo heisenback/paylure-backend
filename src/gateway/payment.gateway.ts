@@ -18,10 +18,17 @@ import { Logger } from '@nestjs/common';
  */
 @WebSocketGateway({
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    // ✅ CORREÇÃO: Aceita múltiplas origens (localhost E vercel)
+    origin: [
+      'http://localhost:3000',
+      'https://paylure.com.br',
+      'https://paylure.vercel.app',
+      'https://*.vercel.app', // Qualquer subdomínio do Vercel
+    ],
     credentials: true,
+    methods: ['GET', 'POST'],
   },
-  namespace: '/payments', // ws://localhost:4000/payments
+  namespace: '/', // ✅ CORREÇÃO: Remove o namespace para simplificar
 })
 export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
