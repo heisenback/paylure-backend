@@ -10,13 +10,21 @@ export class RegisterAuthDto {
 
   @IsString()
   @IsOptional()
-  name?: string; // <-- ADICIONADO
+  name?: string;
 
   @IsString()
   @IsOptional()
-  storeName?: string; // <-- ADICIONADO
+  username?: string; // ✅ ADICIONADO - Nome de usuário do frontend
 
   @IsString()
   @IsOptional()
-  cnpj?: string; // <-- ADICIONADO
+  document?: string; // ✅ ADICIONADO - CPF/CNPJ do usuário
+
+  @IsString()
+  @IsOptional()
+  storeName?: string;
+
+  @IsString()
+  @IsOptional()
+  cnpj?: string;
 }
