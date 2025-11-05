@@ -21,7 +21,8 @@ function generateApiKey(): string {
 }
 
 /**
- * Gera um API Secret forte no formato: sk_live_XXXXXXXXXXXXXXXXXXXXXXXX
+ * 🚨 CORREÇÃO: O comentário foi alterado para evitar o falso positivo do GitHub.
+ * Gera um API Secret forte (ex: sk_live_[REMOVIDO_PARA_SEGURANCA])
  */
 function generateApiSecret(): string {
   const randomPart = crypto.randomBytes(32).toString('hex');
