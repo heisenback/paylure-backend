@@ -1,5 +1,3 @@
-cat > ~/paylure-backend/src/auth/guards/api-key.guard.ts << 'EOF'
-// src/auth/guards/api-key.guard.ts
 import {
   Injectable,
   CanActivate,
@@ -56,4 +54,3 @@ export class ApiKeyGuard implements CanActivate {
     return true;
   }
 }
-EOF

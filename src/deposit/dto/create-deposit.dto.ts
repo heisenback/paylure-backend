@@ -1,5 +1,3 @@
-cat > ~/paylure-backend/src/deposit/dto/create-deposit.dto.ts << 'EOF'
-// src/deposit/dto/create-deposit.dto.ts
 import { IsNumber, IsNotEmpty, IsPositive } from 'class-validator';
 
 export class CreateDepositDto {
@@ -8,4 +6,3 @@ export class CreateDepositDto {
   @IsNotEmpty({ message: 'O valor do depósito é obrigatório.' })
   amount: number;
 }
-EOF

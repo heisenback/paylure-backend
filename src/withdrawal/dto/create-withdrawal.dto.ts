@@ -1,5 +1,3 @@
-cat > ~/paylure-backend/src/withdrawal/dto/create-withdrawal.dto.ts << 'EOF'
-// src/withdrawal/dto/create-withdrawal.dto.ts
 import { IsNotEmpty, IsNumber, IsString, Min, IsIn } from 'class-validator';
 
 export class CreateWithdrawalDto {
@@ -22,4 +20,3 @@ export class CreateWithdrawalDto {
   @IsString()
   description?: string;
 }
-EOF
