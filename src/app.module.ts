@@ -1,6 +1,7 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
+import { ConfigModule } from '@nestjs/config';
 
 // Core modules
 import { PrismaModule } from './prisma/prisma.module';
@@ -14,7 +15,6 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 
 // Integration modules
 import { KeyclubModule } from './keyclub/keyclub.module';
-import { GatewayModule } from './gateway/gateway.module';
 
 // Business modules
 import { ProductModule } from './product/product.module';
@@ -27,11 +27,17 @@ import { MerchantModule } from './merchant/merchant.module';
 import { PaymentLinkModule } from './payment-link/payment-link.module';
 import { ReportModule } from './report/report.module';
 
-// ⭐ Public API Module (para clientes externos)
+// Public API Module (para clientes externos)
 import { PublicApiModule } from './api/public-api.module';
 
 @Module({
   imports: [
+    // Config (global)
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+    }),
+
     // Core (sempre primeiro)
     PrismaModule,
     AuthModule,
@@ -44,7 +50,6 @@ import { PublicApiModule } from './api/public-api.module';
 
     // External Integrations
     KeyclubModule,
-    GatewayModule,
 
     // Business Logic
     ProductModule,
@@ -57,7 +62,7 @@ import { PublicApiModule } from './api/public-api.module';
     PaymentLinkModule,
     ReportModule,
 
-    // ⭐ Public API (Client ID/Secret Authentication)
+    // Public API (Client ID/Secret Authentication)
     PublicApiModule,
   ],
   controllers: [AppController],

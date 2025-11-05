@@ -14,8 +14,11 @@ import * as bcrypt from 'bcrypt';
  * Usado para endpoints públicos de API onde clientes externos
  * usam suas credenciais ao invés de JWT.
  * 
- * Exemplo de uso:
- * @UseGuards(ApiKeyGuard)
+ * Formato do header:
+ * Authorization: ApiKey CLIENT_ID:CLIENT_SECRET
+ * 
+ * Exemplo:
+ * Authorization: ApiKey paylure_abc123:sk_live_xyz789
  */
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
@@ -28,14 +31,18 @@ export class ApiKeyGuard implements CanActivate {
     const authHeader = request.headers['authorization'];
     
     if (!authHeader) {
-      throw new UnauthorizedException('Credenciais de API ausentes. Use: Authorization: ApiKey client_id:client_secret');
+      throw new UnauthorizedException(
+        'Credenciais de API ausentes. Use: Authorization: ApiKey client_id:client_secret'
+      );
     }
 
     // Formato esperado: "ApiKey client_id:client_secret"
     const [type, credentials] = authHeader.split(' ');
     
     if (type !== 'ApiKey' || !credentials) {
-      throw new UnauthorizedException('Formato inválido. Use: Authorization: ApiKey client_id:client_secret');
+      throw new UnauthorizedException(
+        'Formato inválido. Use: Authorization: ApiKey client_id:client_secret'
+      );
     }
 
     const [clientId, clientSecret] = credentials.split(':');
@@ -61,11 +68,6 @@ export class ApiKeyGuard implements CanActivate {
     
     if (!isSecretValid) {
       throw new UnauthorizedException('Client Secret inválido.');
-    }
-
-    // Verifica se a conta está ativa
-    if (user.isBanned) {
-      throw new UnauthorizedException('Conta banida. Entre em contato com o suporte.');
     }
 
     // Anexa o usuário à requisição (disponível em @GetUser() nos controllers)
