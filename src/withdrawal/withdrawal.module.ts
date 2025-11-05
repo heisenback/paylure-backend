@@ -12,5 +12,6 @@ import { KeyclubModule } from 'src/keyclub/keyclub.module';
   ],
   controllers: [WithdrawalController],
   providers: [WithdrawalService],
+  exports: [WithdrawalService], // ✅ CORREÇÃO: Exporta o WithdrawalService
 })
 export class WithdrawalModule {}

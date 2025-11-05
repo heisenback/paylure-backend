@@ -14,5 +14,6 @@ import { KeyclubModule } from 'src/keyclub/keyclub.module';
   ],
   controllers: [DepositController],
   providers: [DepositService],
+  exports: [DepositService], // ✅ CORREÇÃO: Exporta o DepositService
 })
 export class DepositModule {}
