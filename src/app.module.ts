@@ -1,3 +1,4 @@
+cat > ~/paylure-backend/src/app.module.ts << 'EOF'
 // src/app.module.ts
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
@@ -69,3 +70,4 @@ import { PublicApiModule } from './api/public-api.module';
   providers: [],
 })
 export class AppModule {}
+EOF
