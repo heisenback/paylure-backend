@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { KeyclubService } from 'src/keyclub/keyclub.service';
-import { CreateDepositDto } from './dto/create-deposit.dto'; // 🚨 USANDO O DTO CORRIGIDO
+import { CreateDepositDto } from './dto/create-deposit.dto';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -23,19 +23,17 @@ export class DepositService {
   /**
    * Cria um novo depósito (PIX) para um Usuário/Seller.
    */
-  async createDeposit(userId: string, dto: CreateDepositDto) { // 🚨 CORREÇÃO: Usando o CreateDepositDto
-    
-    // Agora o amount vem do DTO
+  async createDeposit(userId: string, dto: CreateDepositDto) {
     const amountAsAny = dto.amount;
 
-    // 1. ENCONTRAR O USUÁRIO (User) logado
+    // 1. Encontrar o usuário logado
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
         name: true,
         email: true,
-        document: true, 
+        document: true,
       },
     });
 
@@ -48,7 +46,7 @@ export class DepositService {
         'Seu perfil precisa ter um CPF/Documento cadastrado e válido para realizar depósitos.',
       );
     }
-    
+
     if (typeof amountAsAny !== 'number' || amountAsAny <= 0) {
       throw new BadRequestException('Valor de depósito inválido.');
     }
@@ -58,20 +56,20 @@ export class DepositService {
 
     let pendingDeposit;
     try {
-      // 2. Criar o registro do Depósito no seu banco como "PENDENTE"
+      // 2. Criar o registro do Depósito no banco como PENDING
       pendingDeposit = await this.prisma.deposit.create({
         data: {
-          amountInCents: amountAsAny, 
+          amountInCents: amountAsAny,
           status: 'PENDING',
           user: {
             connect: { id: user.id },
           },
-          payerName: user.name || 'N/A', 
+          payerName: user.name || 'N/A',
           payerEmail: user.email,
-          payerDocument: user.document, 
+          payerDocument: user.document,
           webhookToken: webhookToken,
-          externalId: 'DEP-' + user.id + '-' + Date.now(), 
-          netAmountInCents: amountAsAny, 
+          externalId: 'DEP-' + user.id + '-' + Date.now(),
+          netAmountInCents: amountAsAny,
         },
       });
     } catch (e) {
@@ -89,20 +87,20 @@ export class DepositService {
         payer: {
           name: user.name || 'N/A',
           email: user.email,
-          document: user.document
-        }
+          document: user.document,
+        },
       });
 
-      // 4. Atualizar nosso depósito com os dados recebidos da KeyClub
+      // 4. Atualizar depósito com dados da KeyClub
       const updatedDeposit = await this.prisma.deposit.update({
         where: { id: pendingDeposit.id },
         data: {
-          externalId: keyclubResponse.transactionId, 
+          externalId: keyclubResponse.transactionId,
           status: 'PENDING',
         },
       });
 
-      // 5. Retornar apenas o PIX "copia e cola" para o frontend
+      // 5. Retornar apenas o PIX "copia e cola"
       return {
         pixCode: keyclubResponse.pixCode,
         depositId: updatedDeposit.id,
@@ -123,35 +121,35 @@ export class DepositService {
   }
 
   /**
-   * Busca o histórico de depósitos (transações) para o usuário logado.
+   * Busca o histórico de depósitos para o usuário logado.
    */
   async getHistory(userId: string) {
     if (!userId) {
       throw new BadRequestException('ID do usuário não fornecido.');
     }
-    
+
     this.logger.log(`Buscando histórico de depósitos para o usuário: ${userId}`);
-    
+
     const deposits = await this.prisma.deposit.findMany({
       where: {
         userId: userId,
       },
       orderBy: {
-        createdAt: 'desc', 
+        createdAt: 'desc',
       },
       take: 50,
     });
 
-    const history = deposits.map(d => ({
-        id: d.id,
-        type: 'DEPOSIT', 
-        amount: d.amountInCents / 100, 
-        status: d.status,
-        date: d.createdAt.toISOString(),
+    const history = deposits.map((d) => ({
+      id: d.id,
+      type: 'DEPOSIT',
+      amount: d.amountInCents / 100,
+      status: d.status,
+      date: d.createdAt.toISOString(),
     }));
-    
+
     return {
-      data: history
+      data: history,
     };
   }
 }

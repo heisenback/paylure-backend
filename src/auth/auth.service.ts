@@ -2,21 +2,30 @@
 import {
   Injectable,
   ConflictException,
-  UnauthorizedException, 
+  UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RegisterAuthDto } from './dto/register-auth.dto';
 import * as bcrypt from 'bcrypt';
-import { JwtService } from '@nestjs/jwt'; 
+import { JwtService } from '@nestjs/jwt';
 import { LoginAuthDto } from './dto/login-auth.dto';
-import * as uuid from 'uuid'; 
-// 🚨 NOVO: Importa o módulo crypto nativo do Node.js para chaves seguras
-import * as crypto from 'crypto'; 
+import * as uuid from 'uuid';
+import * as crypto from 'crypto';
 
-// Função para gerar uma chave de API segura
-function generateApiKey(length: number = 32): string {
-  // Retorna uma string hexadecimal aleatória
-  return crypto.randomBytes(length).toString('hex');
+/**
+ * Gera uma API Key única no formato: paylure_XXXXXXXXXXXX
+ */
+function generateApiKey(): string {
+  const randomPart = crypto.randomBytes(16).toString('hex');
+  return `paylure_${randomPart}`;
+}
+
+/**
+ * Gera um API Secret forte no formato: sk_live_XXXXXXXXXXXXXXXXXXXXXXXX
+ */
+function generateApiSecret(): string {
+  const randomPart = crypto.randomBytes(32).toString('hex');
+  return `sk_live_${randomPart}`;
 }
 
 @Injectable()
@@ -26,9 +35,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  // --- Função de Cadastro (CORRIGIDA) ---
   async register(dto: RegisterAuthDto) {
-    // 1. Verificar E-mail Único
+    // 1. Verifica se o email já existe
     const userExists = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -37,101 +45,100 @@ export class AuthService {
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
-    // 2. Geração de Dados FALSOS ÚNICOS e CHAVES DE API
-    const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14); 
+    // 2. Gera CNPJ único e nome padrão da loja
+    const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
     const defaultStoreName = `Loja-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-    // Geração das chaves de API
-    const apiKey = generateApiKey(16);
-    const apiSecret = generateApiKey(32);
 
-    // 3. Hashing de Senha
+    // 3. Gera credenciais de API
+    const apiKey = generateApiKey(); // paylure_abc123...
+    const apiSecret = generateApiSecret(); // sk_live_xyz789...
+
+    // 4. Hash da senha e do API Secret
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(dto.password, salt);
+    const hashedApiSecret = await bcrypt.hash(apiSecret, salt);
 
-    // 4. Criação Aninhada
     try {
-        const userWithMerchant = await this.prisma.user.create({
-            data: {
-                email: dto.email,
-                name: dto.name || 'Usuário Padrão', 
-                password: hashedPassword,
-                
-                // 🔑 INCLUSÃO DAS CHAVES DE API
-                apiKey: apiKey, 
-                apiSecret: apiSecret,
-
-                // Criação Aninhada do Merchant com dados únicos gerados
-                merchant: {
-                    create: {
-                        storeName: defaultStoreName, 
-                        cnpj: uniqueCnpj, // CNPJ ÚNICO GERADO
-                    },
-                },
+      // 5. Cria usuário com merchant e credenciais
+      const userWithMerchant = await this.prisma.user.create({
+        data: {
+          email: dto.email,
+          name: dto.name || 'Usuário Padrão',
+          password: hashedPassword,
+          apiKey: apiKey, // Client ID (público)
+          apiSecret: hashedApiSecret, // Client Secret (hash, nunca mostrado novamente)
+          merchant: {
+            create: {
+              storeName: defaultStoreName,
+              cnpj: uniqueCnpj,
             },
-            select: {
-                id: true,
-                email: true,
-                name: true,
-                createdAt: true,
-                updatedAt: true,
-                // Garantimos que o merchant será incluído
-                merchant: true, 
-                // Também retornamos as novas chaves para o usuário ver
-                apiKey: true,
-                apiSecret: true,
-            }
-        });
+          },
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          createdAt: true,
+          updatedAt: true,
+          merchant: true,
+          apiKey: true,
+          // ⚠️ NÃO retornar apiSecret hasheado
+        },
+      });
 
-        // Corrigido: Desestruturação funciona, pois `merchant` está em `select`
-        const { merchant, ...userData } = userWithMerchant;
+      const { merchant, ...userData } = userWithMerchant;
 
-        return { 
-            user: userData,
-            merchant: merchant,
-            message: 'Registro e Lojista criados com sucesso!' 
-        };
+      return {
+        user: userData,
+        merchant: merchant,
+        // ⭐ Retorna o apiSecret em TEXTO PLANO apenas UMA VEZ (no cadastro)
+        apiSecret: apiSecret, // Usuário deve salvar isso!
+        message: 'Registro e Lojista criados com sucesso! Salve suas credenciais de API em local seguro.',
+      };
     } catch (error) {
-        if (error.code === 'P2002') { 
-            throw new ConflictException('O e-mail fornecido já está em uso.');
-        }
-        throw error; 
+      if (error.code === 'P2002') {
+        throw new ConflictException('O e-mail fornecido já está em uso.');
+      }
+      throw error;
     }
   }
 
-  // --- Função de Login (CORRIGIDA) ---
   async login(dto: LoginAuthDto) {
-    // 🚨 CORREÇÃO: Usar `select` ou `include` para garantir que `apiKey` e `apiSecret`
-    // e `merchant` sejam carregados no objeto `user` antes da desestruturação.
+    // 1. Busca usuário
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
       include: {
-        merchant: true, 
-      }
+        merchant: true,
+      },
     });
 
     if (!user) {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
+    // 2. Valida senha
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
+    // 3. Gera JWT payload
     const payload = {
-      sub: user.id, 
+      sub: user.id,
       email: user.email,
       name: user.name,
-      merchantId: user.merchant?.id, 
+      merchantId: user.merchant?.id,
     };
 
-    // Corrigido: Desestruturação de `user` funciona, pois incluímos `merchant`
-    const { password, merchant, ...userData } = user;
+    const { password, apiSecret, merchant, ...userData } = user;
 
     return {
       access_token: await this.jwtService.signAsync(payload),
-      user: userData,
+      user: {
+        ...userData,
+        // ⚠️ NÃO retornar apiSecret hasheado no login
+      },
       merchant: merchant,
     };
   }
