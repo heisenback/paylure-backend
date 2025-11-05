@@ -65,6 +65,7 @@ export class AuthService {
         data: {
           email: dto.email,
           name: dto.name || 'Usuário Padrão',
+          document: dto.document || null, // ✅ SALVA O CPF/CNPJ DO USUÁRIO
           password: hashedPassword,
           apiKey: apiKey, // Client ID (público)
           apiSecret: hashedApiSecret, // Client Secret (hash, nunca mostrado novamente)
@@ -79,6 +80,7 @@ export class AuthService {
           id: true,
           email: true,
           name: true,
+          document: true, // ✅ RETORNA O DOCUMENT NO RESPONSE
           createdAt: true,
           updatedAt: true,
           merchant: true,
