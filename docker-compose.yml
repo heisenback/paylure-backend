@@ -29,6 +29,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # 👇 AJUSTE CRÍTICO: FORÇA O DOCKER A LER OS VALORES DO ARQUIVO .ENV
+    env_file:
+      - .env
     environment:
       JWT_SECRET: ${JWT_SECRET}
       DATABASE_URL: postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?schema=public
@@ -42,7 +45,7 @@ services:
       API_URL: ${API_URL}
       FRONTEND_URL: ${FRONTEND_URL}
       NODE_ENV: ${NODE_ENV}
-      # 👇 VARIÁVEIS VAPID ADICIONADAS PARA CORRIGIR O ERRO
+      # Variáveis VAPID (devem estar presentes no .env)
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
       VAPID_EMAIL: ${VAPID_EMAIL}
