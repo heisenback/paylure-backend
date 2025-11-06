@@ -8,6 +8,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { PaymentGateway } from 'src/gateway/payment.gateway';
+import { PushNotificationService } from 'src/push-notification/push-notification.service'; // 🔔 NOVO
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -19,6 +20,7 @@ export class WebhooksService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly paymentGateway: PaymentGateway,
+    private readonly pushNotificationService: PushNotificationService, // 🔔 NOVO
   ) {
     this.KEY_CLUB_WEBHOOK_SECRET = this.configService.get<string>(
       'KEY_CLUB_WEBHOOK_SECRET',
@@ -103,6 +105,7 @@ export class WebhooksService {
         `[SUCESSO] Saldo do Usuário ${deposit.user.name} (ID: ${deposit.userId}) atualizado em +${amountInCents} centavos (R$ ${(amountInCents / 100).toFixed(2)}).`,
       );
 
+      // WebSocket
       this.paymentGateway.emitDepositUpdate(deposit.externalId, {
         depositId: deposit.id,
         amount: amountInCents / 100,
@@ -110,6 +113,13 @@ export class WebhooksService {
       });
 
       this.paymentGateway.notifyBalanceUpdate(deposit.userId, updatedUser.balance / 100);
+
+      // 🔔 PUSH NOTIFICATION
+      await this.pushNotificationService.notifyPaymentReceived(
+        deposit.userId,
+        amountInCents,
+        deposit.payerName,
+      );
 
       return {
         success: true,
@@ -162,6 +172,13 @@ export class WebhooksService {
         status: 'COMPLETED',
       });
 
+      // 🔔 PUSH NOTIFICATION
+      await this.pushNotificationService.notifyWithdrawalProcessed(
+        withdrawal.userId,
+        withdrawal.amount,
+        'COMPLETED',
+      );
+
       return {
         success: true,
         message: 'Saque completado com sucesso!',
@@ -200,6 +217,13 @@ export class WebhooksService {
       });
 
       this.paymentGateway.notifyBalanceUpdate(withdrawal.userId, updatedUser.balance / 100);
+
+      // 🔔 PUSH NOTIFICATION
+      await this.pushNotificationService.notifyWithdrawalProcessed(
+        withdrawal.userId,
+        withdrawal.amount,
+        'FAILED',
+      );
 
       return {
         success: true,

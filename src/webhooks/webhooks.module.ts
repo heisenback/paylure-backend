@@ -3,18 +3,18 @@ import { Module } from '@nestjs/common';
 import { WebhooksService } from './webhooks.service';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { ConfigModule } from '@nestjs/config';
-import { SocketModule } from 'src/gateway/socket.module'; 
+import { SocketModule } from 'src/gateway/socket.module';
+import { PushNotificationModule } from 'src/push-notification/push-notification.module'; // 🔔 NOVO
 
 @Module({
   imports: [
     PrismaModule, 
     ConfigModule,
-    SocketModule, // Para injetar o PaymentGateway
+    SocketModule,
+    PushNotificationModule, // 🔔 NOVO
   ], 
-  // CORREÇÃO: Removido o import do Controller que não existe nesta pasta!
   controllers: [], 
   providers: [WebhooksService],
-  // Exportamos o Service para que o KeyclubModule possa injetá-lo
   exports: [WebhooksService], 
 })
 export class WebhooksModule {}

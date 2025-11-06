@@ -4,7 +4,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Configuração do seu banco de dados
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -24,15 +23,35 @@ model User {
   
   balance          Int          @default(0) 
 
-  // --- CAMPOS PARA API KEY ---
   apiKey           String       @unique 
   apiSecret        String       @unique 
-  // ---------------------------------
 
   // Relações
   merchant         Merchant?
   deposits         Deposit[]
-  withdrawals      Withdrawal[] // Relacionamento com saques
+  withdrawals      Withdrawal[]
+  pushSubscriptions PushSubscription[] // 🔔 NOVO: Subscriptions de notificação
+}
+
+// ===================================
+// 🔔 NOVO: MODELO PUSH SUBSCRIPTION
+// ===================================
+model PushSubscription {
+  id               String       @id @default(uuid())
+  userId           String
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  endpoint         String       @unique // URL do push service
+  p256dh           String       // Chave pública do cliente
+  auth             String       // Chave de autenticação
+  
+  deviceInfo       String?      // Info do dispositivo (opcional)
+  isActive         Boolean      @default(true)
+  
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  @@index([userId])
 }
 
 // ===================================
@@ -47,11 +66,9 @@ model Merchant {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
-  // Relação 1:1 com User
   user             User         @relation(fields: [userId], references: [id])
   userId           String       @unique
 
-  // Relações N:1
   products         Product[]
   paymentLinks     PaymentLink[]
   deposits         Deposit[]
@@ -66,22 +83,18 @@ model Product {
   id               String       @id @default(uuid())
   name             String
   description      String?
-  priceInCents     Int          // Preço do produto em CENTAVOS
+  priceInCents     Int
   isAvailable      Boolean      @default(true)
   
-  // Relação N:1 com Merchant
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
   
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
-  // Relação 1:N
   paymentLinks     PaymentLink[]
-  // Relação 1:1 com MarketplaceProduct
   marketplaceProduct MarketplaceProduct?
 }
-
 
 // ===================================
 // 4. MODELO PAYMENT LINK
@@ -90,64 +103,47 @@ model PaymentLink {
   id               String       @id @default(uuid())
   slug             String       @unique
   name             String
-  
-  // --- CORREÇÃO PARA O ERRO TypeScript ---
-  amountInCents    Int          // Valor em centavos 
-  // --- FIM DA CORREÇÃO ---
-  
+  amountInCents    Int
   isActive         Boolean      @default(true)
-  
-  // Taxa de processamento definida pelo Seller (em porcentagem)
   sellerFeeRate    Float        @default(0) 
   
-  // Relação N:1 com Product
   product          Product      @relation(fields: [productId], references: [id])
   productId        String
   
-  // Relação N:1 com Merchant
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
 
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
-  // Relação 1:N
-  deposits         Deposit[] // O depósito (pagamento) que usou este link
+  deposits         Deposit[]
 }
-
 
 // ===================================
 // 5. MODELO DEPOSIT (O Pagamento PIX)
 // ===================================
 model Deposit {
   id                   String      @id @default(uuid())
-  externalId           String      @unique // ID externo da KeyClub
-  amountInCents        Int         // Valor do depósito em CENTAVOS
-  feeInCents           Int         @default(0) // Taxa Paylure em CENTAVOS
-  sellerFeeInCents     Int         @default(0) // Taxa do Seller em CENTAVOS
-  netAmountInCents     Int         // Valor líquido para o Seller
-  status               String      @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  externalId           String      @unique
+  amountInCents        Int
+  feeInCents           Int         @default(0)
+  sellerFeeInCents     Int         @default(0)
+  netAmountInCents     Int
+  status               String      @default("PENDING")
   
-  // Dados do pagador final
   payerName            String
   payerEmail           String
   payerDocument        String
-
-  // Token para validar o webhook (garante unicidade)
   webhookToken         String      @unique
-
  
-  // Relação com User
   user                 User        @relation(fields: [userId], references: [id])
   userId               String
 
-  // Relação com Merchant
   merchant             Merchant?   @relation(fields: [merchantId], references: [id])
   merchantId           String?
-  // --- CAMPO: Para vincular à Venda ---
+  
   paymentLink          PaymentLink? @relation(fields: [paymentLinkId], references: [id])
   paymentLinkId        String?
-  // --------------------------------------------------------------------------
 
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
@@ -160,16 +156,15 @@ model Withdrawal {
   id               String       @id @default(uuid())
   userId           String
   user             User         @relation(fields: [userId], references: [id])
-  amount           Int          // Valor do saque em CENTAVOS
-  status           String       @default("PENDING") // PENDING, COMPLETED, FAILED, REVERSED
+  amount           Int
+  status           String       @default("PENDING")
   pixKey           String    
-  keyType          String       // Tipo da chave (CPF, EMAIL, etc)
+  keyType          String
   description      String?
-  externalId       String       @unique // ID externo para a KeyClub
-  webhookToken     String?      @unique // Token para o webhook de confirmação
+  externalId       String       @unique
+  webhookToken     String?      @unique
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
-  
   failureReason    String?
 }
 
@@ -180,10 +175,9 @@ model MembershipIntegration {
   id               String       @id @default(uuid())
   name             String
   webhookUrl       String
-  platform         String       // Ex: HOTMART_CLUB, MEMBERKIT, MOCK
-  secretKey        String?      // Chave secreta para validação (opcional)
+  platform         String
+  secretKey        String?
 
-  // Relação N:1 com Merchant
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
 
@@ -191,26 +185,18 @@ model MembershipIntegration {
   updatedAt        DateTime     @updatedAt
 }
 
-
 // ===================================
 // 8. MODELO MARKETPLACE PRODUCT
 // ===================================
 model MarketplaceProduct {
   id               String       @id @default(uuid())
-  
-  // Regras de comissão para o afiliado (em porcentagem - 0 a 100)
   commissionRate   Float        
-  // Status: AVAILABLE (disponível para afiliação), PENDING (aguardando aprovação)
   status           String       @default("AVAILABLE") 
-
-  // Tipo de afiliação (Ex: LAST_CLICK, FIRST_CLICK)
   attributionType  String       @default("LAST_CLICK") 
 
-  // Relação 1:1 com o Produto (Product)
   product          Product      @relation(fields: [productId], references: [id])
-  productId        String       @unique // Garante que cada produto só tenha 1 registro de Marketplace
+  productId        String       @unique
 
-  // Relação 1:N com Affiliates (Lista de afiliados que promovem este produto)
   affiliates       Affiliate[]
 
   createdAt        DateTime     @default(now())
@@ -222,21 +208,14 @@ model MarketplaceProduct {
 // ===================================
 model Affiliate {
   id               String       @id @default(uuid())
-
-  // ID do usuário que é o Afiliado (promove)
   promoterId       String       
-
-  // ID do produto no Marketplace que está sendo promovido
   marketplaceProductId String
   marketplaceProduct   MarketplaceProduct @relation(fields: [marketplaceProductId], references: [id])
-
-  // Status de Afiliação (Ex: APPROVED, PENDING, BLOCKED)
   status           String       @default("APPROVED") 
 
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
-  // Restrição para garantir que um Afiliado só promova um produto uma vez
   @@unique([promoterId, marketplaceProductId])
 }
 
@@ -246,21 +225,19 @@ model Affiliate {
 model SubscriptionPlan {
   id               String       @id @default(uuid())
   name             String
-  interval         String       // Ex: MONTHLY, ANNUALLY, WEEKLY
-  priceInCents     Int          // Valor da recorrência em CENTAVOS
-  trialPeriodDays  Int          @default(0) // Período de teste gratuito
+  interval         String
+  priceInCents     Int
+  trialPeriodDays  Int          @default(0)
   
-  // Relação N:1 com Merchant (dono do plano)
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
 
-  // Relação 1:N com Assinaturas ativas
   subscriptions    Subscription[]
 
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
-  @@unique([merchantId, name]) // Garante que o nome do plano seja único por Merchant
+  @@unique([merchantId, name])
 }
 
 // ===================================
@@ -268,21 +245,12 @@ model SubscriptionPlan {
 // ===================================
 model Subscription {
   id               String       @id @default(uuid())
-  
-  // Dados do cliente
   subscriberEmail  String       
   subscriberName   String       
-  
-  // Status: ACTIVE, CANCELED, INACTIVE, DELINQUENT (inadimplente)
   status           String       @default("ACTIVE") 
-  
-  // Data da próxima cobrança
   nextBillingDate  DateTime     
-  
-  // Gateway ID de Recorrência (ID da KeyClub/Stripe etc)
   gatewaySubscriptionId String?
   
-  // Relação N:1 com Plano
   plan             SubscriptionPlan @relation(fields: [planId], references: [id])
   planId           String
 
