@@ -84,7 +84,7 @@ export class KeyclubService {
       this.tokenExpiry = now + (expiresIn * 1000) - 60000; // Renova 1min antes
 
       this.logger.log('[KeyclubService] ✅ Autenticação bem-sucedida');
-      return this.accessToken;
+      return this.accessToken!; // ✅ Non-null assertion
     } catch (error: any) {
       this.logger.error('[KeyclubService] ❌ Falha na autenticação', error.message);
       

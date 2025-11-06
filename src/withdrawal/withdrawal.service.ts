@@ -75,14 +75,15 @@ export class WithdrawalService {
       isKeyclubCalled = true;
       
       const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
+      const callbackUrl = `${process.env.BASE_URL || 'https://api.paylure.com.br'}/api/v1/keyclub/callback/${webhookToken}`;
       
       await this.keyclubService.createWithdrawal({
         amount: amountInReais,
         externalId: externalId,
         pix_key: dto.pix_key,
         key_type: keyTypeForKeyclub,
-        description: dto.description,
-        clientCallbackUrl: `${process.env.BASE_URL}/api/v1/keyclub/callback/${webhookToken}`,
+        description: dto.description || 'Saque via Paylure',
+        clientCallbackUrl: callbackUrl,
       });
       
       this.logger.log(`[WithdrawalService] ✅ Saque enviado para KeyClub: ${externalId}`);

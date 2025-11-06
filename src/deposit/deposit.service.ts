@@ -94,6 +94,8 @@ export class DepositService {
 
     try {
       // 3. Chamar o KeyclubService
+      const callbackUrl = `${process.env.BASE_URL || 'https://api.paylure.com.br'}/api/v1/keyclub/callback/${webhookToken}`;
+      
       const keyclubResponse = await this.keyclubService.createDeposit({
         amount: amountInBrl,
         externalId: pendingDeposit.id,
@@ -102,7 +104,7 @@ export class DepositService {
           email: user.email,
           document: documentNumbers, // ✅ Envia documento sem formatação
         },
-        clientCallbackUrl: `${process.env.BASE_URL}/api/v1/keyclub/callback/${webhookToken}`,
+        clientCallbackUrl: callbackUrl,
       });
 
       // 4. Atualizar depósito com dados da KeyClub
