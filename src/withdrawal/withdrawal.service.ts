@@ -97,7 +97,7 @@ export class WithdrawalService {
     } catch (e: any) {
       this.logger.error(`[WithdrawalService] ❌ ERRO: ${e.message}`, e.stack);
       
-      // ✅ Se KeyClub falhou, reverte o saldo
+      // ✅ Se KeyClub falhou, reverte o saldos
       if (isKeyclubCalled && withdrawalRecordId) {
         const failureMessage = e.message.substring(0, 255);
         this.logger.warn(`[WithdrawalService] ⚠️ KeyClub falhou. Revertendo saldo do usuário ${userId}...`);
