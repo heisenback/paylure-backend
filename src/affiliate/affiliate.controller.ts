@@ -21,7 +21,7 @@ export class AffiliateController {
     @Body() dto: RequestAffiliateDto,
     @GetUser() user: User
   ) {
-    // O ID do usuário logado é o promoterIds
+    // O ID do usuário logado é o promoterId
     dto.promoterId = user.id;
 
     const affiliation = await this.affiliateService.requestAffiliation(dto);
