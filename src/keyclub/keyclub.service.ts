@@ -19,7 +19,8 @@ export type CreateWithdrawalInput = {
   amount: number;
   externalId: string;
   pix_key: string;
-  key_type: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'RANDOM';
+  // 🚨 CORREÇÃO: Adicionado 'EVP' aos tipos permitidos
+  key_type: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'RANDOM' | 'EVP';
   description?: string;
   clientCallbackUrl: string;
 };

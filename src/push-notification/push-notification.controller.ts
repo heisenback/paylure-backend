@@ -1,7 +1,8 @@
 // src/push-notification/push-notification.controller.ts
 import { Controller, Post, Delete, Body, UseGuards, Req, Get } from '@nestjs/common';
 import { PushNotificationService } from './push-notification.service';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+// 🚨 CORREÇÃO: O caminho correto para o guard é 'src/auth/guards/jwt-auth.guard'
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SubscribeDto } from './dto/subscribe.dto';
 
 @Controller('api/v1/push')
