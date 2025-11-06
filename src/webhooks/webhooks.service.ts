@@ -18,7 +18,7 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
-    private readonly paymentGateway: PaymentGateway, // ⭐ Injetar WebSocket Gateway
+    private readonly paymentGateway: PaymentGateway,
   ) {
     this.KEY_CLUB_WEBHOOK_SECRET = this.configService.get<string>(
       'KEY_CLUB_WEBHOOK_SECRET',
@@ -28,18 +28,16 @@ export class WebhooksService {
     }
   }
 
-  /**
-   * Valida a assinatura HMAC do webhook da KeyClub
-   */
-  validateSignature(rawBody: Buffer, signature: string): boolean {
-    if (!this.KEY_CLUB_WEBHOOK_SECRET || !signature) {
+  verifyKeyClubSignature(rawBody: string | Buffer, signature: string, secret: string): boolean {
+    if (!secret || !signature) {
       this.logger.warn('Webhook recebido sem segredo ou assinatura.');
       return false;
     }
 
     try {
-      const hmac = crypto.createHmac('sha256', this.KEY_CLUB_WEBHOOK_SECRET);
-      hmac.update(rawBody);
+      const body = typeof rawBody === 'string' ? Buffer.from(rawBody) : rawBody;
+      const hmac = crypto.createHmac('sha256', secret);
+      hmac.update(body);
       const digest = hmac.digest('hex');
 
       return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(signature));
@@ -49,14 +47,14 @@ export class WebhooksService {
     }
   }
 
-  /**
-   * Processa o evento de DEPÓSITO da KeyClub.
-   */
+  validateSignature(rawBody: Buffer, signature: string): boolean {
+    return this.verifyKeyClubSignature(rawBody, signature, this.KEY_CLUB_WEBHOOK_SECRET);
+  }
+
   async handleKeyClubDeposit(token: string, payload: any) {
     const status = (payload.status || '').toUpperCase();
     this.logger.log(`Webhook recebido para o token: ${token} | Status: ${status}`);
 
-    // 1. Encontrar o depósito no banco usando o token único
     const deposit = await this.prisma.deposit.findUnique({
       where: { webhookToken: token },
       include: { user: true },
@@ -67,17 +65,13 @@ export class WebhooksService {
       throw new NotFoundException('Depósito não encontrado.');
     }
 
-    // 2. Se o depósito já foi pago, não faz nada
     if (deposit.status === 'PAID') {
       this.logger.log(`Depósito ${deposit.id} já estava PAGO.`);
       return { success: true, message: 'Depósito já processado.' };
     }
 
-    // 3. Se o pagamento foi COMPLETO ou APROVADO
     if (status === 'COMPLETED' || status === 'APPROVED') {
       const payloadAmount = parseFloat(payload.data?.amount || payload.amount);
-
-      // Validação do valor em BRL (KeyClub envia em BRL)
       const depositAmountBRL = deposit.amountInCents / 100;
 
       if (!isNaN(payloadAmount) && Math.abs(payloadAmount - depositAmountBRL) > 0.01) {
@@ -87,17 +81,14 @@ export class WebhooksService {
         throw new BadRequestException('Valor do depósito não confere.');
       }
 
-      // 4. ATUALIZAR O SALDO DO USUÁRIO (valor em CENTAVOS)
       const amountInCents = deposit.amountInCents;
 
       const updatedUser = await this.prisma.$transaction(async (tx) => {
-        // Operação 1: Atualiza o status do Depósito
         await tx.deposit.update({
           where: { id: deposit.id },
           data: { status: 'PAID' },
         });
 
-        // Operação 2: Incrementa o saldo no modelo User
         return tx.user.update({
           where: { id: deposit.userId },
           data: {
@@ -112,10 +103,10 @@ export class WebhooksService {
         `[SUCESSO] Saldo do Usuário ${deposit.user.name} (ID: ${deposit.userId}) atualizado em +${amountInCents} centavos (R$ ${(amountInCents / 100).toFixed(2)}).`,
       );
 
-      // ⭐ Notifica o frontend via WebSocket
-      this.paymentGateway.notifyDepositConfirmed(deposit.userId, {
+      this.paymentGateway.emitDepositUpdate(deposit.externalId, {
         depositId: deposit.id,
         amount: amountInCents / 100,
+        status: 'PAID',
       });
 
       this.paymentGateway.notifyBalanceUpdate(deposit.userId, updatedUser.balance / 100);
@@ -125,7 +116,6 @@ export class WebhooksService {
         message: 'Pagamento recebido e saldo atualizado!',
       };
     } else if (['CANCELED', 'REFUNDED', 'FAILED'].includes(status)) {
-      // 5. Se o PIX foi cancelado ou falhou
       await this.prisma.deposit.update({
         where: { id: deposit.id },
         data: { status: status.toUpperCase() },
@@ -137,14 +127,10 @@ export class WebhooksService {
     return { success: true, message: 'Status não requer ação.' };
   }
 
-  /**
-   * Processa o evento de SAQUE (Withdrawal) da KeyClub.
-   */
   async handleKeyClubWithdrawal(token: string, payload: any) {
     const status = (payload.status || '').toUpperCase();
     this.logger.log(`Webhook de SAQUE recebido para o token: ${token} | Status: ${status}`);
 
-    // 1. Encontrar o saque no banco usando o token único
     const withdrawal = await this.prisma.withdrawal.findUnique({
       where: { webhookToken: token },
       include: { user: true },
@@ -155,13 +141,11 @@ export class WebhooksService {
       throw new NotFoundException('Saque não encontrado.');
     }
 
-    // 2. Se o saque já foi processado, não faz nada
     if (['COMPLETED', 'FAILED'].includes(withdrawal.status)) {
       this.logger.log(`Saque ${withdrawal.id} já foi processado com status ${withdrawal.status}.`);
       return { success: true, message: 'Saque já processado.' };
     }
 
-    // 3. Se o saque foi COMPLETADO com sucesso
     if (status === 'COMPLETED') {
       await this.prisma.withdrawal.update({
         where: { id: withdrawal.id },
@@ -172,10 +156,10 @@ export class WebhooksService {
         `[SUCESSO] Saque ${withdrawal.id} do Usuário ${withdrawal.user.name} (ID: ${withdrawal.userId}) COMPLETADO com sucesso.`,
       );
 
-      // ⭐ Notifica o frontend via WebSocket
-      this.paymentGateway.notifyWithdrawalCompleted(withdrawal.userId, {
+      this.paymentGateway.emitWithdrawalUpdate(withdrawal.externalId, {
         withdrawalId: withdrawal.id,
         amount: withdrawal.amount / 100,
+        status: 'COMPLETED',
       });
 
       return {
@@ -183,12 +167,10 @@ export class WebhooksService {
         message: 'Saque completado com sucesso!',
       };
     } else if (status === 'FAILED') {
-      // 4. Se o saque FALHOU, precisamos REVERTER o saldo
       const amountInCents = withdrawal.amount;
       const failureReason = payload.message || 'Falha reportada pela KeyClub';
 
       const updatedUser = await this.prisma.$transaction(async (tx) => {
-        // Operação 1: Marca o saque como FAILED
         await tx.withdrawal.update({
           where: { id: withdrawal.id },
           data: {
@@ -197,12 +179,11 @@ export class WebhooksService {
           },
         });
 
-        // Operação 2: REVERTE o saldo do usuário
         return tx.user.update({
           where: { id: withdrawal.userId },
           data: {
             balance: {
-              increment: amountInCents, // Devolve o valor
+              increment: amountInCents,
             },
           },
         });
@@ -212,9 +193,9 @@ export class WebhooksService {
         `[REVERSÃO] Saque ${withdrawal.id} FALHOU. Saldo de R$ ${(amountInCents / 100).toFixed(2)} revertido para o Usuário ${withdrawal.userId}. Motivo: ${failureReason}`,
       );
 
-      // ⭐ Notifica o frontend via WebSocket
-      this.paymentGateway.notifyWithdrawalFailed(withdrawal.userId, {
+      this.paymentGateway.emitWithdrawalUpdate(withdrawal.externalId, {
         withdrawalId: withdrawal.id,
+        status: 'FAILED',
         reason: failureReason,
       });
 

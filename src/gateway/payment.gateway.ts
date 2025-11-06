@@ -11,11 +11,6 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 
-/**
- * Gateway WebSocket para notificações em tempo real.
- * Configurado para conexões estáveis atrás de proxy/reverse-proxy.
- */
-
 const ORIGINS = (process.env.SOCKET_CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
 const SOCKET_PATH = process.env.SOCKET_PATH || '/socket.io';
 const PING_INTERVAL = Number(process.env.SOCKET_PING_INTERVAL || 25000);
@@ -25,7 +20,6 @@ const TRANSPORTS = (process.env.SOCKET_TRANSPORTS || 'websocket,polling')
   .map(t => t.trim() as 'websocket' | 'polling')
   .filter(Boolean);
 
-// Monta origens aceitas (string e regex p/ *.vercel.app)
 const corsOrigins: (string | RegExp)[] = [];
 for (const o of ORIGINS) {
   if (o === '*.vercel.app' || o === 'https://*.vercel.app') {
@@ -62,9 +56,9 @@ export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect 
   @WebSocketServer()
   server!: Server;
 
-  // Debounce pra não spammar log de connect/disconnect
   private lastLogByClient = new Map<string, number>();
   private static readonly LOG_DEBOUNCE_MS = 5000;
+  
   private shouldLog(clientId: string): boolean {
     const now = Date.now();
     const prev = this.lastLogByClient.get(clientId) || 0;
@@ -97,7 +91,6 @@ export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect 
     client.emit('pong', { t: Date.now() });
   }
 
-  // ========= Emissores de eventos =========
   emitDepositUpdate(externalId: string, data: any) {
     this.server.emit('deposit:update', { externalId, ...data });
   }
@@ -113,5 +106,32 @@ export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect 
       timestamp: new Date().toISOString(),
     });
     this.logger.log(`Notificação de saldo atualizado enviada para usuário ${userId}`);
+  }
+
+  notifyDepositConfirmed(userId: string, data: { depositId: string; amount: number }) {
+    this.server.emit(`deposit:confirmed:${userId}`, {
+      type: 'DEPOSIT_CONFIRMED',
+      ...data,
+      timestamp: new Date().toISOString(),
+    });
+    this.logger.log(`Notificação de depósito confirmado enviada para usuário ${userId}`);
+  }
+
+  notifyWithdrawalCompleted(userId: string, data: { withdrawalId: string; amount: number }) {
+    this.server.emit(`withdrawal:completed:${userId}`, {
+      type: 'WITHDRAWAL_COMPLETED',
+      ...data,
+      timestamp: new Date().toISOString(),
+    });
+    this.logger.log(`Notificação de saque completado enviada para usuário ${userId}`);
+  }
+
+  notifyWithdrawalFailed(userId: string, data: { withdrawalId: string; reason: string }) {
+    this.server.emit(`withdrawal:failed:${userId}`, {
+      type: 'WITHDRAWAL_FAILED',
+      ...data,
+      timestamp: new Date().toISOString(),
+    });
+    this.logger.log(`Notificação de saque falhou enviada para usuário ${userId}`);
   }
 }
