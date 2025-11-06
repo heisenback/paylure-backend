@@ -4,104 +4,114 @@ import {
   WebSocketServer,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 
 /**
- * Gateway WebSocket para notificações em tempo real de pagamentos.
- * 
- * Usado para notificar o frontend quando:
- * - Um depósito (PIX) é confirmado
- * - Um saque é completado ou falha
- * - O saldo do usuário é atualizado
+ * Gateway WebSocket para notificações em tempo real.
+ * Configurado para conexões estáveis atrás de proxy/reverse-proxy.
  */
+
+const ORIGINS = (process.env.SOCKET_CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
+const SOCKET_PATH = process.env.SOCKET_PATH || '/socket.io';
+const PING_INTERVAL = Number(process.env.SOCKET_PING_INTERVAL || 25000);
+const PING_TIMEOUT = Number(process.env.SOCKET_PING_TIMEOUT || 60000);
+const TRANSPORTS = (process.env.SOCKET_TRANSPORTS || 'websocket,polling')
+  .split(',')
+  .map(t => t.trim() as 'websocket' | 'polling')
+  .filter(Boolean);
+
+// Monta origens aceitas (string e regex p/ *.vercel.app)
+const corsOrigins: (string | RegExp)[] = [];
+for (const o of ORIGINS) {
+  if (o === '*.vercel.app' || o === 'https://*.vercel.app') {
+    corsOrigins.push(/^(https?:\/\/)?([a-z0-9-]+\.)*vercel\.app$/i);
+  } else if (o) {
+    corsOrigins.push(o);
+  }
+}
+if (!corsOrigins.length) {
+  corsOrigins.push('http://localhost:3000', /^(https?:\/\/)?([a-z0-9-]+\.)*vercel\.app$/i);
+}
+
 @WebSocketGateway({
   cors: {
-    // ✅ CORREÇÃO: Aceita múltiplas origens (localhost E vercel)
-    origin: [
-      'http://localhost:3000',
-      'https://paylure.com.br',
-      'https://paylure.vercel.app',
-      'https://*.vercel.app', // Qualquer subdomínio do Vercel
-    ],
+    origin: corsOrigins,
     credentials: true,
     methods: ['GET', 'POST'],
   },
-  namespace: '/', // ✅ CORREÇÃO: Remove o namespace para simplificar
+  transports: TRANSPORTS,
+  allowEIO3: true,
+  pingInterval: PING_INTERVAL,
+  pingTimeout: PING_TIMEOUT,
+  path: SOCKET_PATH,
+  perMessageDeflate: true,
+  httpCompression: true,
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true,
+  },
 })
 export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer()
-  server: Server;
-
   private readonly logger = new Logger(PaymentGateway.name);
 
-  /**
-   * Chamado quando um cliente se conecta ao WebSocket
-   */
+  @WebSocketServer()
+  server!: Server;
+
+  // Debounce pra não spammar log de connect/disconnect
+  private lastLogByClient = new Map<string, number>();
+  private static readonly LOG_DEBOUNCE_MS = 5000;
+  private shouldLog(clientId: string): boolean {
+    const now = Date.now();
+    const prev = this.lastLogByClient.get(clientId) || 0;
+    if (now - prev > PaymentGateway.LOG_DEBOUNCE_MS) {
+      this.lastLogByClient.set(clientId, now);
+      return true;
+    }
+    return false;
+  }
+
   handleConnection(client: Socket) {
-    this.logger.log(`Cliente conectado: ${client.id}`);
+    if (this.shouldLog(client.id)) {
+      const ua = (client.handshake.headers['user-agent'] as string) || 'unknown';
+      const ip =
+        (client.handshake.headers['x-forwarded-for'] as string) ||
+        (client.conn.remoteAddress as string) ||
+        'n/a';
+      this.logger.log(`[PaymentGateway] Cliente conectado: ${client.id} | ip=${ip} | ua=${ua}`);
+    }
   }
 
-  /**
-   * Chamado quando um cliente se desconecta
-   */
   handleDisconnect(client: Socket) {
-    this.logger.log(`Cliente desconectado: ${client.id}`);
+    if (this.shouldLog(client.id)) {
+      this.logger.log(`[PaymentGateway] Cliente desconectado: ${client.id}`);
+    }
   }
 
-  /**
-   * Notifica um usuário específico sobre um depósito confirmado
-   */
-  notifyDepositConfirmed(userId: string, data: { depositId: string; amount: number }) {
-    this.server.emit(`deposit:confirmed:${userId}`, {
-      type: 'DEPOSIT_CONFIRMED',
-      depositId: data.depositId,
-      amount: data.amount,
-      timestamp: new Date().toISOString(),
-    });
-
-    this.logger.log(`Notificação de depósito enviada para usuário ${userId}`);
+  @SubscribeMessage('ping')
+  handlePing(@MessageBody() _payload: any, @ConnectedSocket() client: Socket) {
+    client.emit('pong', { t: Date.now() });
   }
 
-  /**
-   * Notifica um usuário específico sobre um saque completado
-   */
-  notifyWithdrawalCompleted(userId: string, data: { withdrawalId: string; amount: number }) {
-    this.server.emit(`withdrawal:completed:${userId}`, {
-      type: 'WITHDRAWAL_COMPLETED',
-      withdrawalId: data.withdrawalId,
-      amount: data.amount,
-      timestamp: new Date().toISOString(),
-    });
-
-    this.logger.log(`Notificação de saque completado enviada para usuário ${userId}`);
+  // ========= Emissores de eventos =========
+  emitDepositUpdate(externalId: string, data: any) {
+    this.server.emit('deposit:update', { externalId, ...data });
   }
 
-  /**
-   * Notifica um usuário específico sobre um saque que falhou
-   */
-  notifyWithdrawalFailed(userId: string, data: { withdrawalId: string; reason: string }) {
-    this.server.emit(`withdrawal:failed:${userId}`, {
-      type: 'WITHDRAWAL_FAILED',
-      withdrawalId: data.withdrawalId,
-      reason: data.reason,
-      timestamp: new Date().toISOString(),
-    });
-
-    this.logger.log(`Notificação de saque falhado enviada para usuário ${userId}`);
+  emitWithdrawalUpdate(externalId: string, data: any) {
+    this.server.emit('withdrawal:update', { externalId, ...data });
   }
 
-  /**
-   * Notifica um usuário sobre atualização de saldo
-   */
   notifyBalanceUpdate(userId: string, newBalance: number) {
     this.server.emit(`balance:updated:${userId}`, {
       type: 'BALANCE_UPDATED',
       balance: newBalance,
       timestamp: new Date().toISOString(),
     });
-
     this.logger.log(`Notificação de saldo atualizado enviada para usuário ${userId}`);
   }
 }

@@ -4,6 +4,6 @@ import { PaymentGateway } from './payment.gateway';
 
 @Module({
   providers: [PaymentGateway],
-  exports: [PaymentGateway], // Exportamos o Gateway para que outros serviços possam notificá-lo
+  exports: [PaymentGateway],
 })
 export class SocketModule {}

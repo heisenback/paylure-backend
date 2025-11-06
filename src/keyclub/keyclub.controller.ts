@@ -9,54 +9,41 @@ import {
   BadRequestException,
   ForbiddenException,
   Logger,
-  Param,
 } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { WebhooksService } from 'src/webhooks/webhooks.service';
 
-// Rota base: /api/keyclub
-@Controller('keyclub')
+@Controller('api/v1/keyclub')
 export class KeyclubController {
   private readonly logger = new Logger(KeyclubController.name);
 
   constructor(private readonly webhooksService: WebhooksService) {}
 
-  /**
-   * Rota de Callback KeyClub para Depósitos e Saques.
-   * POST /api/keyclub/callback/:webhookToken
-   * 
-   * A KeyClub envia webhooks para esta rota quando:
-   * - Um depósito (PIX) é pago/cancelado/falha
-   * - Um saque é completado/falha
-   */
-  @Post('callback/:webhookToken')
+  @Post('webhook')
   @HttpCode(HttpStatus.OK)
-  async handleKeyClubCallback(
-    @Param('webhookToken') webhookToken: string,
-    @Headers('x-keyclub-signature') signature: string,
+  async handleWebhook(
     @Req() req: RawBodyRequest<Request>,
+    @Headers('x-keyclub-signature') signature: string,
+    @Headers('x-keyclub-token') webhookToken: string,
   ) {
-    const rawBody = req.rawBody;
-    const payload = req.body;
-
-    // 1. Validação básica
-    if (!rawBody || !signature || !webhookToken) {
-      this.logger.error('Webhook inválido: corpo, token ou assinatura ausente.');
-      throw new BadRequestException('Webhook inválido: corpo, token ou assinatura ausente.');
+    if (!signature || !webhookToken) {
+      throw new BadRequestException('Webhook sem assinatura/token.');
     }
 
-    // 2. Validação da Assinatura HMAC
-    const isValid = this.webhooksService.validateSignature(rawBody, signature);
+    const rawBody = (req as any).rawBody || (req.body ? JSON.stringify(req.body) : '');
+    const secret = process.env.KEY_CLUB_WEBHOOK_SECRET;
+    if (!secret) {
+      throw new ForbiddenException('Segredo de webhook não configurado.');
+    }
+
+    const isValid = await this.webhooksService.verifyKeyClubSignature(rawBody, signature, secret);
     if (!isValid) {
-      this.logger.warn(`Assinatura do webhook inválida para o token: ${webhookToken}`);
-      throw new ForbiddenException('Assinatura do webhook inválida.');
+      throw new ForbiddenException('Assinatura inválida.');
     }
 
-    this.logger.log(`Assinatura válida para o token: ${webhookToken}. Processando...`);
-
-    // 3. Processamento do Evento baseado no tipo
-    const webhookType = payload.type;
+    const payload = typeof req.body === 'object' ? req.body : JSON.parse(rawBody || '{}');
+    const webhookType = payload?.type;
 
     if (webhookType === 'Deposit') {
       return this.webhooksService.handleKeyClubDeposit(webhookToken, payload);
@@ -64,7 +51,6 @@ export class KeyclubController {
       return this.webhooksService.handleKeyClubWithdrawal(webhookToken, payload);
     }
 
-    // Tipo desconhecido (para debug)
     this.logger.warn(`Tipo de webhook desconhecido: ${webhookType}`);
     return { success: true, message: `Webhook tipo ${webhookType} recebido com sucesso.` };
   }

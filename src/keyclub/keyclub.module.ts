@@ -1,16 +1,13 @@
 // src/keyclub/keyclub.module.ts
 import { Module } from '@nestjs/common';
 import { KeyclubService } from './keyclub.service';
-import { KeyclubController } from './keyclub.controller'; // Importa o Controller que movemos
-import { WebhooksModule } from 'src/webhooks/webhooks.module'; // Importa o módulo que tem o WebhooksService
+import { KeyclubController } from './keyclub.controller';
+import { WebhooksModule } from 'src/webhooks/webhooks.module';
 
 @Module({
-  imports: [
-    WebhooksModule, // Importamos o módulo que exporta o WebhooksService
-  ],
+  imports: [WebhooksModule],
   providers: [KeyclubService],
-  // REGISTRA O CONTROLLER AQUI!
-  controllers: [KeyclubController], 
-  exports: [KeyclubService], 
+  controllers: [KeyclubController],
+  exports: [KeyclubService],
 })
 export class KeyclubModule {}
