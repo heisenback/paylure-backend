@@ -39,7 +39,7 @@ export class KeyclubService {
     this.clientId = this.configService.get<string>('KEY_CLUB_CLIENT_ID')!;
     this.clientSecret = this.configService.get<string>('KEY_CLUB_CLIENT_SECRET')!;
 
-    // Cria instância Axios com headers que simulam navegador real
+    // ✅ Cria instância Axios com headers que simulam navegador real
     this.axiosInstance = axios.create({
       baseURL: this.baseUrl,
       timeout: 30000,
@@ -66,11 +66,12 @@ export class KeyclubService {
   private async authenticate(): Promise<string> {
     const now = Date.now();
     
+    // ✅ Reutiliza token válido
     if (this.accessToken && this.tokenExpiry > now) {
       return this.accessToken;
     }
 
-    this.logger.log('[KeyclubService] 🔐 Tentando autenticar...');
+    this.logger.log('[KeyclubService] 🔐 Autenticando...');
 
     try {
       const response = await this.axiosInstance.post('/api/auth/login', {
@@ -80,7 +81,7 @@ export class KeyclubService {
 
       this.accessToken = response.data.access_token;
       const expiresIn = response.data.expires_in || 3600;
-      this.tokenExpiry = now + (expiresIn * 1000) - 60000;
+      this.tokenExpiry = now + (expiresIn * 1000) - 60000; // Renova 1min antes
 
       this.logger.log('[KeyclubService] ✅ Autenticação bem-sucedida');
       return this.accessToken;
@@ -101,7 +102,7 @@ export class KeyclubService {
   }
 
   async createDeposit(input: CreateDepositInput) {
-    this.logger.log(`[KeyclubService] 💰 Criando depósito: R$ ${input.amount}`);
+    this.logger.log(`[KeyclubService] 💰 Criando depósito: R$ ${input.amount.toFixed(2)}`);
 
     try {
       const token = await this.authenticate();
@@ -112,7 +113,12 @@ export class KeyclubService {
           amount: input.amount,
           external_id: input.externalId,
           clientCallbackUrl: input.clientCallbackUrl,
-          payer: input.payer,
+          payer: {
+            name: input.payer.name,
+            email: input.payer.email,
+            document: input.payer.document, // ✅ Documento sem formatação
+            phone: input.payer.phone || '',
+          },
         },
         {
           headers: {
@@ -130,7 +136,7 @@ export class KeyclubService {
         amount: response.data.qrCodeResponse.amount,
       };
     } catch (error: any) {
-      this.logger.error('[KeyclubService] ❌ Erro ao criar depósito', error.message);
+      this.logger.error('[KeyclubService] ❌ Erro ao criar depósito', error.response?.data || error.message);
 
       if (error.response?.status === 403) {
         throw new InternalServerErrorException(
@@ -144,7 +150,7 @@ export class KeyclubService {
   }
 
   async createWithdrawal(input: CreateWithdrawalInput) {
-    this.logger.log(`[KeyclubService] 💸 Criando saque: R$ ${input.amount}`);
+    this.logger.log(`[KeyclubService] 💸 Criando saque: R$ ${input.amount.toFixed(2)}`);
 
     try {
       const token = await this.authenticate();
@@ -173,7 +179,7 @@ export class KeyclubService {
         status: response.data.status,
       };
     } catch (error: any) {
-      this.logger.error('[KeyclubService] ❌ Erro ao criar saque', error.message);
+      this.logger.error('[KeyclubService] ❌ Erro ao criar saque', error.response?.data || error.message);
 
       if (error.response?.status === 403) {
         throw new InternalServerErrorException(

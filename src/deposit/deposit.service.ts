@@ -41,9 +41,19 @@ export class DepositService {
       throw new ForbiddenException('Usuário não encontrado.');
     }
 
-    if (!user.document || user.document.length < 11) {
+    // ✅ CORREÇÃO: Validação mais robusta do documento
+    if (!user.document) {
       throw new ForbiddenException(
-        'Seu perfil precisa ter um CPF/Documento cadastrado e válido para realizar depósitos.',
+        'Seu perfil precisa ter um CPF/Documento cadastrado. Atualize seu perfil antes de fazer depósitos.',
+      );
+    }
+
+    // Remove caracteres não numéricos para validar
+    const documentNumbers = user.document.replace(/\D/g, '');
+    
+    if (documentNumbers.length < 11) {
+      throw new ForbiddenException(
+        'CPF/Documento inválido. O documento deve ter no mínimo 11 dígitos.',
       );
     }
 
@@ -53,6 +63,7 @@ export class DepositService {
 
     const amountInBrl = amountAsAny / 100;
     const webhookToken = uuidv4();
+    const externalId = `DEP-${user.id.substring(0, 8)}-${Date.now()}`;
 
     let pendingDeposit;
     try {
@@ -66,12 +77,14 @@ export class DepositService {
           },
           payerName: user.name || 'N/A',
           payerEmail: user.email,
-          payerDocument: user.document,
+          payerDocument: documentNumbers, // ✅ Usa documento sem formatação
           webhookToken: webhookToken,
-          externalId: 'DEP-' + user.id + '-' + Date.now(),
+          externalId: externalId,
           netAmountInCents: amountAsAny,
         },
       });
+      
+      this.logger.log(`[DepositService] Depósito PENDING criado: ${pendingDeposit.id}`);
     } catch (e) {
       this.logger.error('Erro ao salvar depósito PENDENTE no Prisma', e);
       throw new InternalServerErrorException(
@@ -87,8 +100,9 @@ export class DepositService {
         payer: {
           name: user.name || 'N/A',
           email: user.email,
-          document: user.document,
+          document: documentNumbers, // ✅ Envia documento sem formatação
         },
+        clientCallbackUrl: `${process.env.BASE_URL}/api/v1/keyclub/callback/${webhookToken}`,
       });
 
       // 4. Atualizar depósito com dados da KeyClub
@@ -100,13 +114,15 @@ export class DepositService {
         },
       });
 
+      this.logger.log(`[DepositService] ✅ Depósito atualizado com KeyClub: ${keyclubResponse.transactionId}`);
+
       // 5. Retornar apenas o PIX "copia e cola"
       return {
         pixCode: keyclubResponse.pixCode,
         depositId: updatedDeposit.id,
       };
     } catch (keyclubError: any) {
-      this.logger.error('Erro da API da KeyClub', keyclubError.message || keyclubError);
+      this.logger.error('[DepositService] ❌ Erro da API da KeyClub', keyclubError.message || keyclubError);
 
       await this.prisma.deposit.update({
         where: { id: pendingDeposit.id },
@@ -115,8 +131,10 @@ export class DepositService {
 
       const errorMessage =
         keyclubError.response?.data?.message ||
-        'Erro desconhecido ao comunicar com o Gateway. (Verifique logs)';
-      throw new InternalServerErrorException(errorMessage);
+        keyclubError.message ||
+        'Erro desconhecido ao comunicar com o Gateway.';
+      
+      throw new InternalServerErrorException(`Erro ao criar depósito: ${errorMessage}`);
     }
   }
 
