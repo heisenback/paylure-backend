@@ -19,6 +19,8 @@ import { MerchantModule } from './merchant/merchant.module';
 import { PaymentLinkModule } from './payment-link/payment-link.module';
 import { ReportModule } from './report/report.module';
 import { PublicApiModule } from './api/public-api.module';
+import { SocketModule } from './gateway/socket.module';
+import { PushNotificationModule } from './push-notification/push-notification.module';
 
 @Module({
   imports: [
@@ -43,6 +45,8 @@ import { PublicApiModule } from './api/public-api.module';
     PaymentLinkModule,
     ReportModule,
     PublicApiModule,
+    SocketModule,
+    PushNotificationModule,
   ],
   controllers: [AppController],
   providers: [],

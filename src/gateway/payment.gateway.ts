@@ -29,7 +29,14 @@ for (const o of ORIGINS) {
   }
 }
 if (!corsOrigins.length) {
-  corsOrigins.push('http://localhost:3000', /^(https?:\/\/)?([a-z0-9-]+\.)*vercel\.app$/i);
+  corsOrigins.push(
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'https://paylure.com.br',
+    'https://www.paylure.com.br',
+    'https://api.paylure.com.br',
+    /^(https?:\/\/)?([a-z0-9-]+\.)*vercel\.app$/i
+  );
 }
 
 @WebSocketGateway({

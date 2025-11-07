@@ -8,7 +8,6 @@ import { ApiKeyGuard } from 'src/auth/guards/api-key.guard';
 import { AuthGuard } from '@nestjs/passport'; 
 import { IsNumber, IsString, IsEnum, IsOptional, Min } from 'class-validator'; 
 
-// DTO de Saque (Mantido)
 class CreateWithdrawalDto implements WithdrawalDto {
     @IsNumber() @Min(0.01) amount: number;
     @IsString() pixKey: string;
@@ -16,32 +15,20 @@ class CreateWithdrawalDto implements WithdrawalDto {
     @IsString() @IsOptional() description?: string;
 }
 
-// 💡 Rota Principal: /api/v1/transactions
-@Controller('api/v1/transactions') 
+@Controller('transactions')
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
 
-  // --- 🚨 🚨 🚨 NOVO MÉTODO ADICIONADO AQUI 🚨 🚨 🚨 ---
-  /**
-   * GET /api/v1/transactions/history
-   * Busca o histórico de transações (depósitos e saques) do usuário logado.
-   */
   @Get('history')
-  @UseGuards(AuthGuard('jwt')) // Protege a rota, assim como o frontend espera
+  @UseGuards(AuthGuard('jwt'))
   async getHistory(@GetUser() user: User) {
     if (!user || !user.id) {
       throw new Error('Usuário autenticado, mas o ID do usuário está faltando no Token.');
     }
     
-    // Agora chamamos o serviço (que será nosso próximo erro)
     return this.transactionsService.getHistory(user.id);
   }
-  // --- FIM DO NOVO MÉTODO ---
 
-
-  /**
-   * POST /api/v1/transactions/quick-pix
-   */
   @Post('quick-pix')
   @UseGuards(ApiKeyGuard) 
   @HttpCode(HttpStatus.CREATED) 
