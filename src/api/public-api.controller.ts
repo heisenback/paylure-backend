@@ -58,9 +58,10 @@ export class PublicApiController {
       success: true,
       message: 'Depósito criado com sucesso.',
       data: {
-        pixCode: result.pixCode,
-        depositId: result.depositId,
-        amount: dto.amount / 100, // Retorna em BRL
+        pixCode: result.qrcode, // ✅ Corrigido: qrcode ao invés de pixCode
+        depositId: result.transactionId, // ✅ Corrigido: transactionId ao invés de depositId
+        amount: result.amount, // ✅ Já vem formatado do service
+        status: result.status,
       },
     };
   }
