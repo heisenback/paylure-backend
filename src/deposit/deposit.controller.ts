@@ -1,35 +1,48 @@
 // src/deposit/deposit.controller.ts
-
-import { Controller, Post, Body, UseGuards, Req, Get } from '@nestjs/common'; 
+import { Body, Controller, HttpCode, HttpException, HttpStatus, Logger, Post } from '@nestjs/common';
 import { DepositService } from './deposit.service';
-import { AuthGuard } from '@nestjs/passport';
-import { CreateDepositDto } from './dto/create-deposit.dto';
 
-@Controller('deposits') 
-@UseGuards(AuthGuard('jwt'))
+class CreateDepositBody {
+  amount!: number;
+  payerName!: string;
+  payerEmail!: string;
+  payerDocument!: string; // CPF/CNPJ
+  externalId?: string;
+  callbackUrl?: string;
+  phone?: string;
+}
+
+@Controller('api/v1/deposits')
 export class DepositController {
+  private readonly logger = new Logger(DepositController.name);
+
   constructor(private readonly depositService: DepositService) {}
 
-  @Post() 
-  async create(@Req() req, @Body() dto: CreateDepositDto) { // 🚨 Agora usa o DTO com o campo 'amount'
-    
-    const userId = req.user.sub || req.user.id || (req.user as any).user?.id;
-
-    if (!userId) {
-        throw new Error('Usuário autenticado, mas o ID do usuário está faltando no Token.');
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  async create(@Body() body: CreateDepositBody) {
+    try {
+      const data = await this.depositService.create({
+        amount: Number(body.amount),
+        payerName: body.payerName,
+        payerEmail: body.payerEmail,
+        payerDocument: body.payerDocument,
+        externalId: body.externalId,
+        callbackUrl: body.callbackUrl,
+        phone: body.phone,
+      });
+      return data;
+    } catch (e) {
+      const msg = (e as Error).message || 'Erro ao criar depósito.';
+      this.logger.error(`[DepositController] ❌ ${msg}`);
+      // Normaliza status para o front
+      if (msg.includes('autenticação') || msg.includes('token')) {
+        throw new HttpException({ message: msg }, HttpStatus.UNAUTHORIZED);
+      }
+      if (msg.toLowerCase().includes('gateway temporariamente indisponível')) {
+        throw new HttpException({ message: msg }, HttpStatus.SERVICE_UNAVAILABLE);
+      }
+      throw new HttpException({ message: msg }, HttpStatus.BAD_GATEWAY);
     }
-    
-    return this.depositService.createDeposit(userId, dto);
-  }
-
-  @Get('history')
-  async getHistory(@Req() req) {
-    const userId = req.user.sub || req.user.id || (req.user as any).user?.id;
-
-    if (!userId) {
-        throw new Error('Usuário autenticado, mas o ID do usuário está faltando no Token.');
-    }
-
-    return this.depositService.getHistory(userId);
   }
 }
