@@ -9,9 +9,9 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { DepositService } from '../deposit/deposit.service';
-import { CreateDepositDto } from '../dto/create-deposit.dto';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { DepositService } from 'src/deposit/deposit.service';
+import { CreateDepositDto } from 'src/dto/create-deposit.dto';
 
 @Controller('api/v1/public')
 export class PublicApiController {
