@@ -1,13 +1,11 @@
-// src/keyclub/keyclub.module.ts
+// src/push-notification/push-notification.module.ts
 import { Module } from '@nestjs/common';
-import { KeyclubService } from './keyclub.service';
-import { KeyclubController } from './keyclub.controller';
-import { WebhooksModule } from 'src/webhooks/webhooks.module';
+import { PushNotificationService } from './push-notification.service';
+import { PushNotificationController } from './push-notification.controller';
 
 @Module({
-  imports: [WebhooksModule],
-  providers: [KeyclubService],
-  controllers: [KeyclubController],
-  exports: [KeyclubService],
+  providers: [PushNotificationService],
+  controllers: [PushNotificationController],
+  exports: [PushNotificationService],
 })
-export class KeyclubModule {}
+export class PushNotificationModule {}

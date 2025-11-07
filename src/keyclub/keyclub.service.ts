@@ -29,7 +29,7 @@ export class KeyclubService {
   private readonly logger = new Logger(KeyclubService.name);
   private readonly baseUrl =
     (process.env.KEY_CLUB_BASE_URL || 'https://api.the-key.club').replace(/\/+$/, '');
-  private token: string | null = null; // cache
+  private token: string | null = null;
   private http: AxiosInstance;
 
   constructor() {
@@ -37,7 +37,6 @@ export class KeyclubService {
       baseURL: this.baseUrl,
       timeout: 15000,
       headers: {
-        // headers "de navegador" - ajudam a passar em WAFs conservadores
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         Accept: 'application/json, text/plain, */*',
@@ -49,7 +48,6 @@ export class KeyclubService {
       validateStatus: () => true,
     });
 
-    // Se houver token pré-configurado, usa e NÃO tenta fazer /api/auth/login
     const preset = (process.env.KEY_CLUB_ACCESS_TOKEN || '').trim();
     if (preset) {
       this.token = preset;
@@ -57,7 +55,6 @@ export class KeyclubService {
     }
   }
 
-  /** Detecta bloqueio Cloudflare (WAF) */
   private isCloudflareBlock(ax: AxiosError<any>) {
     const res = ax.response;
     if (!res) return false;
@@ -74,7 +71,6 @@ export class KeyclubService {
     return this.token ? { Authorization: `Bearer ${this.token}` } : {};
   }
 
-  /** Autentica só se não houver KEY_CLUB_ACCESS_TOKEN */
   private async login(): Promise<string> {
     if (this.token) return this.token;
 
@@ -119,12 +115,10 @@ export class KeyclubService {
   }
 
   private async ensureToken(force = false): Promise<string> {
-    // se veio de KEY_CLUB_ACCESS_TOKEN, ignore force
     if (this.token && !force) return this.token!;
     return this.login();
   }
 
-  /** Retry 1x quando 401/403 por token inválido (exceto se veio do .env). */
   private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
@@ -139,7 +133,6 @@ export class KeyclubService {
       if (status === 401 || status === 403) {
         const preset = Boolean((process.env.KEY_CLUB_ACCESS_TOKEN || '').trim());
         if (preset) {
-          // Token fixo inválido/expirado
           throw new Error('Token da KeyClub inválido/expirado. Atualize KEY_CLUB_ACCESS_TOKEN no .env.');
         }
         this.logger.warn('[KeyclubService] 🔄 Token possivelmente expirado. Reautenticando...');
@@ -151,7 +144,6 @@ export class KeyclubService {
     }
   }
 
-  /** DEPÓSITO — POST /api/payments/deposit (201) */
   async createDeposit(input: CreateDepositInput) {
     await this.ensureToken();
 
@@ -201,7 +193,6 @@ export class KeyclubService {
         if (resp.status === 403 && (hasCfRay || server.includes('cloudflare'))) {
           throw new Error('Depósito barrado pelo Cloudflare da KeyClub. Exceção WAF para /api/payments/deposit.');
         }
-        // Sem WAF → provavelmente token inválido
         throw new Error('Access token is missing or invalid.');
       }
 
@@ -214,7 +205,6 @@ export class KeyclubService {
     return this.withAuthRetry(exec);
   }
 
-  /** SAQUE — POST /api/withdrawals/withdraw */
   async createWithdrawal(input: CreateWithdrawalInput) {
     await this.ensureToken();
 

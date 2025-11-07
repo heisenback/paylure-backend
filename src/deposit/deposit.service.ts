@@ -18,6 +18,18 @@ export class DepositService {
 
   constructor(private readonly keyclub: KeyclubService) {}
 
+  /**
+   * Wrapper para manter compatibilidade com public-api.controller.ts
+   * que chama: this.depositService.createDeposit(user.id, dto)
+   */
+  async createDeposit(_userId: string | number, dto: CreateDepositDto) {
+    // se você quiser auditar por usuário, use _userId aqui (logs, persistência etc.)
+    return this.create(dto);
+  }
+
+  /**
+   * Método padrão usado internamente e por novos controllers.
+   */
   async create(dto: CreateDepositDto) {
     this.logger.log(`[DepositService] Criando depósito amount=${dto.amount} externalId=${dto.externalId || 'auto'}`);
 
@@ -41,7 +53,7 @@ export class DepositService {
         transactionId: qr?.transactionId,
         status: qr?.status || 'PENDING',
         qrcode: qr?.qrcode,
-        amount: qr?.amount || dto.amount,
+        amount: qr?.amount ?? dto.amount,
       };
 
       this.logger.log(`[DepositService] ✅ Depósito criado (tx=${response.transactionId}) status=${response.status}`);
