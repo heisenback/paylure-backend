@@ -12,7 +12,7 @@ class CreateDepositBody {
   phone?: string;
 }
 
-@Controller('api/v1/deposits')
+@Controller('deposits') // ✅ Usa apenas 'deposits' pois o prefixo global já adiciona 'api/v1'
 export class DepositController {
   private readonly logger = new Logger(DepositController.name);
 
