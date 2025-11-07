@@ -18,13 +18,6 @@ export class DepositService {
 
   constructor(private readonly keyclub: KeyclubService) {}
 
-  /**
-   * Compatível com controllers antigos e novos
-   */
-  async createDeposit(_userId: string | number, dto: CreateDepositDto) {
-    return this.create(dto);
-  }
-
   async create(dto: CreateDepositDto) {
     this.logger.log(`[DepositService] Iniciando depósito de R$${dto.amount} para ${dto.payerName}`);
 
@@ -65,5 +58,10 @@ export class DepositService {
       this.logger.error(`[DepositService] ❌ Erro inesperado: ${msg}`);
       throw new Error(`Erro ao criar depósito: ${msg}`);
     }
+  }
+
+  async createDeposit(userId: string | number, dto: CreateDepositDto) {
+    this.logger.log(`[DepositService] createDeposit chamado para userId=${userId}`);
+    return this.create(dto);
   }
 }
