@@ -6,7 +6,7 @@ export type CreateDepositDto = {
   amount: number;
   payerName: string;
   payerEmail: string;
-  payerDocument: string; // CPF/CNPJ
+  payerDocument: string;
   externalId?: string;
   callbackUrl?: string;
   phone?: string;
@@ -19,19 +19,14 @@ export class DepositService {
   constructor(private readonly keyclub: KeyclubService) {}
 
   /**
-   * Wrapper para manter compatibilidade com public-api.controller.ts
-   * que chama: this.depositService.createDeposit(user.id, dto)
+   * Compatível com controllers antigos e novos
    */
   async createDeposit(_userId: string | number, dto: CreateDepositDto) {
-    // se você quiser auditar por usuário, use _userId aqui (logs, persistência etc.)
     return this.create(dto);
   }
 
-  /**
-   * Método padrão usado internamente e por novos controllers.
-   */
   async create(dto: CreateDepositDto) {
-    this.logger.log(`[DepositService] Criando depósito amount=${dto.amount} externalId=${dto.externalId || 'auto'}`);
+    this.logger.log(`[DepositService] Iniciando depósito de R$${dto.amount} para ${dto.payerName}`);
 
     try {
       const result = await this.keyclub.createDeposit({
@@ -46,8 +41,7 @@ export class DepositService {
         },
       });
 
-      // A doc retorna 201 { message, qrCodeResponse: {...} }
-      const qr = result?.qrCodeResponse || result?.data || result;
+      const qr = result?.qrCodeResponse || result;
       const response = {
         message: result?.message || 'Deposit created successfully.',
         transactionId: qr?.transactionId,
@@ -56,17 +50,17 @@ export class DepositService {
         amount: qr?.amount ?? dto.amount,
       };
 
-      this.logger.log(`[DepositService] ✅ Depósito criado (tx=${response.transactionId}) status=${response.status}`);
+      this.logger.log(`[DepositService] ✅ Depósito criado. TX=${response.transactionId} Status=${response.status}`);
       return response;
     } catch (err) {
       const msg = (err as Error).message || 'Erro ao criar depósito.';
-      if (msg.includes('Access token is missing or invalid')) {
-        this.logger.error('[DepositService] ❌ Token KeyClub inválido/ausente.');
-        throw new Error('Falha de autenticação com o gateway. Verifique o token (KeyClub).');
+      if (msg.includes('Access token') || msg.includes('token')) {
+        this.logger.error('[DepositService] ❌ Token KeyClub ausente ou inválido.');
+        throw new Error('Falha de autenticação com KeyClub. Verifique o Bearer token.');
       }
       if (msg.toLowerCase().includes('cloudflare')) {
-        this.logger.error('[DepositService] ❌ Chamada barrada pelo Cloudflare (KeyClub).');
-        throw new Error('Gateway temporariamente indisponível (proteção WAF). Tente novamente.');
+        this.logger.error('[DepositService] ❌ Bloqueado pelo Cloudflare (provável no login).');
+        throw new Error('Chamada bloqueada pelo WAF da KeyClub. Use KEY_CLUB_ACCESS_TOKEN ou solicite liberação.');
       }
       this.logger.error(`[DepositService] ❌ Erro inesperado: ${msg}`);
       throw new Error(`Erro ao criar depósito: ${msg}`);
