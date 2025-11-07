@@ -29,7 +29,7 @@ import type { User } from '@prisma/client';
  * Authorization: ApiKey client_id:client_secret
  */
 @Controller('public')
-@UseGuards(ApiKeyGuard) // ⭐ Todas as rotas exigem API Key
+@UseGuards(ApiKeyGuard)
 export class PublicApiController {
   private readonly logger = new Logger(PublicApiController.name);
 
@@ -56,11 +56,11 @@ export class PublicApiController {
     
     return {
       success: true,
-      message: 'Depósito criado com sucesso.',
+      message: result.message || 'Depósito criado com sucesso.',
       data: {
-        pixCode: result.qrcode, // ✅ Corrigido: qrcode ao invés de pixCode
-        depositId: result.transactionId, // ✅ Corrigido: transactionId ao invés de depositId
-        amount: result.amount, // ✅ Já vem formatado do service
+        pixCode: result.qrcode,
+        depositId: result.transactionId,
+        amount: result.amount,
         status: result.status,
       },
     };
@@ -85,7 +85,7 @@ export class PublicApiController {
       message: result.message,
       data: {
         transactionId: result.transactionId,
-        amount: dto.amount / 100, // Retorna em BRL
+        amount: dto.amount / 100,
       },
     };
   }
@@ -134,7 +134,7 @@ export class PublicApiController {
       id: p.id,
       title: p.name,
       description: p.description,
-      amount: p.priceInCents / 100, // Retorna em BRL
+      amount: p.priceInCents / 100,
       isAvailable: p.isAvailable,
       createdAt: p.createdAt,
     }));
@@ -159,7 +159,7 @@ export class PublicApiController {
     return {
       success: true,
       data: {
-        balance: user.balance / 100, // Retorna em BRL
+        balance: user.balance / 100,
         balanceInCents: user.balance,
       },
     };
