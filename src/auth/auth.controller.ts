@@ -1,47 +1,85 @@
 // src/auth/auth.controller.ts
-
-import { Controller, Get, UseGuards, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { 
+  Controller, 
+  Get, 
+  UseGuards, 
+  Post, 
+  Body, 
+  HttpCode, 
+  HttpStatus,
+  Logger,
+  Req
+} from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { GetUser } from './decorators/get-user.decorator';
-// Importa o tipo 'User' corretamente
 import type { User } from '@prisma/client'; 
+import { Request } from 'express';
 
 import { AuthService } from './auth.service';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { RegisterAuthDto } from './dto/register-auth.dto';
 
-// 🚨 CORREÇÃO DE PREFIXO: Removendo o 'api/' que causava a duplicação
-// A rota final será /api/auth ou /api/v1/auth, dependendo do que você quer usar
-// Sugestão: Vamos usar 'auth' e o prefixo global do main.ts fará o trabalho.
 @Controller('auth') 
 export class AuthController {
-    constructor(private readonly authService: AuthService) {}
+    private readonly logger = new Logger(AuthController.name);
+
+    constructor(private readonly authService: AuthService) {
+        this.logger.log('🎯 AuthController inicializado');
+    }
 
     /**
-     * POST /api/auth/register
+     * POST /api/v1/auth/register
      */
     @Post('register')
     @HttpCode(HttpStatus.CREATED)
-    register(@Body() dto: RegisterAuthDto) {
-        return this.authService.register(dto);
+    async register(@Body() dto: RegisterAuthDto, @Req() req: Request) {
+        this.logger.log('📝 ========================================');
+        this.logger.log(`📝 POST /auth/register`);
+        this.logger.log(`📧 Email: ${dto.email}`);
+        this.logger.log(`🌐 Origin: ${req.headers.origin}`);
+        this.logger.log('📝 ========================================');
+        
+        try {
+            const result = await this.authService.register(dto);
+            this.logger.log(`✅ Registro bem-sucedido: ${dto.email}`);
+            return result;
+        } catch (error) {
+            this.logger.error(`❌ Erro no registro: ${error.message}`);
+            throw error;
+        }
     }
 
     /**
-     * POST /api/auth/login
+     * POST /api/v1/auth/login
      */
     @Post('login')
     @HttpCode(HttpStatus.OK)
-    login(@Body() dto: LoginAuthDto) {
-        return this.authService.login(dto);
+    async login(@Body() dto: LoginAuthDto, @Req() req: Request) {
+        this.logger.log('🔐 ========================================');
+        this.logger.log(`🔐 POST /auth/login`);
+        this.logger.log(`📧 Email: ${dto.email}`);
+        this.logger.log(`🌐 Origin: ${req.headers.origin}`);
+        this.logger.log(`📍 URL completa: ${req.url}`);
+        this.logger.log(`🔧 Method: ${req.method}`);
+        this.logger.log('🔐 ========================================');
+        
+        try {
+            const result = await this.authService.login(dto);
+            this.logger.log(`✅ Login bem-sucedido: ${dto.email}`);
+            return result;
+        } catch (error) {
+            this.logger.error(`❌ Erro no login: ${error.message}`);
+            throw error;
+        }
     }
     
     /**
-     * GET /api/auth/me (Perfil do Usuário Logado)
+     * GET /api/v1/auth/me (Perfil do Usuário Logado)
      */
     @Get('me')
     @UseGuards(AuthGuard('jwt')) 
     getProfile(@GetUser() user: User) { 
-        // Retorna o usuário que foi validado pelo JwtStrategy
+        this.logger.log(`👤 Perfil acessado: ${user.email}`);
         return { success: true, user: user };
     }
 }
