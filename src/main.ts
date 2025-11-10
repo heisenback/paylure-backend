@@ -4,16 +4,14 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule, {
-    cors: true, // Habilita CORS na criação do app
-  });
+  const app = await NestFactory.create(AppModule);
 
   app.setGlobalPrefix('api/v1');
   logger.log('✅ Prefixo global configurado: /api/v1');
 
-  // Configuração CORS mais específica
+  // Configuração CORS completa
   app.enableCors({
-    origin: ['https://paylure.com.br', 'http://localhost:3000', 'http://localhost:5173'], // Adicione suas URLs
+    origin: true, // Aceita qualquer origem
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -22,15 +20,12 @@ async function bootstrap() {
       'X-Requested-With',
       'Accept',
       'Origin',
-      'Access-Control-Allow-Origin',
-      'Access-Control-Allow-Headers',
-      'Access-Control-Allow-Methods',
     ],
     exposedHeaders: ['Authorization'],
     preflightContinue: false,
     optionsSuccessStatus: 204,
   });
-  logger.log('✅ CORS habilitado para todas as origens');
+  logger.log('✅ CORS habilitado');
 
   app.useGlobalPipes(
     new ValidationPipe({
