@@ -8,7 +8,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { RegisterAuthDto } from './dto/register-auth.dto';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
-import { LoginDto } from './dto/login-auth.dto';
+import { LoginDto } from './dto/login-auth.dto'; // A importação correta é LoginDto
 import * as uuid from 'uuid';
 import * as crypto from 'crypto';
 
@@ -106,7 +106,8 @@ export class AuthService {
     }
   }
 
-  async login(dto: LoginAuthDto) {
+  // Linha 114 Corrigida: Usando LoginDto no lugar de LoginAuthDto
+  async login(dto: LoginDto) { 
     // 1. Busca usuário
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
