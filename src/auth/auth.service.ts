@@ -8,7 +8,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { RegisterAuthDto } from './dto/register-auth.dto';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
-import { LoginAuthDto } from './dto/login-auth.dto';
+import { LoginDto } from './dto/login-auth.dto';
 import * as uuid from 'uuid';
 import * as crypto from 'crypto';
 
