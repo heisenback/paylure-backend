@@ -7,7 +7,7 @@ import { SaleFilterDto } from './dto/sale-filter.dto';
 import type { User } from '@prisma/client';
 
 // Rota principal: /api/v1/sales
-@Controller('api/v1/sales')
+@Controller('sales')
 @UseGuards(AuthGuard('jwt')) 
 export class SalesController {
   constructor(private readonly salesService: SalesService) {}

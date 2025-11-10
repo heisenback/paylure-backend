@@ -7,7 +7,7 @@ import { GetUser } from 'src/auth/decorators/get-user.decorator';
 import type { User } from '@prisma/client';
 
 // Rota principal: /api/v1/marketplace
-@Controller('api/v1/marketplace')
+@Controller('marketplace')
 export class MarketplaceController {
   constructor(private readonly marketplaceService: MarketplaceService) {}
 

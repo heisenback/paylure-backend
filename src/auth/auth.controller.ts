@@ -13,7 +13,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { GetUser } from './decorators/get-user.decorator';
 import type { User } from '@prisma/client'; 
-import { Request } from 'express';
+import type { Request } from 'express';
 
 import { AuthService } from './auth.service';
 import { LoginAuthDto } from './dto/login-auth.dto';

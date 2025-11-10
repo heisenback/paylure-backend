@@ -7,7 +7,7 @@ import { ReportFilterDto } from './dto/report-filter.dto';
 import type { User } from '@prisma/client';
 
 // Rota principal: /api/v1/reports
-@Controller('api/v1/reports')
+@Controller('reports')
 @UseGuards(AuthGuard('jwt')) 
 export class ReportController {
   constructor(private readonly reportService: ReportService) {}

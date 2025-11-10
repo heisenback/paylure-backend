@@ -7,7 +7,7 @@ import { GetUser } from 'src/auth/decorators/get-user.decorator';
 import type { User } from '@prisma/client';
 
 // Rota principal para gerenciamento de membros
-@Controller('api/v1/membership')
+@Controller('membership')
 @UseGuards(AuthGuard('jwt')) // Protege todas as rotas deste Controller com JWT
 export class MembershipController {
   constructor(private readonly membershipService: MembershipService) {}

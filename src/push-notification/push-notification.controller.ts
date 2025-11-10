@@ -12,7 +12,7 @@ import {
 import { PushNotificationService } from './push-notification.service';
 import { SubscribeDto } from './dto/subscribe.dto';
 
-@Controller('api/v1/push-notifications')
+@Controller('push-notifications')
 export class PushNotificationController {
   private readonly logger = new Logger(PushNotificationController.name);
 

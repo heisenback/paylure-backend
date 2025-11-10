@@ -14,7 +14,7 @@ import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { WebhooksService } from 'src/webhooks/webhooks.service';
 
-@Controller('api/v1/keyclub')
+@Controller('keyclub')
 export class KeyclubController {
   private readonly logger = new Logger(KeyclubController.name);
 
