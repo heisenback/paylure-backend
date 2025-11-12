@@ -19,11 +19,14 @@ export class DepositService {
   constructor(private readonly keyclub: KeyclubService) {}
 
   async create(dto: CreateDepositDto) {
-    this.logger.log(`[DepositService] Iniciando depósito de R$${dto.amount} para ${dto.payerName}`);
+    // 1. ✅ CORREÇÃO NO LOG: Divide por 100 para mostrar o valor correto (R$ 2.00)
+    const amountInBRL = dto.amount / 100;
+    this.logger.log(`[DepositService] Iniciando depósito de R$${amountInBRL.toFixed(2)} para ${dto.payerName}`);
 
     try {
       const result = await this.keyclub.createDeposit({
-        amount: dto.amount,
+        // 2. ✅ CORREÇÃO CRÍTICA: Envia o valor em REAIS (BRL) para a Keyclub
+        amount: amountInBRL,
         externalId: dto.externalId,
         clientCallbackUrl: dto.callbackUrl,
         payer: {
@@ -40,7 +43,8 @@ export class DepositService {
         transactionId: qr?.transactionId,
         status: qr?.status || 'PENDING',
         qrcode: qr?.qrcode,
-        amount: qr?.amount ?? dto.amount,
+        // Mantém o amount da resposta KeyClub ou usa o amount original (em Centavos) do DTO
+        amount: qr?.amount ? qr.amount * 100 : dto.amount,
       };
 
       this.logger.log(`[DepositService] ✅ Depósito criado. TX=${response.transactionId} Status=${response.status}`);
