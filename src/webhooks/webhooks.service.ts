@@ -105,15 +105,15 @@ export class WebhooksService {
         `[SUCESSO] Saldo do Usuário ${deposit.user.name} (ID: ${deposit.userId}) atualizado em +${amountInCents} centavos (R$ ${(amountInCents / 100).toFixed(2)}).`,
       );
 
-      // ✅ EMISSÃO COMPLETA DE EVENTOS WEBSOCKET
+      // ✅ EMISSÃO COMPLETA DE EVENTOS WEBSOCKET - Garante que o dashboard atualiza
       
-      // 1. Emitir evento de depósito confirmado
+      // 1. Emitir evento de depósito confirmado (para limpar QR Code no frontend)
       this.paymentGateway.notifyDepositConfirmed(deposit.userId, {
         depositId: deposit.id,
         amount: amountInCents,
       });
 
-      // 2. Emitir atualização de saldo
+      // 2. Emitir atualização de saldo (para atualizar o valor do saldo)
       this.paymentGateway.notifyBalanceUpdate(deposit.userId, updatedUser.balance / 100);
 
       // 3. Emitir para o canal geral (compatibilidade)
@@ -125,7 +125,7 @@ export class WebhooksService {
 
       this.logger.log(`🔔 WebSocket emitido para userId: ${deposit.userId}`);
 
-      // 🔔 PUSH NOTIFICATION
+      // 🔔 PUSH NOTIFICATION - Garante que a notificação PWA é enviada
       await this.pushNotificationService.notifyPaymentReceived(
         deposit.userId,
         amountInCents,
