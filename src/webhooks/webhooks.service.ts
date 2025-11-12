@@ -8,7 +8,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { PaymentGateway } from 'src/gateway/payment.gateway';
-import { PushNotificationService } from 'src/push-notification/push-notification.service'; // 🔔 NOVO
+import { PushNotificationService } from 'src/push-notification/push-notification.service';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -20,7 +20,7 @@ export class WebhooksService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly paymentGateway: PaymentGateway,
-    private readonly pushNotificationService: PushNotificationService, // 🔔 NOVO
+    private readonly pushNotificationService: PushNotificationService,
   ) {
     this.KEY_CLUB_WEBHOOK_SECRET = this.configService.get<string>(
       'KEY_CLUB_WEBHOOK_SECRET',
@@ -105,14 +105,25 @@ export class WebhooksService {
         `[SUCESSO] Saldo do Usuário ${deposit.user.name} (ID: ${deposit.userId}) atualizado em +${amountInCents} centavos (R$ ${(amountInCents / 100).toFixed(2)}).`,
       );
 
-      // WebSocket
+      // ✅ EMISSÃO COMPLETA DE EVENTOS WEBSOCKET
+      
+      // 1. Emitir evento de depósito confirmado
+      this.paymentGateway.notifyDepositConfirmed(deposit.userId, {
+        depositId: deposit.id,
+        amount: amountInCents,
+      });
+
+      // 2. Emitir atualização de saldo
+      this.paymentGateway.notifyBalanceUpdate(deposit.userId, updatedUser.balance / 100);
+
+      // 3. Emitir para o canal geral (compatibilidade)
       this.paymentGateway.emitDepositUpdate(deposit.externalId, {
         depositId: deposit.id,
         amount: amountInCents / 100,
         status: 'PAID',
       });
 
-      this.paymentGateway.notifyBalanceUpdate(deposit.userId, updatedUser.balance / 100);
+      this.logger.log(`🔔 WebSocket emitido para userId: ${deposit.userId}`);
 
       // 🔔 PUSH NOTIFICATION
       await this.pushNotificationService.notifyPaymentReceived(
