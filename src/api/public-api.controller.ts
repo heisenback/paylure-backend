@@ -52,7 +52,18 @@ export class PublicApiController {
   ) {
     this.logger.log(`[API Pública] Depósito solicitado por: ${user.email}`);
     
-    const result = await this.depositService.createDeposit(user.id, dto);
+    // ✅ CORREÇÃO: Normalizar os dados do DTO antes de passar para o service
+    const normalizedDto = {
+      amount: Number(dto.amount),
+      payerName: (dto.payerName || dto.userName || 'Usuário da Gateway').trim(),
+      payerEmail: (dto.payerEmail || dto.userEmail || '').trim(),
+      payerDocument: (dto.payerDocument || dto.userDocument || '').replace(/\D/g, ''),
+      phone: (dto.payerPhone || dto.phone || '').replace(/\D/g, '') || undefined,
+      externalId: dto.externalId,
+      callbackUrl: dto.callbackUrl,
+    };
+
+    const result = await this.depositService.createDeposit(user.id, normalizedDto);
     
     return {
       success: true,

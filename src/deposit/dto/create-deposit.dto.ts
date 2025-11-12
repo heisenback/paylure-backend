@@ -1,4 +1,4 @@
-// src/deposit/create-deposit.dto.ts
+// src/deposit/dto/create-deposit.dto.ts
 import { IsNumber, IsOptional, IsString, IsEmail, Min } from 'class-validator';
 
 export class CreateDepositDto {
@@ -7,19 +7,19 @@ export class CreateDepositDto {
   @Min(1)
   amount: number;
 
-  // ------ FORMATO ANTIGO (frontend antigo/existente) ------
+  // ------ FORMATO ANTIGO (compat) ------
   @IsOptional() @IsString() userName?: string;
-  @IsOptional() @IsEmail() userEmail?: string;
-  @IsOptional() @IsString() userDocument?: string; // números com/sem máscara
+  @IsOptional() @IsEmail()  userEmail?: string;
+  @IsOptional() @IsString() userDocument?: string;
   @IsOptional() @IsString() phone?: string;
 
-  // ------ FORMATO NOVO (frontend atualizado) ------
+  // ------ FORMATO NOVO ------
   @IsOptional() @IsString() payerName?: string;
-  @IsOptional() @IsEmail() payerEmail?: string;
+  @IsOptional() @IsEmail()  payerEmail?: string;
   @IsOptional() @IsString() payerDocument?: string;
   @IsOptional() @IsString() payerPhone?: string;
 
-  // Campos auxiliares/opcionais
+  // Opcionais
   @IsOptional() @IsString() externalId?: string;
   @IsOptional() @IsString() callbackUrl?: string;
 }
