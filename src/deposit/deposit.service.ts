@@ -1,7 +1,6 @@
 // src/deposit/deposit.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { KeyclubService } from '../keyclub/keyclub.service';
-import { PushNotificationService } from '../push-notification/push-notification.service'; 
 
 export type CreateDepositDto = {
   amount: number;
@@ -17,19 +16,16 @@ export type CreateDepositDto = {
 export class DepositService {
   private readonly logger = new Logger(DepositService.name);
 
-  constructor(
-    private readonly keyclub: KeyclubService,
-    private readonly pushNotificationService: PushNotificationService, 
-  ) {}
+  constructor(private readonly keyclub: KeyclubService) {}
 
   async create(dto: CreateDepositDto) {
-    // CORREÇÃO LOG: Divide por 100 para mostrar o valor correto
+    // 1. ✅ CORREÇÃO NO LOG: Divide por 100 para mostrar o valor correto (R$ 2.00)
     const amountInBRL = dto.amount / 100;
     this.logger.log(`[DepositService] Iniciando depósito de R$${amountInBRL.toFixed(2)} para ${dto.payerName}`);
 
     try {
       const result = await this.keyclub.createDeposit({
-        // CORREÇÃO CRÍTICA: Envia o valor em REAIS (BRL) para a Keyclub
+        // 2. ✅ CORREÇÃO CRÍTICA: Envia o valor em REAIS (BRL) para a Keyclub
         amount: amountInBRL,
         externalId: dto.externalId,
         clientCallbackUrl: dto.callbackUrl,
@@ -52,7 +48,6 @@ export class DepositService {
       };
 
       this.logger.log(`[DepositService] ✅ Depósito criado. TX=${response.transactionId} Status=${response.status}`);
-      
       return response;
     } catch (err) {
       const msg = (err as Error).message || 'Erro ao criar depósito.';
@@ -71,19 +66,6 @@ export class DepositService {
 
   async createDeposit(userId: string | number, dto: CreateDepositDto) {
     this.logger.log(`[DepositService] createDeposit chamado para userId=${userId}`);
-    
-    const result = await this.create(dto);
-
-    // 🔔 CORREÇÃO PUSH: Notifica que o PIX foi gerado com sucesso.
-    if (result.qrcode && result.transactionId) {
-      await this.pushNotificationService.notifyPixGenerated(
-        String(userId), // Converte para string para a tipagem do PushService
-        dto.amount, // Valor em centavos
-        result.qrcode // O código PIX
-      );
-      this.logger.log(`🔔 Notificação de PIX Gerado enviada para ${userId}`);
-    }
-
-    return result;
+    return this.create(dto);
   }
 }

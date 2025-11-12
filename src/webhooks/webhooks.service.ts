@@ -125,7 +125,7 @@ export class WebhooksService {
 
       this.logger.log(`🔔 WebSocket emitido para userId: ${deposit.userId}`);
 
-      // 🔔 PUSH NOTIFICATION - Garante que a notificação PWA é enviada (PIX PAGO)
+      // 🔔 PUSH NOTIFICATION - Garante que a notificação PWA é enviada
       await this.pushNotificationService.notifyPaymentReceived(
         deposit.userId,
         amountInCents,
