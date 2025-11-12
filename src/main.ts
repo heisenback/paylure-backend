@@ -10,9 +10,16 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
   logger.log('✅ Prefixo global configurado: /api/v1');
 
-  // ✅ Configuração CORS completa
+  // 1. ✅ CORREÇÃO CRÍTICA DO CORS: Definir origens permitidas explicitamente
+  // O erro 'Access-Control-Allow-Origin' geralmente é resolvido ao especificar a origem.
+  const allowedOrigins = [
+    'https://paylure.com.br', // Seu frontend
+    'https://api.paylure.com.br', // Seu próprio backend
+    'http://localhost:3001', // Se você usar localhost para desenvolvimento
+  ];
+
   app.enableCors({
-    origin: true, // Aceita qualquer origem
+    origin: allowedOrigins, // Agora aceita apenas estas origens
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [

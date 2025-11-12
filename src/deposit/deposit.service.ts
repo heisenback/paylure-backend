@@ -23,13 +23,13 @@ export class DepositService {
   ) {}
 
   async create(dto: CreateDepositDto) {
-    // 1. CORREÇÃO NO LOG: Divide por 100 para mostrar o valor correto (R$ 2.00)
+    // CORREÇÃO LOG: Divide por 100 para mostrar o valor correto
     const amountInBRL = dto.amount / 100;
     this.logger.log(`[DepositService] Iniciando depósito de R$${amountInBRL.toFixed(2)} para ${dto.payerName}`);
 
     try {
       const result = await this.keyclub.createDeposit({
-        // 2. CORREÇÃO CRÍTICA (já estava ok): Envia o valor em REAIS (BRL) para a Keyclub
+        // CORREÇÃO CRÍTICA: Envia o valor em REAIS (BRL) para a Keyclub
         amount: amountInBRL,
         externalId: dto.externalId,
         clientCallbackUrl: dto.callbackUrl,
