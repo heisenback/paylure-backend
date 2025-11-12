@@ -6,10 +6,11 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
 
+  // ✅ Prefixo global
   app.setGlobalPrefix('api/v1');
   logger.log('✅ Prefixo global configurado: /api/v1');
 
-  // Configuração CORS completa
+  // ✅ Configuração CORS completa
   app.enableCors({
     origin: true, // Aceita qualquer origem
     credentials: true,
@@ -27,10 +28,11 @@ async function bootstrap() {
   });
   logger.log('✅ CORS habilitado');
 
+  // ✅ CORREÇÃO: forbidNonWhitelisted: false
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
-      forbidNonWhitelisted: true,
+      forbidNonWhitelisted: false, // ✅ MUDANÇA CRÍTICA
       transform: true,
     }),
   );
@@ -50,6 +52,7 @@ async function bootstrap() {
   logger.log('   POST /api/v1/auth/register');
   logger.log('   POST /api/v1/auth/login');
   logger.log('   GET  /api/v1/auth/me');
+  logger.log('   POST /api/v1/deposits');
   logger.log('');
 }
 bootstrap();
