@@ -106,39 +106,46 @@ export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect 
     this.server.emit('withdrawal:update', { externalId, ...data });
   }
 
+  // ✅ EVENTO: Atualização de saldo (emite para TODOS os clientes conectados)
   notifyBalanceUpdate(userId: string, newBalance: number) {
-    this.server.emit(`balance:updated:${userId}`, {
-      type: 'BALANCE_UPDATED',
-      balance: newBalance,
+    this.server.emit('balance:updated', {
+      userId,
+      balance: newBalance / 100, // Converte centavos para reais
       timestamp: new Date().toISOString(),
     });
-    this.logger.log(`Notificação de saldo atualizado enviada para usuário ${userId}`);
+    this.logger.log(`💰 Evento 'balance:updated' emitido - userId: ${userId}, saldo: R$ ${(newBalance / 100).toFixed(2)}`);
   }
 
+  // ✅ EVENTO: Depósito confirmado (emite para TODOS os clientes conectados)
   notifyDepositConfirmed(userId: string, data: { depositId: string; amount: number }) {
-    this.server.emit(`deposit:confirmed:${userId}`, {
-      type: 'DEPOSIT_CONFIRMED',
-      ...data,
+    this.server.emit('deposit:confirmed', {
+      userId,
+      depositId: data.depositId,
+      amount: data.amount,
       timestamp: new Date().toISOString(),
     });
-    this.logger.log(`Notificação de depósito confirmado enviada para usuário ${userId}`);
+    this.logger.log(`✅ Evento 'deposit:confirmed' emitido - userId: ${userId}, valor: R$ ${(data.amount / 100).toFixed(2)}`);
   }
 
+  // ✅ EVENTO: Saque completado
   notifyWithdrawalCompleted(userId: string, data: { withdrawalId: string; amount: number }) {
-    this.server.emit(`withdrawal:completed:${userId}`, {
-      type: 'WITHDRAWAL_COMPLETED',
-      ...data,
+    this.server.emit('withdrawal:completed', {
+      userId,
+      withdrawalId: data.withdrawalId,
+      amount: data.amount,
       timestamp: new Date().toISOString(),
     });
-    this.logger.log(`Notificação de saque completado enviada para usuário ${userId}`);
+    this.logger.log(`✅ Evento 'withdrawal:completed' emitido para userId: ${userId}`);
   }
 
+  // ✅ EVENTO: Saque falhou
   notifyWithdrawalFailed(userId: string, data: { withdrawalId: string; reason: string }) {
-    this.server.emit(`withdrawal:failed:${userId}`, {
-      type: 'WITHDRAWAL_FAILED',
-      ...data,
+    this.server.emit('withdrawal:failed', {
+      userId,
+      withdrawalId: data.withdrawalId,
+      reason: data.reason,
       timestamp: new Date().toISOString(),
     });
-    this.logger.log(`Notificação de saque falhou enviada para usuário ${userId}`);
+    this.logger.log(`❌ Evento 'withdrawal:failed' emitido para userId: ${userId}`);
   }
 }
