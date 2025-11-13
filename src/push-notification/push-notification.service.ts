@@ -3,6 +3,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import * as webpush from 'web-push';
+// 💡 AJUSTE CRÍTICO: Importar PrismaClientKnownRequestError explicitamente
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library'; 
+
 
 @Injectable()
 export class PushNotificationService {
@@ -22,7 +25,8 @@ export class PushNotificationService {
 
   async subscribe(userId: string, subscription: any, deviceInfo?: string) {
     try {
-      const existing = await this.prisma.pushSubscription.findUnique({
+      // 💡 AJUSTE DE REFORÇO: Trocar findUnique por findFirst para maior robustez
+      const existing = await this.prisma.pushSubscription.findFirst({
         where: { endpoint: subscription.endpoint },
       });
 
@@ -44,11 +48,20 @@ export class PushNotificationService {
       this.logger.log(`✅ Nova subscription criada para usuário ${userId}`);
       return newSub;
     } catch (error) {
+      // 💡 REFORÇO DE TRATAMENTO DE ERRO: Usar o tipo importado
+      if (error instanceof PrismaClientKnownRequestError && error.code === 'P2021') {
+        this.logger.error(
+          `P2021 PERSISTENTE: Tabela PushSubscription não existe no DB. Necessário 'docker compose exec api npx prisma migrate deploy'.`,
+          error,
+        );
+        // O erro continua sendo relançado, gerando o 500 no endpoint
+      }
       this.logger.error('Erro ao salvar subscription', error);
       throw error;
     }
   }
-
+  
+  // RESTANTE DO CÓDIGO PERMANECE O MESMO
   async unsubscribe(userId: string, endpoint: string) {
     try {
       await this.prisma.pushSubscription.deleteMany({
