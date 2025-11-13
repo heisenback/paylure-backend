@@ -19,13 +19,13 @@ export class DepositService {
   constructor(private readonly keyclub: KeyclubService) {}
 
   async create(dto: CreateDepositDto) {
-    // 1. ✅ CORREÇÃO NO LOG: Divide por 100 para mostrar o valor correto (R$ 2.00)
+    // 1. âœ… CORREÃ‡ÃƒO NO LOG: Divide por 100 para mostrar o valor correto (R$ 2.00)
     const amountInBRL = dto.amount / 100;
-    this.logger.log(`[DepositService] Iniciando depósito de R$${amountInBRL.toFixed(2)} para ${dto.payerName}`);
+    this.logger.log(`[DepositService] Iniciando depÃ³sito de R$${amountInBRL.toFixed(2)} para ${dto.payerName}`);
 
     try {
       const result = await this.keyclub.createDeposit({
-        // 2. ✅ CORREÇÃO CRÍTICA: Envia o valor em REAIS (BRL) para a Keyclub
+        // 2. âœ… CORREÃ‡ÃƒO CRÃTICA: Envia o valor em REAIS (BRL) para a Keyclub
         amount: amountInBRL,
         externalId: dto.externalId,
         clientCallbackUrl: dto.callbackUrl,
@@ -43,24 +43,24 @@ export class DepositService {
         transactionId: qr?.transactionId,
         status: qr?.status || 'PENDING',
         qrcode: qr?.qrcode,
-        // Mantém o amount da resposta KeyClub ou usa o amount original (em Centavos) do DTO
+        // MantÃ©m o amount da resposta KeyClub ou usa o amount original (em Centavos) do DTO
         amount: qr?.amount ? qr.amount * 100 : dto.amount,
       };
 
-      this.logger.log(`[DepositService] ✅ Depósito criado. TX=${response.transactionId} Status=${response.status}`);
+      this.logger.log(`[DepositService] âœ… DepÃ³sito criado. TX=${response.transactionId} Status=${response.status}`);
       return response;
     } catch (err) {
-      const msg = (err as Error).message || 'Erro ao criar depósito.';
+      const msg = (err as Error).message || 'Erro ao criar depÃ³sito.';
       if (msg.includes('Access token') || msg.includes('token')) {
-        this.logger.error('[DepositService] ❌ Token KeyClub ausente ou inválido.');
-        throw new Error('Falha de autenticação com KeyClub. Verifique o Bearer token.');
+        this.logger.error('[DepositService] âŒ Token KeyClub ausente ou invÃ¡lido.');
+        throw new Error('Falha de autenticaÃ§Ã£o com KeyClub. Verifique o Bearer token.');
       }
       if (msg.toLowerCase().includes('cloudflare')) {
-        this.logger.error('[DepositService] ❌ Bloqueado pelo Cloudflare (provável no login).');
-        throw new Error('Chamada bloqueada pelo WAF da KeyClub. Use KEY_CLUB_ACCESS_TOKEN ou solicite liberação.');
+        this.logger.error('[DepositService] âŒ Bloqueado pelo Cloudflare (provÃ¡vel no login).');
+        throw new Error('Chamada bloqueada pelo WAF da KeyClub. Use KEY_CLUB_ACCESS_TOKEN ou solicite liberaÃ§Ã£o.');
       }
-      this.logger.error(`[DepositService] ❌ Erro inesperado: ${msg}`);
-      throw new Error(`Erro ao criar depósito: ${msg}`);
+      this.logger.error(`[DepositService] âŒ Erro inesperado: ${msg}`);
+      throw new Error(`Erro ao criar depÃ³sito: ${msg}`);
     }
   }
 

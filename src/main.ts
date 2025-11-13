@@ -1,10 +1,15 @@
+// src/main.ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  
+  // 👇 AQUI FOI A MUDANÇA
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true, // Habilita o rawBody para validar webhooks
+  });
 
   // ✅ Prefixo global
   app.setGlobalPrefix('api/v1');
