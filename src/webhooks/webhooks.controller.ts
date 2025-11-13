@@ -8,11 +8,11 @@ import {
   Headers,
   UnauthorizedException,
   BadRequestException,
-  RawBodyRequest,
   Logger,
 } from '@nestjs/common';
 import { WebhooksService } from './webhooks.service';
-import { Request } from 'express';
+import type { Request } from 'express'; // <-- MUDANÇA AQUI
+import type { RawBodyRequest } from '@nestjs/common'; // <-- MUDANÇA AQUI
 
 @Controller('webhooks')
 export class WebhooksController {
