@@ -11,155 +11,107 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 
-const ORIGINS = (process.env.SOCKET_CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
-const SOCKET_PATH = process.env.SOCKET_PATH || '/socket.io';
-const PING_INTERVAL = Number(process.env.SOCKET_PING_INTERVAL || 25000);
-...
-
 @WebSocketGateway({
   cors: {
-    origin: ORIGINS.length > 0 ? ORIGINS : '*',
-    credentials: true,
+    origin: '*',
   },
-  path: SOCKET_PATH,
-  pingInterval: PING_INTERVAL,
-  pingTimeout: 60000,
 })
 export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  private readonly logger = new Logger(PaymentGateway.name);
-
   @WebSocketServer()
-  server!: Server;
+  server: Server;
 
-  private lastLogByClient = new Map<string, number>();
-  private static readonly LOG_DEBOUNCE_MS = 5000;
-  
-  private shouldLog(clientId: string): boolean {
-    const now = Date.now();
-    const prev = this.lastLogByClient.get(clientId) || 0;
-    if (now - prev > PaymentGateway.LOG_DEBOUNCE_MS) {
-      this.lastLogByClient.set(clientId, now);
-      return true;
-    }
-    return false;
-  }
+  private readonly logger = new Logger(PaymentGateway.name);
+  private userSockets = new Map<string, Socket>();
 
   handleConnection(client: Socket) {
-    if (this.shouldLog(client.id)) {
-      const ua = (client.handshake.headers['user-agent'] as string) || 'unknown';
-      const ip =
-        (client.handshake.headers['x-forwarded-for'] as string) ||
-        (client.conn.remoteAddress as string) ||
-        'n/a';
-      // this.logger.log(`[PaymentGateway] Cliente conectado: ${client.id} | ip=${ip} | ua=${ua}`);
+    const userId = client.handshake.query.userId as string;
+    
+    if (userId) {
+      this.userSockets.set(userId, client);
+      this.logger.log(`✅ Cliente conectado: ${client.id} | User: ${userId}`);
+    } else {
+      this.logger.warn(`⚠️ Cliente conectado sem userId: ${client.id}`);
     }
   }
 
   handleDisconnect(client: Socket) {
-    const ua = (client.handshake.headers['user-agent'] as string) || 'unknown';
-    const ip =
-      (client.handshake.headers['x-forwarded-for'] as string) ||
-      (client.conn.remoteAddress as string) ||
-      'n/a';
-    this.logger.log(`[PaymentGateway] Cliente desconectado: ${client.id} | ip=${ip} | ua=${ua}`);
-  }
-
-  @SubscribeMessage('joinRoom')
-  handleJoinRoom(
-    @MessageBody() payload: { roomId: string; userId: string },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { roomId, userId } = payload;
-
-    if (!roomId || !userId) {
-      this.logger.warn(`[PaymentGateway] joinRoom: payload inválido: ${JSON.stringify(payload)}`);
-      return;
+    const userId = client.handshake.query.userId as string;
+    
+    if (userId) {
+      this.userSockets.delete(userId);
+      this.logger.log(`🔌 Cliente desconectado: ${client.id} | User: ${userId}`);
+    } else {
+      this.logger.log(`🔌 Cliente desconectado: ${client.id}`);
     }
-
-    const roomName = `room:${roomId}`;
-    client.join(roomName);
-    this.logger.log(
-      `[PaymentGateway] Usuário ${userId} entrou na sala ${roomName} (socketId=${client.id})`,
-    );
   }
 
-  @SubscribeMessage('leaveRoom')
-  handleLeaveRoom(
-    @MessageBody() payload: { roomId: string; userId: string },
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { roomId, userId } = payload;
-
-    if (!roomId || !userId) {
-      this.logger.warn(`[PaymentGateway] leaveRoom: payload inválido: ${JSON.stringify(payload)}`);
-      return;
+  /**
+   * Notifica um usuário específico sobre atualização de saldo
+   */
+  notifyBalanceUpdate(userId: string, newBalance: number) {
+    const socket = this.userSockets.get(userId);
+    
+    if (socket) {
+      socket.emit('balance_updated', { 
+        balance: newBalance,
+        timestamp: new Date().toISOString(),
+      });
+      this.logger.log(`💰 Saldo atualizado enviado para User ${userId}: R$${(newBalance / 100).toFixed(2)}`);
+    } else {
+      this.logger.warn(`⚠️ Socket não encontrado para User ${userId}`);
     }
-
-    const roomName = `room:${roomId}`;
-    client.leave(roomName);
-    this.logger.log(
-      `[PaymentGateway] Usuário ${userId} saiu da sala ${roomName} (socketId=${client.id})`,
-    );
   }
 
-  // ✅ EVENTO: PIX gerado
-  notifyPixCreated(userId: string, data: { depositId: string; qrCode: string; expiresAt: string }) {
-    this.server.emit('pix:created', {
-      userId,
-      depositId: data.depositId,
-      qrCode: data.qrCode,
-      expiresAt: data.expiresAt,
+  /**
+   * Emite atualização de depósito para todos os clientes conectados
+   */
+  emitDepositUpdate(externalId: string, data: any) {
+    this.server.emit('deposit_update', {
+      externalId,
+      ...data,
       timestamp: new Date().toISOString(),
     });
-    this.logger.log(
-      `✅ Evento 'pix:created' emitido para userId: ${userId}, depositId: ${data.depositId}`,
-    );
+    this.logger.log(`📨 Atualização de depósito emitida: ${externalId}`);
   }
 
-  // ✅ EVENTO: PIX expirado
-  notifyPixExpired(userId: string, data: { depositId: string }) {
-    this.server.emit('pix:expired', {
-      userId,
-      depositId: data.depositId,
+  /**
+   * Emite atualização de saque para todos os clientes conectados
+   */
+  emitWithdrawalUpdate(externalId: string, data: any) {
+    this.server.emit('withdrawal_update', {
+      externalId,
+      ...data,
       timestamp: new Date().toISOString(),
     });
-    this.logger.log(
-      `⚠️ Evento 'pix:expired' emitido para userId: ${userId}, depositId: ${data.depositId}`,
-    );
+    this.logger.log(`📨 Atualização de saque emitida: ${externalId}`);
   }
 
-  // ✅ EVENTO: Depósito confirmado
-  notifyDepositConfirmed(userId: string, data: { depositId: string; amount: number }) {
-    this.server.emit('deposit:confirmed', {
-      userId,
-      depositId: data.depositId,
-      amount: data.amount,
-      timestamp: new Date().toISOString(),
-    });
-    this.logger.log(
-      `✅ Evento 'deposit:confirmed' emitido - userId: ${userId}, valor: R$ ${(data.amount / 100).toFixed(2)}`,
-    );
+  /**
+   * Notifica usuário específico sobre depósito confirmado
+   */
+  notifyDepositConfirmed(userId: string, depositData: any) {
+    const socket = this.userSockets.get(userId);
+    
+    if (socket) {
+      socket.emit('deposit_confirmed', depositData);
+      this.logger.log(`✅ Depósito confirmado notificado para User ${userId}`);
+    }
   }
 
-  // ✅ EVENTO: Saque completado
-  notifyWithdrawalCompleted(userId: string, data: { withdrawalId: string; amount: number }) {
-    this.server.emit('withdrawal:completed', {
-      userId,
-      withdrawalId: data.withdrawalId,
-      amount: data.amount,
-      timestamp: new Date().toISOString(),
-    });
-    this.logger.log(`✅ Evento 'withdrawal:completed' emitido para userId: ${userId}`);
+  /**
+   * Notifica usuário específico sobre saque processado
+   */
+  notifyWithdrawalProcessed(userId: string, withdrawalData: any) {
+    const socket = this.userSockets.get(userId);
+    
+    if (socket) {
+      socket.emit('withdrawal_processed', withdrawalData);
+      this.logger.log(`✅ Saque processado notificado para User ${userId}`);
+    }
   }
 
-  // ✅ EVENTO: Saque falhou
-  notifyWithdrawalFailed(userId: string, data: { withdrawalId: string; reason: string }) {
-    this.server.emit('withdrawal:failed', {
-      userId,
-      withdrawalId: data.withdrawalId,
-      reason: data.reason,
-      timestamp: new Date().toISOString(),
-    });
-    this.logger.log(`❌ Evento 'withdrawal:failed' emitido para userId: ${userId}`);
+  @SubscribeMessage('ping')
+  handlePing(@ConnectedSocket() client: Socket): string {
+    return 'pong';
   }
 }
