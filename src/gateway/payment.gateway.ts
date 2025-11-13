@@ -14,48 +14,16 @@ import { Logger } from '@nestjs/common';
 const ORIGINS = (process.env.SOCKET_CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
 const SOCKET_PATH = process.env.SOCKET_PATH || '/socket.io';
 const PING_INTERVAL = Number(process.env.SOCKET_PING_INTERVAL || 25000);
-const PING_TIMEOUT = Number(process.env.SOCKET_PING_TIMEOUT || 60000);
-const TRANSPORTS = (process.env.SOCKET_TRANSPORTS || 'websocket,polling')
-  .split(',')
-  .map(t => t.trim() as 'websocket' | 'polling')
-  .filter(Boolean);
-
-const corsOrigins: (string | RegExp)[] = [];
-for (const o of ORIGINS) {
-  if (o === '*.vercel.app' || o === 'https://*.vercel.app') {
-    corsOrigins.push(/^(https?:\/\/)?([a-z0-9-]+\.)*vercel\.app$/i);
-  } else if (o) {
-    corsOrigins.push(o);
-  }
-}
-if (!corsOrigins.length) {
-  corsOrigins.push(
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'https://paylure.com.br',
-    'https://www.paylure.com.br',
-    'https://api.paylure.com.br',
-    /^(https?:\/\/)?([a-z0-9-]+\.)*vercel\.app$/i
-  );
-}
+...
 
 @WebSocketGateway({
   cors: {
-    origin: corsOrigins,
+    origin: ORIGINS.length > 0 ? ORIGINS : '*',
     credentials: true,
-    methods: ['GET', 'POST'],
   },
-  transports: TRANSPORTS,
-  allowEIO3: true,
-  pingInterval: PING_INTERVAL,
-  pingTimeout: PING_TIMEOUT,
   path: SOCKET_PATH,
-  perMessageDeflate: true,
-  httpCompression: true,
-  connectionStateRecovery: {
-    maxDisconnectionDuration: 2 * 60 * 1000,
-    skipMiddlewares: true,
-  },
+  pingInterval: PING_INTERVAL,
+  pingTimeout: 60000,
 })
 export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(PaymentGateway.name);
@@ -83,40 +51,84 @@ export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect 
         (client.handshake.headers['x-forwarded-for'] as string) ||
         (client.conn.remoteAddress as string) ||
         'n/a';
-      this.logger.log(`[PaymentGateway] Cliente conectado: ${client.id} | ip=${ip} | ua=${ua}`);
+      // this.logger.log(`[PaymentGateway] Cliente conectado: ${client.id} | ip=${ip} | ua=${ua}`);
     }
   }
 
   handleDisconnect(client: Socket) {
-    if (this.shouldLog(client.id)) {
-      this.logger.log(`[PaymentGateway] Cliente desconectado: ${client.id}`);
+    const ua = (client.handshake.headers['user-agent'] as string) || 'unknown';
+    const ip =
+      (client.handshake.headers['x-forwarded-for'] as string) ||
+      (client.conn.remoteAddress as string) ||
+      'n/a';
+    this.logger.log(`[PaymentGateway] Cliente desconectado: ${client.id} | ip=${ip} | ua=${ua}`);
+  }
+
+  @SubscribeMessage('joinRoom')
+  handleJoinRoom(
+    @MessageBody() payload: { roomId: string; userId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { roomId, userId } = payload;
+
+    if (!roomId || !userId) {
+      this.logger.warn(`[PaymentGateway] joinRoom: payload inválido: ${JSON.stringify(payload)}`);
+      return;
     }
+
+    const roomName = `room:${roomId}`;
+    client.join(roomName);
+    this.logger.log(
+      `[PaymentGateway] Usuário ${userId} entrou na sala ${roomName} (socketId=${client.id})`,
+    );
   }
 
-  @SubscribeMessage('ping')
-  handlePing(@MessageBody() _payload: any, @ConnectedSocket() client: Socket) {
-    client.emit('pong', { t: Date.now() });
+  @SubscribeMessage('leaveRoom')
+  handleLeaveRoom(
+    @MessageBody() payload: { roomId: string; userId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const { roomId, userId } = payload;
+
+    if (!roomId || !userId) {
+      this.logger.warn(`[PaymentGateway] leaveRoom: payload inválido: ${JSON.stringify(payload)}`);
+      return;
+    }
+
+    const roomName = `room:${roomId}`;
+    client.leave(roomName);
+    this.logger.log(
+      `[PaymentGateway] Usuário ${userId} saiu da sala ${roomName} (socketId=${client.id})`,
+    );
   }
 
-  emitDepositUpdate(externalId: string, data: any) {
-    this.server.emit('deposit:update', { externalId, ...data });
-  }
-
-  emitWithdrawalUpdate(externalId: string, data: any) {
-    this.server.emit('withdrawal:update', { externalId, ...data });
-  }
-
-  // ✅ EVENTO: Atualização de saldo (emite para TODOS os clientes conectados)
-  notifyBalanceUpdate(userId: string, newBalance: number) {
-    this.server.emit('balance:updated', {
+  // ✅ EVENTO: PIX gerado
+  notifyPixCreated(userId: string, data: { depositId: string; qrCode: string; expiresAt: string }) {
+    this.server.emit('pix:created', {
       userId,
-      balance: newBalance / 100, // Converte centavos para reais
+      depositId: data.depositId,
+      qrCode: data.qrCode,
+      expiresAt: data.expiresAt,
       timestamp: new Date().toISOString(),
     });
-    this.logger.log(`💰 Evento 'balance:updated' emitido - userId: ${userId}, saldo: R$ ${(newBalance / 100).toFixed(2)}`);
+    this.logger.log(
+      `✅ Evento 'pix:created' emitido para userId: ${userId}, depositId: ${data.depositId}`,
+    );
   }
 
-  // ✅ EVENTO: Depósito confirmado (emite para TODOS os clientes conectados)
+  // ✅ EVENTO: PIX expirado
+  notifyPixExpired(userId: string, data: { depositId: string }) {
+    this.server.emit('pix:expired', {
+      userId,
+      depositId: data.depositId,
+      timestamp: new Date().toISOString(),
+    });
+    this.logger.log(
+      `⚠️ Evento 'pix:expired' emitido para userId: ${userId}, depositId: ${data.depositId}`,
+    );
+  }
+
+  // ✅ EVENTO: Depósito confirmado
   notifyDepositConfirmed(userId: string, data: { depositId: string; amount: number }) {
     this.server.emit('deposit:confirmed', {
       userId,
@@ -124,7 +136,9 @@ export class PaymentGateway implements OnGatewayConnection, OnGatewayDisconnect 
       amount: data.amount,
       timestamp: new Date().toISOString(),
     });
-    this.logger.log(`✅ Evento 'deposit:confirmed' emitido - userId: ${userId}, valor: R$ ${(data.amount / 100).toFixed(2)}`);
+    this.logger.log(
+      `✅ Evento 'deposit:confirmed' emitido - userId: ${userId}, valor: R$ ${(data.amount / 100).toFixed(2)}`,
+    );
   }
 
   // ✅ EVENTO: Saque completado
