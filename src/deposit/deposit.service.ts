@@ -3,7 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { KeyclubService } from '../keyclub/keyclub.service';
 
 export type CreateDepositDto = {
-  amount: number;
+  amount: number; // SEMPRE EM CENTAVOS (ex: 200 = R$ 2,00)
   payerName: string;
   payerEmail: string;
   payerDocument: string;
@@ -19,14 +19,18 @@ export class DepositService {
   constructor(private readonly keyclub: KeyclubService) {}
 
   async create(dto: CreateDepositDto) {
-    // 1. âœ… CORREÃ‡ÃƒO NO LOG: Divide por 100 para mostrar o valor correto (R$ 2.00)
+    // ✅ CORREÇÃO: dto.amount JÁ vem em CENTAVOS do frontend
+    // Converte para BRL apenas uma vez para enviar à KeyClub
     const amountInBRL = dto.amount / 100;
-    this.logger.log(`[DepositService] Iniciando depÃ³sito de R$${amountInBRL.toFixed(2)} para ${dto.payerName}`);
+    
+    this.logger.log(
+      `[DepositService] Iniciando depósito de R$${amountInBRL.toFixed(2)} ` +
+      `(${dto.amount} centavos) para ${dto.payerName}`
+    );
 
     try {
       const result = await this.keyclub.createDeposit({
-        // 2. âœ… CORREÃ‡ÃƒO CRÃTICA: Envia o valor em REAIS (BRL) para a Keyclub
-        amount: amountInBRL,
+        amount: amountInBRL, // Envia em BRL para a KeyClub
         externalId: dto.externalId,
         clientCallbackUrl: dto.callbackUrl,
         payer: {
@@ -43,24 +47,37 @@ export class DepositService {
         transactionId: qr?.transactionId,
         status: qr?.status || 'PENDING',
         qrcode: qr?.qrcode,
-        // MantÃ©m o amount da resposta KeyClub ou usa o amount original (em Centavos) do DTO
-        amount: qr?.amount ? qr.amount * 100 : dto.amount,
+        // ✅ Retorna SEMPRE em centavos para manter consistência
+        amount: dto.amount, // Mantém o valor original em centavos
       };
 
-      this.logger.log(`[DepositService] âœ… DepÃ³sito criado. TX=${response.transactionId} Status=${response.status}`);
+      this.logger.log(
+        `[DepositService] ✅ Depósito criado. ` +
+        `TX=${response.transactionId} Status=${response.status} ` +
+        `Valor=R$${amountInBRL.toFixed(2)}`
+      );
+      
       return response;
+      
     } catch (err) {
-      const msg = (err as Error).message || 'Erro ao criar depÃ³sito.';
+      const msg = (err as Error).message || 'Erro ao criar depósito.';
+      
+      // Tratamento específico de erros
       if (msg.includes('Access token') || msg.includes('token')) {
-        this.logger.error('[DepositService] âŒ Token KeyClub ausente ou invÃ¡lido.');
-        throw new Error('Falha de autenticaÃ§Ã£o com KeyClub. Verifique o Bearer token.');
+        this.logger.error('[DepositService] ❌ Token KeyClub ausente ou inválido.');
+        throw new Error('Falha de autenticação com KeyClub. Verifique o Bearer token.');
       }
-      if (msg.toLowerCase().includes('cloudflare')) {
-        this.logger.error('[DepositService] âŒ Bloqueado pelo Cloudflare (provÃ¡vel no login).');
-        throw new Error('Chamada bloqueada pelo WAF da KeyClub. Use KEY_CLUB_ACCESS_TOKEN ou solicite liberaÃ§Ã£o.');
+      
+      if (msg.toLowerCase().includes('cloudflare') || msg.toLowerCase().includes('waf')) {
+        this.logger.error('[DepositService] ❌ Bloqueado pelo Cloudflare/WAF da KeyClub.');
+        throw new Error(
+          'Chamada bloqueada pelo WAF da KeyClub. ' +
+          'Use KEY_CLUB_ACCESS_TOKEN ou solicite liberação do IP.'
+        );
       }
-      this.logger.error(`[DepositService] âŒ Erro inesperado: ${msg}`);
-      throw new Error(`Erro ao criar depÃ³sito: ${msg}`);
+      
+      this.logger.error(`[DepositService] ❌ Erro inesperado: ${msg}`);
+      throw new Error(`Erro ao criar depósito: ${msg}`);
     }
   }
 
