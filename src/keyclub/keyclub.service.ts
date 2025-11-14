@@ -33,61 +33,73 @@ export class KeyclubService {
   private http: AxiosInstance;
 
   constructor() {
+    // ✅ CORREÇÃO: Headers mais limpos e sem Origin/Referer conflitantes
     this.http = axios.create({
       baseURL: this.baseUrl,
-      timeout: 15000,
+      timeout: 30000, // ✅ Aumentado de 15s para 30s
       headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'application/json, text/plain, */*',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
         'Content-Type': 'application/json',
-        Connection: 'keep-alive',
-        'Origin': 'https://api.the-key.club',
-        'Referer': 'https://api.the-key.club/',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
+        'Accept': 'application/json',
+        'User-Agent': 'PaymentGateway/1.0',
       },
-      httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 50 }),
-      validateStatus: () => true,
+      httpsAgent: new https.Agent({ 
+        keepAlive: true, 
+        maxSockets: 50,
+        rejectUnauthorized: true // ✅ Mantém validação SSL
+      }),
+      validateStatus: () => true, // Permite qualquer status code
     });
 
     const preset = (process.env.KEY_CLUB_ACCESS_TOKEN || '').trim();
     if (preset) {
       this.token = preset;
-      this.logger.log('[KeyclubService] Usando KEY_CLUB_ACCESS_TOKEN do .env (pula login).');
+      this.logger.log('✅ [KeyclubService] Usando KEY_CLUB_ACCESS_TOKEN do .env');
+    } else {
+      this.logger.warn('⚠️ [KeyclubService] KEY_CLUB_ACCESS_TOKEN não encontrado, será necessário login');
     }
   }
 
-  private isCloudflareBlock(ax: AxiosError<any>) {
+  private isCloudflareBlock(ax: AxiosError<any>): boolean {
     const res = ax.response;
     if (!res) return false;
+    
     const status = res.status;
     const headers = Object.fromEntries(
-      Object.entries(res.headers || {}).map(([k, v]) => [String(k).toLowerCase(), String(v ?? '').toLowerCase()])
+      Object.entries(res.headers || {}).map(([k, v]) => [
+        String(k).toLowerCase(), 
+        String(v ?? '').toLowerCase()
+      ])
     );
+    
     const cfServer = headers['server']?.includes('cloudflare');
     const hasRay = 'cf-ray' in headers;
+    
     return status === 403 && (cfServer || hasRay);
   }
 
   private authHeaders() {
-    return this.token ? { Authorization: `Bearer ${this.token}` } : {};
+    if (!this.token) {
+      this.logger.error('❌ [KeyclubService] Token ausente ao tentar adicionar headers');
+      return {};
+    }
+    return { Authorization: `Bearer ${this.token}` };
   }
 
   private async login(): Promise<string> {
-    if (this.token) return this.token;
+    if (this.token) {
+      this.logger.log('✅ [KeyclubService] Token já existe, pulando login');
+      return this.token;
+    }
 
     const clientId = (process.env.KEY_CLUB_CLIENT_ID || '').trim();
     const clientSecret = (process.env.KEY_CLUB_CLIENT_SECRET || '').trim();
     
     if (!clientId || !clientSecret) {
-      this.logger.error('[KeyclubService] Falta KEY_CLUB_CLIENT_ID/SECRET no .env.');
-      throw new Error('Credenciais da KeyClub ausentes.');
+      this.logger.error('❌ [KeyclubService] KEY_CLUB_CLIENT_ID ou CLIENT_SECRET ausentes');
+      throw new Error('Credenciais da KeyClub ausentes no .env');
     }
 
-    this.logger.log('[KeyclubService] Autenticando na KeyClub...');
+    this.logger.log('🔐 [KeyclubService] Iniciando autenticação...');
     
     try {
       const resp = await this.http.post('/api/auth/login', {
@@ -95,41 +107,55 @@ export class KeyclubService {
         client_secret: clientSecret,
       });
 
-      const token = resp.data?.accessToken || resp.data?.token;
+      this.logger.log(`📥 [KeyclubService] Login response: status=${resp.status}`);
 
-      if (resp.status === 200 && token) {
-        this.token = String(token);
-        this.logger.log('[KeyclubService] Token obtido com sucesso!');
+      // ✅ CORREÇÃO: Melhor tratamento da resposta
+      if (resp.status === 200 || resp.status === 201) {
+        const token = resp.data?.accessToken || resp.data?.token || resp.data?.access_token;
+        
+        if (!token) {
+          this.logger.error('❌ [KeyclubService] Token não encontrado na resposta:', resp.data);
+          throw new Error('Token não retornado pela API da KeyClub');
+        }
+
+        this.token = String(token).trim();
+        this.logger.log('✅ [KeyclubService] Autenticação bem-sucedida!');
         return this.token;
       }
 
       if (resp.status === 403) {
-        const server = String(resp.headers?.['server'] || '').toLowerCase();
-        const hasCfRay = Boolean(resp.headers?.['cf-ray']);
-        if (hasCfRay || server.includes('cloudflare')) {
-          throw new Error(
-            'Login barrado pelo Cloudflare. Use KEY_CLUB_ACCESS_TOKEN no .env ou solicite excecao WAF.'
-          );
+        if (this.isCloudflareBlock({ response: resp } as any)) {
+          throw new Error('Login bloqueado pelo Cloudflare. Use KEY_CLUB_ACCESS_TOKEN no .env');
         }
-        throw new Error('Credenciais invalidas (403). Revise KEY_CLUB_CLIENT_ID/SECRET.');
+        throw new Error('Credenciais inválidas (403). Verifique CLIENT_ID/SECRET');
       }
 
       if (resp.status === 401) {
-        throw new Error('Credenciais invalidas (401). Revise KEY_CLUB_CLIENT_ID/SECRET.');
+        throw new Error('Credenciais inválidas (401). Verifique CLIENT_ID/SECRET');
       }
 
       this.logger.error(
-        `[KeyclubService] Login falhou: status=${resp.status} body=${JSON.stringify(resp.data).slice(0, 400)}`
+        `❌ [KeyclubService] Login falhou: status=${resp.status} ` +
+        `body=${JSON.stringify(resp.data).slice(0, 400)}`
       );
-      throw new Error('Erro ao autenticar na KeyClub.');
+      throw new Error(`Falha no login: HTTP ${resp.status}`);
+      
     } catch (error) {
-      this.logger.error('[KeyclubService] Erro durante login:', error);
+      if (axios.isAxiosError(error)) {
+        this.logger.error('❌ [KeyclubService] Erro de rede:', error.message);
+        if (error.code === 'ECONNREFUSED') {
+          throw new Error('Não foi possível conectar à API da KeyClub');
+        }
+      }
       throw error;
     }
   }
 
   private async ensureToken(force = false): Promise<string> {
-    if (this.token && !force) return this.token;
+    if (this.token && !force) {
+      this.logger.log('✅ [KeyclubService] Token já disponível');
+      return this.token;
+    }
     return this.login();
   }
 
@@ -140,16 +166,23 @@ export class KeyclubService {
       const ax = e as AxiosError<any>;
       const status = ax.response?.status;
 
+      // Checa se é bloqueio do Cloudflare
       if (ax.response && this.isCloudflareBlock(ax)) {
-        throw new Error('Barrado pelo Cloudflare. Considere excecao WAF.');
+        this.logger.error('❌ [KeyclubService] Bloqueado pelo Cloudflare');
+        throw new Error('Requisição bloqueada pelo WAF. Verifique IP na whitelist da KeyClub');
       }
 
+      // Se for 401/403, tenta reautenticar (só se não estiver usando token fixo)
       if (status === 401 || status === 403) {
-        const preset = Boolean((process.env.KEY_CLUB_ACCESS_TOKEN || '').trim());
-        if (preset) {
-          throw new Error('Token invalido/expirado. Atualize KEY_CLUB_ACCESS_TOKEN.');
+        const usingFixedToken = Boolean((process.env.KEY_CLUB_ACCESS_TOKEN || '').trim());
+        
+        if (usingFixedToken) {
+          this.logger.error('❌ [KeyclubService] Token fixo inválido');
+          throw new Error('KEY_CLUB_ACCESS_TOKEN inválido ou expirado. Gere um novo token');
         }
-        this.logger.warn('[KeyclubService] Token expirado. Reautenticando...');
+        
+        this.logger.warn('⚠️ [KeyclubService] Token expirado, reautenticando...');
+        this.token = null; // ✅ Limpa o token antes de tentar novamente
         await this.ensureToken(true);
         return await fn();
       }
@@ -159,24 +192,43 @@ export class KeyclubService {
   }
 
   async createDeposit(input: CreateDepositInput) {
-    await this.ensureToken();
+    // ✅ CORREÇÃO: Garante token ANTES de fazer qualquer coisa
+    try {
+      await this.ensureToken();
+    } catch (error) {
+      this.logger.error('❌ [KeyclubService] Falha ao obter token:', error);
+      throw new Error('Não foi possível autenticar na KeyClub');
+    }
 
+    // Validações
     const amount = Number(input.amount);
     if (!Number.isFinite(amount) || amount < 1) {
-      throw new Error('Valor minimo para deposito e R$ 1,00.');
+      throw new Error('Valor mínimo para depósito é R$ 1,00');
     }
 
     const externalId =
-      input.externalId?.trim() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      input.externalId?.trim() || `DEP-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     const clientCallbackUrl =
       input.clientCallbackUrl ||
       process.env.KEY_CLUB_CALLBACK_URL ||
-      `${process.env.BASE_URL}/api/v1/webhooks/keyclub`;
+      `${process.env.BASE_URL || ''}/api/v1/webhooks/keyclub`.replace(/\/+/g, '/');
 
     const document = input.payer?.document?.toString().replace(/\D/g, '');
-    if (!document || document.length < 11) {
-      throw new Error('Documento do pagador invalido.');
+    
+    // ✅ CORREÇÃO: Validação mais rigorosa de documento
+    if (!document) {
+      throw new Error('Documento do pagador é obrigatório');
+    }
+    
+    if (document.length !== 11 && document.length !== 14) {
+      throw new Error(`Documento inválido: deve ter 11 (CPF) ou 14 (CNPJ) dígitos. Recebido: ${document.length}`);
+    }
+
+    // ✅ Validação de email
+    const email = input.payer.email?.trim();
+    if (!email || !email.includes('@')) {
+      throw new Error('Email inválido');
     }
 
     const payload = {
@@ -184,54 +236,78 @@ export class KeyclubService {
       external_id: externalId,
       clientCallbackUrl,
       payer: {
-        name: input.payer.name,
-        email: input.payer.email,
-        document,
-        ...(input.payer.phone ? { phone: input.payer.phone } : {}),
+        name: input.payer.name?.trim() || 'Cliente',
+        email: email,
+        document: document,
+        ...(input.payer.phone ? { phone: input.payer.phone.replace(/\D/g, '') } : {}),
       },
     };
 
-    this.logger.log(`[KeyclubService] Criando deposito: ${JSON.stringify(payload)}`);
+    this.logger.log(
+      `📤 [KeyclubService] Criando depósito: ` +
+      `amount=R${payload.amount} external_id=${externalId} doc=${document}`
+    );
 
     const exec = async () => {
+      // ✅ CORREÇÃO: Verifica token antes de enviar
+      if (!this.token) {
+        throw new Error('Token não disponível para criar depósito');
+      }
+
+      // 🔍 DEBUG: Mostra exatamente o que será enviado
+      const headersToSend = this.authHeaders();
+      this.logger.log(`🔍 [DEBUG] Token existe: ${!!this.token}`);
+      this.logger.log(`🔍 [DEBUG] Token (20 chars): ${this.token?.slice(0, 20)}...`);
+      this.logger.log(`🔍 [DEBUG] Headers:`, headersToSend);
+      this.logger.log(`🔍 [DEBUG] URL: ${this.baseUrl}/api/payments/deposit`);
+      this.logger.log(`🔍 [DEBUG] Payload:`, JSON.stringify(payload, null, 2));
+
       const resp = await this.http.post('/api/payments/deposit', payload, {
-        headers: this.authHeaders(),
+        headers: headersToSend,
       });
 
-      this.logger.log(`[KeyclubService] Resposta da KeyClub: status=${resp.status}`);
+      this.logger.log(
+        `📥 [KeyclubService] Resposta: status=${resp.status} ` +
+        `data=${JSON.stringify(resp.data).slice(0, 200)}`
+      );
 
       if (resp.status === 201 || resp.status === 200) {
-        this.logger.log(`[KeyclubService] Deposito criado (${externalId}) no valor de R$ ${payload.amount}.`);
+        this.logger.log(`✅ [KeyclubService] Depósito criado: ${externalId}`);
         return resp.data;
       }
 
+      // Tratamento de erros específicos
       if (resp.status === 401) {
-        this.logger.error('[KeyclubService] Token invalido (401)');
-        throw new Error('Access token is missing or invalid.');
+        throw new Error('Token inválido ou expirado');
       }
 
       if (resp.status === 403) {
         const server = String(resp.headers?.['server'] || '').toLowerCase();
         const hasCfRay = Boolean(resp.headers?.['cf-ray']);
         
-        this.logger.error(`[KeyclubService] Erro 403: Server=${server}, CF-Ray=${hasCfRay}`);
-        
         if (hasCfRay || server.includes('cloudflare')) {
-          throw new Error('Deposito barrado pelo Cloudflare WAF.');
+          this.logger.error('❌ Bloqueado pelo Cloudflare - Headers:', resp.headers);
+          throw new Error('Bloqueado pelo Cloudflare WAF');
         }
         
-        throw new Error('Acesso negado pela KeyClub. Verifique as credenciais.');
+        throw new Error('Acesso negado pela KeyClub (403)');
+      }
+
+      if (resp.status === 400) {
+        const errorMsg = resp.data?.message || resp.data?.error || 'Dados inválidos';
+        this.logger.error(`❌ [KeyclubService] Erro 400: ${errorMsg}`);
+        throw new Error(`Erro de validação: ${errorMsg}`);
       }
 
       if (resp.status >= 500) {
-        this.logger.error(`[KeyclubService] Erro do servidor KeyClub: ${resp.status}`);
-        throw new Error('Gateway temporariamente indisponivel. Tente novamente em instantes.');
+        throw new Error('Gateway KeyClub temporariamente indisponível');
       }
 
       this.logger.error(
-        `[KeyclubService] Deposito falhou: status=${resp.status} body=${JSON.stringify(resp.data).slice(0, 400)}`
+        `❌ [KeyclubService] Erro desconhecido: status=${resp.status} ` +
+        `body=${JSON.stringify(resp.data).slice(0, 400)}`
       );
-      throw new Error(resp.data?.message || 'Erro da API da KeyClub ao criar deposito.');
+      throw new Error(resp.data?.message || `Erro HTTP ${resp.status} ao criar depósito`);
     };
 
     return this.withAuthRetry(exec);
@@ -242,7 +318,7 @@ export class KeyclubService {
 
     const amount = Number(input.amount);
     if (!Number.isFinite(amount) || amount < 1) {
-      throw new Error('Valor minimo para saque e R$ 1,00.');
+      throw new Error('Valor mínimo para saque é R$ 1,00');
     }
 
     const payload = {
@@ -250,33 +326,45 @@ export class KeyclubService {
       external_id: input.externalId,
       pix_key: input.pix_key,
       key_type: input.key_type,
-      description: input.description,
+      description: input.description || `Saque ${input.externalId}`,
       clientCallbackUrl: input.clientCallbackUrl,
     };
 
+    this.logger.log(`📤 [KeyclubService] Criando saque: ${input.externalId} R$${amount}`);
+
     const exec = async () => {
+      if (!this.token) {
+        throw new Error('Token não disponível para criar saque');
+      }
+
       const resp = await this.http.post('/api/withdrawals/withdraw', payload, {
         headers: this.authHeaders(),
       });
 
+      this.logger.log(`📥 [KeyclubService] Resposta saque: status=${resp.status}`);
+
       if (resp.status === 200 || resp.status === 201) {
-        this.logger.log(`[KeyclubService] Saque criado (${payload.external_id}) no valor de R$ ${payload.amount}.`);
+        this.logger.log(`✅ [KeyclubService] Saque criado: ${payload.external_id}`);
         return resp.data;
       }
 
       if (resp.status === 401 || resp.status === 403) {
-        const server = String(resp.headers?.['server'] || '').toLowerCase();
-        const hasCfRay = Boolean(resp.headers?.['cf-ray']);
-        if (resp.status === 403 && (hasCfRay || server.includes('cloudflare'))) {
-          throw new Error('Saque barrado pelo Cloudflare.');
+        if (this.isCloudflareBlock({ response: resp } as any)) {
+          throw new Error('Saque bloqueado pelo Cloudflare');
         }
-        throw new Error('Access token is missing or invalid.');
+        throw new Error('Token inválido ou expirado');
+      }
+
+      if (resp.status === 400) {
+        const errorMsg = resp.data?.message || 'Dados inválidos';
+        throw new Error(`Erro de validação: ${errorMsg}`);
       }
 
       this.logger.error(
-        `[KeyclubService] Saque falhou: status=${resp.status} body=${JSON.stringify(resp.data).slice(0, 400)}`
+        `❌ [KeyclubService] Saque falhou: status=${resp.status} ` +
+        `body=${JSON.stringify(resp.data).slice(0, 400)}`
       );
-      throw new Error(resp.data?.message || 'Erro da API da KeyClub ao criar saque.');
+      throw new Error(resp.data?.message || `Erro HTTP ${resp.status} ao criar saque`);
     };
 
     return this.withAuthRetry(exec);
