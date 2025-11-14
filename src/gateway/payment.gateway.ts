@@ -21,9 +21,9 @@ import { Logger } from '@nestjs/common';
     credentials: true,
     methods: ['GET', 'POST'],
   },
-  transports: ['websocket', 'polling'], // ✅ Permite fallback
+  transports: ['websocket', 'polling'],
   allowEIO3: true,
-  path: '/socket.io/', // ✅ Path explícito
+  path: '/socket.io/',
   pingTimeout: 60000,
   pingInterval: 25000,
 })
@@ -34,7 +34,7 @@ export class PaymentGateway
   server: Server;
 
   private readonly logger = new Logger(PaymentGateway.name);
-  private userSockets = new Map<string, string>(); // userId -> socketId
+  private userSockets = new Map<string, string>();
 
   afterInit(server: Server) {
     this.logger.log('🚀 WebSocket Gateway inicializado');
@@ -43,7 +43,6 @@ export class PaymentGateway
   handleConnection(client: Socket) {
     this.logger.log(`✅ Cliente conectado: ${client.id}`);
     
-    // Pega userId dos handshake auth ou query
     const userId = 
       client.handshake.auth?.userId || 
       client.handshake.query?.userId as string;
@@ -53,7 +52,6 @@ export class PaymentGateway
       client.join(`user:${userId}`);
       this.logger.log(`👤 UserId ${userId} mapeado para socket ${client.id}`);
       
-      // Confirma conexão
       client.emit('connected', { 
         socketId: client.id, 
         userId,
@@ -67,7 +65,6 @@ export class PaymentGateway
   handleDisconnect(client: Socket) {
     this.logger.log(`❌ Cliente desconectado: ${client.id}`);
     
-    // Remove do mapa
     for (const [userId, socketId] of this.userSockets.entries()) {
       if (socketId === client.id) {
         this.userSockets.delete(userId);
@@ -83,7 +80,6 @@ export class PaymentGateway
     return 'pong';
   }
 
-  // ✅ Métodos para emitir eventos para usuários específicos
   emitToUser(userId: string, event: string, data: any) {
     const socketId = this.userSockets.get(userId);
     if (socketId) {
@@ -96,24 +92,30 @@ export class PaymentGateway
     }
   }
 
-  // ✅ Notificar saldo atualizado
   notifyBalanceUpdate(userId: string, balance: number) {
     this.emitToUser(userId, 'balance_updated', { balance });
   }
 
-  // ✅ Notificar depósito confirmado
   notifyDepositConfirmed(userId: string, deposit: any) {
     this.emitToUser(userId, 'deposit_confirmed', deposit);
   }
 
-  // ✅ Notificar saque processado
   notifyWithdrawalProcessed(userId: string, withdrawal: any) {
     this.emitToUser(userId, 'withdrawal_processed', withdrawal);
   }
 
-  // ✅ Broadcast para todos
   broadcastToAll(event: string, data: any) {
     this.server.emit(event, data);
     this.logger.log(`📢 Broadcast '${event}' enviado para todos`);
+  }
+
+  emitDepositUpdate(externalId: string, data: any) {
+    this.server.emit('deposit_updated', { externalId, ...data });
+    this.logger.log(`📤 Evento 'deposit_updated' enviado para externalId ${externalId}`);
+  }
+
+  emitWithdrawalUpdate(externalId: string, data: any) {
+    this.server.emit('withdrawal_updated', { externalId, ...data });
+    this.logger.log(`📤 Evento 'withdrawal_updated' enviado para externalId ${externalId}`);
   }
 }

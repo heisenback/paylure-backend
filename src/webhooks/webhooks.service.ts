@@ -13,261 +13,158 @@ export class WebhooksService {
     private readonly paymentGateway: PaymentGateway,
   ) {}
 
-  /**
-   * Valida assinatura HMAC SHA256 da KeyClub
-   */
-  verifyKeyClubSignature(rawBody: string, signature: string, secret: string): boolean {
+  validateSignature(rawBody: string | Buffer, signature: string): boolean {
+    const secret = process.env.KEY_CLUB_WEBHOOK_SECRET;
+    if (!secret) {
+      this.logger.warn('⚠️ KEY_CLUB_WEBHOOK_SECRET não configurado');
+      return false;
+    }
+
     try {
+      const body = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
       const hmac = crypto.createHmac('sha256', secret);
-      hmac.update(rawBody);
+      hmac.update(body);
       const expectedSignature = hmac.digest('hex');
       
-      // Comparação segura contra timing attacks
       return crypto.timingSafeEqual(
         Buffer.from(signature),
         Buffer.from(expectedSignature)
       );
     } catch (error) {
-      this.logger.error(`Erro ao verificar assinatura: ${error.message}`);
+      this.logger.error(`❌ Erro ao verificar assinatura: ${error.message}`);
       return false;
     }
   }
 
-  /**
-   * Valida assinatura do webhook (alias para verifyKeyClubSignature)
-   */
-  validateSignature(rawBody: string | Buffer, signature: string): boolean {
-    const secret = process.env.KEY_CLUB_WEBHOOK_SECRET;
-    if (!secret) {
-      this.logger.error('KEY_CLUB_WEBHOOK_SECRET não configurado');
-      return false;
+  async handleKeyClubWebhook(payload: any) {
+    this.logger.log(`[KeyClub Webhook] Payload recebido: ${JSON.stringify(payload)}`);
+
+    const transactionId = payload.transaction_id || payload.transactionId || payload.externalId;
+    const status = payload.status?.toUpperCase();
+
+    if (!transactionId) {
+      throw new Error('transaction_id é obrigatório no webhook');
     }
 
-    const body = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
-    return this.verifyKeyClubSignature(body, signature, secret);
-  }
-
-  /**
-   * Processa webhook de depósito da KeyClub
-   */
-  async handleKeyClubDeposit(webhookToken: string, payload: any) {
-    this.logger.log(`[KeyClub Deposit] Token: ${webhookToken} | Payload: ${JSON.stringify(payload)}`);
-
-    // Validar token do webhook (opcional - adicione validação se necessário)
-    const expectedToken = process.env.KEY_CLUB_WEBHOOK_TOKEN;
-    if (expectedToken && webhookToken !== expectedToken) {
-      throw new Error('Token de webhook inválido');
-    }
-
-    // Delegar para o método existente
-    return this.handleDepositWebhook(payload);
-  }
-
-  /**
-   * Processa webhook de saque da KeyClub
-   */
-  async handleKeyClubWithdrawal(webhookToken: string, payload: any) {
-    this.logger.log(`[KeyClub Withdrawal] Token: ${webhookToken} | Payload: ${JSON.stringify(payload)}`);
-
-    // Validar token do webhook (opcional)
-    const expectedToken = process.env.KEY_CLUB_WEBHOOK_TOKEN;
-    if (expectedToken && webhookToken !== expectedToken) {
-      throw new Error('Token de webhook inválido');
-    }
-
-    // Delegar para o método existente
-    return this.handleWithdrawalWebhook(payload);
-  }
-
-  /**
-   * Processa webhook de depósito da KeyClub
-   */
-  async handleDepositWebhook(payload: any) {
-    this.logger.log(`[Webhook] Recebido webhook de depósito: ${JSON.stringify(payload)}`);
-
-    const { externalId, status, amount } = payload;
-
-    if (!externalId) {
-      throw new Error('externalId é obrigatório no webhook');
-    }
-
-    // Busca o depósito
     const deposit = await this.prisma.deposit.findUnique({
-      where: { externalId },
+      where: { externalId: transactionId },
     });
 
-    if (!deposit) {
-      this.logger.warn(`[Webhook] Depósito não encontrado: ${externalId}`);
-      throw new Error(`Depósito ${externalId} não encontrado`);
+    if (deposit) {
+      this.logger.log(`✅ Encontrado DEPÓSITO: ${transactionId}`);
+      return this.processDepositWebhook(deposit, payload, status);
     }
 
-    // Previne processamento duplicado
-    if (deposit.status === 'CONFIRMED' && status === 'CONFIRMED') {
-      this.logger.warn(`[Webhook] Depósito ${externalId} já foi confirmado. Ignorando.`);
+    const withdrawal = await this.prisma.withdrawal.findUnique({
+      where: { externalId: transactionId },
+    });
+
+    if (withdrawal) {
+      this.logger.log(`✅ Encontrado SAQUE: ${transactionId}`);
+      return this.processWithdrawalWebhook(withdrawal, payload, status);
+    }
+
+    this.logger.warn(`⚠️ Transação não encontrada: ${transactionId}`);
+    throw new Error(`Transação ${transactionId} não encontrada`);
+  }
+
+  private async processDepositWebhook(deposit: any, payload: any, status: string) {
+    const { externalId, userId } = deposit;
+
+    if (deposit.status === 'CONFIRMED' && status === 'COMPLETED') {
+      this.logger.warn(`⚠️ Depósito ${externalId} já confirmado. Ignorando.`);
       return { success: true, message: 'Already processed' };
     }
 
-    // Atualiza o status
+    const mappedStatus = status === 'COMPLETED' ? 'CONFIRMED' : status;
+
     const updatedDeposit = await this.prisma.deposit.update({
       where: { externalId },
-      data: { status },
+      data: { status: mappedStatus },
     });
 
-    this.logger.log(`[Webhook] Depósito ${externalId} atualizado para status: ${status}`);
+    this.logger.log(`✅ Depósito ${externalId} atualizado para: ${mappedStatus}`);
 
-    // Se confirmado, credita o saldo
-    if (status === 'CONFIRMED' || status === 'PAID') {
-      const netAmount = updatedDeposit.netAmountInCents;
+    if (mappedStatus === 'CONFIRMED') {
+      const netAmount = payload.net_amount 
+        ? Math.round(payload.net_amount * 100) 
+        : updatedDeposit.netAmountInCents;
 
       const updatedUser = await this.prisma.user.update({
-        where: { id: deposit.userId },
-        data: {
-          balance: {
-            increment: netAmount,
-          },
-        },
+        where: { id: userId },
+        data: { balance: { increment: netAmount } },
       });
 
       this.logger.log(
-        `[Webhook] ✅ Saldo creditado: User ${deposit.userId} | ` +
+        `💰 Saldo creditado: User ${userId} | ` +
         `+R$${(netAmount / 100).toFixed(2)} | ` +
         `Novo saldo: R$${(updatedUser.balance / 100).toFixed(2)}`
       );
 
-      // Notifica via WebSocket
-      this.paymentGateway.notifyBalanceUpdate(deposit.userId, updatedUser.balance);
-
-      // Emite atualização do depósito
-      this.paymentGateway.emitDepositUpdate(deposit.externalId, {
+      this.paymentGateway.notifyBalanceUpdate(userId, updatedUser.balance);
+      this.paymentGateway.notifyDepositConfirmed(userId, {
+        externalId,
+        amount: updatedDeposit.amountInCents,
+        netAmount,
+      });
+      this.paymentGateway.emitDepositUpdate(externalId, {
         status: 'CONFIRMED',
         amount: updatedDeposit.amountInCents,
-        netAmount: netAmount,
-      });
-
-      // Notifica depósito confirmado
-      this.paymentGateway.notifyDepositConfirmed(deposit.userId, {
-        externalId: deposit.externalId,
-        amount: updatedDeposit.amountInCents,
-        netAmount: netAmount,
+        netAmount,
       });
     }
 
     return { success: true, deposit: updatedDeposit };
   }
 
-  /**
-   * Processa webhook de saque da KeyClub
-   */
-  async handleWithdrawalWebhook(payload: any) {
-    this.logger.log(`[Webhook] Recebido webhook de saque: ${JSON.stringify(payload)}`);
+  private async processWithdrawalWebhook(withdrawal: any, payload: any, status: string) {
+    const { externalId, userId } = withdrawal;
 
-    const { externalId, status, failureReason } = payload;
-
-    if (!externalId) {
-      throw new Error('externalId é obrigatório no webhook');
-    }
-
-    const withdrawal = await this.prisma.withdrawal.findUnique({
-      where: { externalId },
-    });
-
-    if (!withdrawal) {
-      this.logger.warn(`[Webhook] Saque não encontrado: ${externalId}`);
-      throw new Error(`Saque ${externalId} não encontrado`);
-    }
-
-    // Previne processamento duplicado
     if (withdrawal.status === status) {
-      this.logger.warn(`[Webhook] Saque ${externalId} já está no status ${status}. Ignorando.`);
+      this.logger.warn(`⚠️ Saque ${externalId} já está no status ${status}. Ignorando.`);
       return { success: true, message: 'Already processed' };
     }
 
-    // Se for FAILED, devolve o saldo (se ainda não devolveu)
-    if (status === 'FAILED' && withdrawal.status !== 'FAILED') {
+    const mappedStatus = status === 'COMPLETED' ? 'COMPLETED' : status;
+
+    if (mappedStatus === 'FAILED' && withdrawal.status !== 'FAILED') {
       const updatedUser = await this.prisma.user.update({
-        where: { id: withdrawal.userId },
-        data: {
-          balance: {
-            increment: withdrawal.amount,
-          },
-        },
+        where: { id: userId },
+        data: { balance: { increment: withdrawal.amount } },
       });
 
       this.logger.log(
-        `[Webhook] 💰 Saldo devolvido (saque falhou): User ${withdrawal.userId} | ` +
+        `💰 Saldo devolvido (saque falhou): User ${userId} | ` +
         `+R$${(withdrawal.amount / 100).toFixed(2)} | ` +
         `Novo saldo: R$${(updatedUser.balance / 100).toFixed(2)}`
       );
 
-      // Notifica via WebSocket
-      this.paymentGateway.emitWithdrawalUpdate(withdrawal.externalId, {
-        status: 'FAILED',
-        amount: withdrawal.amount,
-        failureReason,
-      });
-
-      // Notifica atualização de saldo
-      this.paymentGateway.notifyBalanceUpdate(withdrawal.userId, updatedUser.balance);
+      this.paymentGateway.notifyBalanceUpdate(userId, updatedUser.balance);
     }
 
-    // Se for COMPLETED
-    if (status === 'COMPLETED') {
-      this.logger.log(`[Webhook] ✅ Saque ${externalId} completado com sucesso`);
-
-      // Notifica via WebSocket
-      this.paymentGateway.emitWithdrawalUpdate(withdrawal.externalId, {
-        status: 'COMPLETED',
-        amount: withdrawal.amount,
-      });
-
-      // Notifica saque processado
-      this.paymentGateway.notifyWithdrawalProcessed(withdrawal.userId, {
-        externalId: withdrawal.externalId,
+    if (mappedStatus === 'COMPLETED') {
+      this.logger.log(`✅ Saque ${externalId} completado`);
+      this.paymentGateway.notifyWithdrawalProcessed(userId, {
+        externalId,
         amount: withdrawal.amount,
         status: 'COMPLETED',
       });
     }
 
-    // Atualiza o status do saque
     const updatedWithdrawal = await this.prisma.withdrawal.update({
       where: { externalId },
       data: { 
-        status,
-        failureReason: failureReason || withdrawal.failureReason,
+        status: mappedStatus,
+        failureReason: payload.failure_reason || withdrawal.failureReason,
       },
     });
 
-    this.logger.log(`[Webhook] Saque ${externalId} atualizado para status: ${status}`);
+    this.logger.log(`✅ Saque ${externalId} atualizado para: ${mappedStatus}`);
+    this.paymentGateway.emitWithdrawalUpdate(externalId, {
+      status: mappedStatus,
+      amount: withdrawal.amount,
+    });
 
     return { success: true, withdrawal: updatedWithdrawal };
-  }
-
-  /**
-   * Valida o webhook token (segurança)
-   */
-  validateWebhookToken(token: string, expectedToken: string): boolean {
-    return token === expectedToken;
-  }
-
-  /**
-   * Processa webhook genérico (para outros eventos)
-   */
-  async handleGenericWebhook(payload: any) {
-    this.logger.log(`[Webhook] Recebido webhook genérico: ${JSON.stringify(payload)}`);
-    
-    // Processa outros tipos de webhook aqui
-    const { type } = payload;
-
-    switch (type) {
-      case 'deposit':
-        return this.handleDepositWebhook(payload);
-      
-      case 'withdrawal':
-        return this.handleWithdrawalWebhook(payload);
-      
-      default:
-        this.logger.warn(`[Webhook] Tipo de webhook desconhecido: ${type}`);
-        return { success: false, message: 'Unknown webhook type' };
-    }
   }
 }

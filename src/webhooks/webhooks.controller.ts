@@ -3,16 +3,14 @@ import {
   Controller,
   Post,
   Body,
-  Param,
   Req,
   Headers,
   UnauthorizedException,
-  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { WebhooksService } from './webhooks.service';
-import type { Request } from 'express'; // <-- MUDANÇA AQUI
-import type { RawBodyRequest } from '@nestjs/common'; // <-- MUDANÇA AQUI
+import type { Request } from 'express';
+import type { RawBodyRequest } from '@nestjs/common';
 
 @Controller('webhooks')
 export class WebhooksController {
@@ -20,78 +18,32 @@ export class WebhooksController {
 
   constructor(private readonly webhooksService: WebhooksService) {}
 
-  /**
-   * Este é o endpoint que a Keyclub vai chamar quando um DEPÓSITO for pago.
-   * A URL que você deve configurar na Keyclub (clientCallbackUrl) deve ser:
-   * https://api.paylure.com/webhooks/keyclub/deposit/SEU_TOKEN_UNICO
-   */
-  @Post('keyclub/deposit/:token')
-  async handleKeyClubDeposit(
-    @Param('token') token: string,
-    @Headers('x-keyclub-signature') signature: string, // <-- Verifique se este é o nome real do header na Keyclub!
+  @Post('keyclub')
+  async handleKeyClubWebhook(
+    @Headers('x-keyclub-signature') signature: string,
     @Req() req: RawBodyRequest<Request>,
     @Body() payload: any,
   ) {
-    this.logger.log(`Recebido webhook de DEPÓSITO para token: ${token}`);
+    this.logger.log(`📥 Recebido webhook da KeyClub: ${JSON.stringify(payload)}`);
 
-    // 1. Verificar se o rawBody está disponível
-    if (!req.rawBody) {
-      throw new BadRequestException(
-        'Raw body não disponível. Verifique a configuração do main.ts (rawBody: true).',
-      );
+    if (signature && req.rawBody) {
+      const isValid = this.webhooksService.validateSignature(req.rawBody, signature);
+      if (!isValid) {
+        this.logger.warn(`⚠️ Assinatura inválida!`);
+        throw new UnauthorizedException('Assinatura do webhook inválida');
+      }
+      this.logger.log('✅ Assinatura validada com sucesso');
+    } else {
+      this.logger.warn('⚠️ Webhook recebido sem assinatura');
     }
 
-    // 2. Verificar se a assinatura veio
-    if (!signature) {
-      this.logger.warn(`Webhook de ${token} veio sem assinatura.`);
-      throw new UnauthorizedException('Assinatura do webhook ausente.');
+    try {
+      const result = await this.webhooksService.handleKeyClubWebhook(payload);
+      this.logger.log(`✅ Webhook processado com sucesso`);
+      return result;
+    } catch (error) {
+      this.logger.error(`❌ Erro ao processar webhook: ${error.message}`);
+      throw error;
     }
-
-    // 3. Validar a assinatura
-    const isValid = this.webhooksService.validateSignature(req.rawBody, signature);
-    if (!isValid) {
-      this.logger.warn(`Assinatura inválida para token: ${token}`);
-      throw new UnauthorizedException('Assinatura do webhook inválida.');
-    }
-
-    // 4. Se tudo estiver OK, processar o pagamento
-    this.logger.log(`Assinatura válida. Processando depósito...`);
-    return this.webhooksService.handleKeyClubDeposit(token, payload);
-  }
-
-  /**
-   * Este é o endpoint que a Keyclub vai chamar quando um SAQUE for processado.
-   * A URL (clientCallbackUrl) deve ser:
-   * https://api.paylure.com/webhooks/keyclub/withdrawal/SEU_TOKEN_UNICO
-   */
-  @Post('keyclub/withdrawal/:token')
-  async handleKeyClubWithdrawal(
-    @Param('token') token: string,
-    @Headers('x-keyclub-signature') signature: string, // <-- Verifique se este é o nome real do header na Keyclub!
-    @Req() req: RawBodyRequest<Request>,
-    @Body() payload: any,
-  ) {
-    this.logger.log(`Recebido webhook de SAQUE para token: ${token}`);
-
-    if (!req.rawBody) {
-      throw new BadRequestException(
-        'Raw body não disponível. Verifique a configuração do main.ts (rawBody: true).',
-      );
-    }
-
-    if (!signature) {
-      throw new UnauthorizedException('Assinatura do webhook ausente.');
-    }
-
-    // 1. Validar a assinatura
-    const isValid = this.webhooksService.validateSignature(req.rawBody, signature);
-    if (!isValid) {
-      this.logger.warn(`Assinatura de saque inválida para token: ${token}`);
-      throw new UnauthorizedException('Assinatura do webhook inválida.');
-    }
-
-    // 2. Processar o saque
-    this.logger.log(`Assinatura válida. Processando saque...`);
-    return this.webhooksService.handleKeyClubWithdrawal(token, payload);
   }
 }
