@@ -2,6 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentGateway } from '../gateway/payment.gateway';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class WebhooksService {
@@ -11,6 +12,72 @@ export class WebhooksService {
     private readonly prisma: PrismaService,
     private readonly paymentGateway: PaymentGateway,
   ) {}
+
+  /**
+   * Valida assinatura HMAC SHA256 da KeyClub
+   */
+  verifyKeyClubSignature(rawBody: string, signature: string, secret: string): boolean {
+    try {
+      const hmac = crypto.createHmac('sha256', secret);
+      hmac.update(rawBody);
+      const expectedSignature = hmac.digest('hex');
+      
+      // Comparação segura contra timing attacks
+      return crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(expectedSignature)
+      );
+    } catch (error) {
+      this.logger.error(`Erro ao verificar assinatura: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Valida assinatura do webhook (alias para verifyKeyClubSignature)
+   */
+  validateSignature(rawBody: string | Buffer, signature: string): boolean {
+    const secret = process.env.KEY_CLUB_WEBHOOK_SECRET;
+    if (!secret) {
+      this.logger.error('KEY_CLUB_WEBHOOK_SECRET não configurado');
+      return false;
+    }
+
+    const body = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
+    return this.verifyKeyClubSignature(body, signature, secret);
+  }
+
+  /**
+   * Processa webhook de depósito da KeyClub
+   */
+  async handleKeyClubDeposit(webhookToken: string, payload: any) {
+    this.logger.log(`[KeyClub Deposit] Token: ${webhookToken} | Payload: ${JSON.stringify(payload)}`);
+
+    // Validar token do webhook (opcional - adicione validação se necessário)
+    const expectedToken = process.env.KEY_CLUB_WEBHOOK_TOKEN;
+    if (expectedToken && webhookToken !== expectedToken) {
+      throw new Error('Token de webhook inválido');
+    }
+
+    // Delegar para o método existente
+    return this.handleDepositWebhook(payload);
+  }
+
+  /**
+   * Processa webhook de saque da KeyClub
+   */
+  async handleKeyClubWithdrawal(webhookToken: string, payload: any) {
+    this.logger.log(`[KeyClub Withdrawal] Token: ${webhookToken} | Payload: ${JSON.stringify(payload)}`);
+
+    // Validar token do webhook (opcional)
+    const expectedToken = process.env.KEY_CLUB_WEBHOOK_TOKEN;
+    if (expectedToken && webhookToken !== expectedToken) {
+      throw new Error('Token de webhook inválido');
+    }
+
+    // Delegar para o método existente
+    return this.handleWithdrawalWebhook(payload);
+  }
 
   /**
    * Processa webhook de depósito da KeyClub
