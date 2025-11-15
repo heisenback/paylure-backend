@@ -10,7 +10,7 @@ import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 
-@Controller('api/v1/admin')
+@Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard) // 🔒 Protegido: Requer login + ser admin
 export class AdminController {
   private readonly logger = new Logger(AdminController.name);
