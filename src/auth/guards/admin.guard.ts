@@ -10,7 +10,7 @@ import { Reflector } from '@nestjs/core';
 @Injectable()
 export class AdminGuard implements CanActivate {
   // 🎯 SEU EMAIL (Admin Master)
-  private readonly ADMIN_EMAIL = 'jacobcob148@gmail.com';
+  private readonly ADMIN_EMAIL = 'joaobraz.ofc@gmail.com';
   
   // 🎯 SUPORTE (Futuro - Deixe vazio por enquanto)
   private readonly SUPPORT_EMAILS: string[] = [];
