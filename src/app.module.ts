@@ -21,6 +21,7 @@ import { ReportModule } from './report/report.module';
 import { PublicApiModule } from './api/public-api.module';
 import { SocketModule } from './gateway/socket.module';
 import { PushNotificationModule } from './push-notification/push-notification.module';
+import { AdminModule } from './admin/admin.module'; // 🎯 ADICIONAR
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { PushNotificationModule } from './push-notification/push-notification.mo
     PublicApiModule,
     SocketModule,
     PushNotificationModule,
+    AdminModule, // 🎯 ADICIONAR AQUI
   ],
   controllers: [AppController],
   providers: [],
