@@ -185,7 +185,7 @@ export class AdminService {
   // 📈 GRÁFICO - DEPÓSITOS DOS ÚLTIMOS 7 DIAS
   // ===================================
   async getDepositsChart(days: number = 7) {
-    const data = [];
+    const data: Array<{ date: string; amount: number; count: number }> = [];
     const now = new Date();
 
     for (let i = days - 1; i >= 0; i--) {
