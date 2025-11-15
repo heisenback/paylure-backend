@@ -184,7 +184,7 @@ export class AdminService {
   // ===================================
   // 📈 GRÁFICO - DEPÓSITOS DOS ÚLTIMOS 7 DIAS
   // ===================================
-  async getDepositsChart(days: number = 7) {
+  async getDepositsChart(days: number = 7): Promise<Array<{ date: string; amount: number; count: number }>> {
     const data: Array<{ date: string; amount: number; count: number }> = [];
     const now = new Date();
 
@@ -221,8 +221,8 @@ export class AdminService {
   // ===================================
   // 📉 GRÁFICO - SAQUES DOS ÚLTIMOS 7 DIAS
   // ===================================
-  async getWithdrawalsChart(days: number = 7) {
-    const data = [];
+  async getWithdrawalsChart(days: number = 7): Promise<Array<{ date: string; amount: number; count: number }>> {
+    const data: Array<{ date: string; amount: number; count: number }> = [];
     const now = new Date();
 
     for (let i = days - 1; i >= 0; i--) {
@@ -306,42 +306,39 @@ export class AdminService {
   ) {
     const skip = (page - 1) * limit;
 
-    let deposits = [];
-    let withdrawals = [];
-
-    if (!type || type === 'DEPOSIT') {
-      deposits = await this.prisma.deposit.findMany({
-        skip: type === 'DEPOSIT' ? skip : 0,
-        take: type === 'DEPOSIT' ? limit : 10,
-        where: status ? { status } : undefined,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          user: {
-            select: { email: true, name: true },
+    const deposits: any[] = (!type || type === 'DEPOSIT')
+      ? await this.prisma.deposit.findMany({
+          skip: type === 'DEPOSIT' ? skip : 0,
+          take: type === 'DEPOSIT' ? limit : 10,
+          where: status ? { status } : undefined,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            user: {
+              select: { email: true, name: true },
+            },
           },
-        },
-      });
-    }
+        })
+      : [];
 
-    if (!type || type === 'WITHDRAWAL') {
-      withdrawals = await this.prisma.withdrawal.findMany({
-        skip: type === 'WITHDRAWAL' ? skip : 0,
-        take: type === 'WITHDRAWAL' ? limit : 10,
-        where: status ? { status } : undefined,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          user: {
-            select: { email: true, name: true },
+    const withdrawals: any[] = (!type || type === 'WITHDRAWAL')
+      ? await this.prisma.withdrawal.findMany({
+          skip: type === 'WITHDRAWAL' ? skip : 0,
+          take: type === 'WITHDRAWAL' ? limit : 10,
+          where: status ? { status } : undefined,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            user: {
+              select: { email: true, name: true },
+            },
           },
-        },
-      });
-    }
+        })
+      : [];
 
     // Combina e ordena por data
     const transactions = [
-      ...deposits.map((d) => ({ ...d, type: 'DEPOSIT' })),
-      ...withdrawals.map((w) => ({ ...w, type: 'WITHDRAWAL' })),
-    ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      ...deposits.map((d: any) => ({ ...d, type: 'DEPOSIT' })),
+      ...withdrawals.map((w: any) => ({ ...w, type: 'WITHDRAWAL' })),
+    ].sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime());
 
     return {
       transactions: transactions.slice(0, limit),
