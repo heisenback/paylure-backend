@@ -80,42 +80,28 @@ export class WebhooksService {
     const mappedStatus = status === 'COMPLETED' ? 'CONFIRMED' : status;
 
     // =================================================================
-    // 🚨 AQUI ESTÁ A CORREÇÃO DE CÁLCULO DE SALDO (DO "TYPO") 🚨
+    // 🎯 CORREÇÃO: CREDITAR 100% DO VALOR DEPOSITADO (SEM DESCONTOS)
     // =================================================================
     
     let netAmountInCents: number;
-    const grossAmount = payload.amount; // Ex: 100.00 (valor bruto)
-    const fee = payload.fee; // Ex: -1.05 (taxa)
-    const netAmountFromTypo = payload.net_amout; // Ex: 98.95 (com typo da doc)
-    const netAmountCorrect = payload.net_amount; // Ex: 98.95 (campo correto)
+    const grossAmount = parseFloat(String(payload.amount || 0)); // Ex: 100.00 (valor bruto)
 
-    // Abordagem 1: Usar 'net_amout' (com typo) se existir
-    if (netAmountFromTypo !== undefined && netAmountFromTypo !== null) {
-        netAmountInCents = Math.round(netAmountFromTypo * 100);
-        this.logger.log(`[Cálculo de Saldo] Usando 'net_amout' (com typo). Valor: ${netAmountFromTypo} -> Cents: ${netAmountInCents}`);
-    }
-    // Abordagem 2: Calcular a partir de amount e fee (Mais robusto)
-    else if (grossAmount !== undefined && grossAmount !== null && fee !== undefined && fee !== null) {
-        netAmountInCents = Math.round((grossAmount + fee) * 100);
-        this.logger.log(`[Cálculo de Saldo] Calculado (amount + fee). Valor: ${grossAmount} + ${fee} -> Cents: ${netAmountInCents}`);
-    }
-    // Abordagem 3: Usar 'net_amount' (campo correto) se existir
-    else if (netAmountCorrect !== undefined && netAmountCorrect !== null) {
-          netAmountInCents = Math.round(netAmountCorrect * 100);
-          this.logger.log(`[Cálculo de Saldo] Usando 'net_amount' (correto). Valor: ${netAmountCorrect} -> Cents: ${netAmountInCents}`);
-    }
-    // Abordagem 4: Fallback para o valor bruto do depósito (melhor que 0)
-    else {
-        netAmountInCents = deposit.amountInCents; // Usa o valor bruto salvo no DB
-        this.logger.warn(`[Cálculo de Saldo] Webhook não enviou valor líquido. Usando valor bruto do DB: ${netAmountInCents}`);
-    }
+    // ✅ CREDITA 100% DO VALOR (sem descontar taxa da KeyClub)
+    netAmountInCents = Math.round(grossAmount * 100);
     
-    if (isNaN(netAmountInCents)) {
-      this.logger.error(`❌ Cálculo do saldo resultou em NaN! Payload: ${JSON.stringify(payload)}`);
+    this.logger.log(
+      `[Cálculo de Saldo] Depositou: R$ ${grossAmount.toFixed(2)} -> ` +
+      `Credita 100%: ${netAmountInCents} centavos`
+    );
+
+    // Validação de segurança
+    if (isNaN(netAmountInCents) || netAmountInCents <= 0) {
+      this.logger.error(`❌ Valor inválido! Payload: ${JSON.stringify(payload)}`);
       netAmountInCents = 0;
     }
+    
     // =================================================================
-    // 🚨 FIM DA CORREÇÃO DE CÁLCULO 🚨
+    // 🎯 FIM DA CORREÇÃO
     // =================================================================
 
     // Atualiza o depósito com o status e o valor líquido correto
@@ -123,8 +109,8 @@ export class WebhooksService {
       where: { externalId },
       data: { 
         status: mappedStatus,
-        netAmountInCents: netAmountInCents, // Salva o valor líquido correto
-        feeInCents: (deposit.amountInCents - netAmountInCents), // Salva a taxa calculada
+        netAmountInCents: netAmountInCents, // Salva o valor integral
+        feeInCents: 0, // Não cobra taxa no depósito
       },
     });
     this.logger.log(`✅ Depósito ${externalId} atualizado para: ${mappedStatus}`);
@@ -132,7 +118,7 @@ export class WebhooksService {
     if (mappedStatus === 'CONFIRMED') {
       const updatedUser = await this.prisma.user.update({
         where: { id: userId },
-        data: { balance: { increment: netAmountInCents } }, // Usa a variável corrigida
+        data: { balance: { increment: netAmountInCents } }, // Credita 100%
       });
 
       this.logger.log(
@@ -142,7 +128,6 @@ export class WebhooksService {
       );
 
       // 6. Notificar o frontend (via WebSocket) que o saldo mudou
-      // O seu frontend 'page.tsx' está ouvindo estes eventos!
       this.paymentGateway.notifyBalanceUpdate(userId, updatedUser.balance);
       this.paymentGateway.notifyDepositConfirmed(userId, {
         externalId,
@@ -160,7 +145,6 @@ export class WebhooksService {
   }
 
   private async processWithdrawalWebhook(withdrawal: any, payload: any, status: string) {
-    // ... (Lógica de saque, mantenha como está)
     const { externalId, userId } = withdrawal;
 
     if (withdrawal.status === status) {
@@ -170,15 +154,19 @@ export class WebhooksService {
 
     const mappedStatus = status === 'COMPLETED' ? 'COMPLETED' : status;
 
+    // Se o saque FALHOU, devolve o saldo + taxa para o usuário
     if (mappedStatus === 'FAILED' && withdrawal.status !== 'FAILED') {
+      // Devolve o valor ORIGINAL (amount já tem a taxa descontada)
+      const amountToRefund = withdrawal.amount; // Valor que foi debitado
+
       const updatedUser = await this.prisma.user.update({
         where: { id: userId },
-        data: { balance: { increment: withdrawal.amount } },
+        data: { balance: { increment: amountToRefund } },
       });
 
       this.logger.log(
         `💰 Saldo devolvido (saque falhou): User ${userId} | ` +
-        `+R$${(withdrawal.amount / 100).toFixed(2)} | ` +
+        `+R$${(amountToRefund / 100).toFixed(2)} | ` +
         `Novo saldo: R$${(updatedUser.balance / 100).toFixed(2)}`
       );
 

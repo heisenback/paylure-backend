@@ -18,6 +18,7 @@ model User {
   password         String
   name             String
   document         String?
+  role             String       @default("USER") // 🎯 NOVO: USER, SUPPORT, ADMIN
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
@@ -30,7 +31,7 @@ model User {
   merchant         Merchant?
   deposits         Deposit[]
   withdrawals      Withdrawal[]
-  pushSubscriptions PushSubscription[] // 🔔 NOVO: Subscriptions de notificação
+  pushSubscriptions PushSubscription[]
 }
 
 // ===================================
@@ -41,11 +42,11 @@ model PushSubscription {
   userId           String
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  endpoint         String       @unique // URL do push service
-  p256dh           String       // Chave pública do cliente
-  auth             String       // Chave de autenticação
+  endpoint         String       @unique
+  p256dh           String
+  auth             String
   
-  deviceInfo       String?      // Info do dispositivo (opcional)
+  deviceInfo       String?
   isActive         Boolean      @default(true)
   
   createdAt        DateTime     @default(now())
@@ -151,21 +152,32 @@ model Deposit {
 
 // ===================================
 // 6. MODELO WITHDRAWAL (O Saque PIX)
+// 🎯 ATUALIZADO COM CAMPOS DE TAXA
 // ===================================
 model Withdrawal {
   id               String       @id @default(uuid())
   userId           String
   user             User         @relation(fields: [userId], references: [id])
-  amount           Int
+  
+  amount           Int          // Valor SOLICITADO (com taxa)
+  netAmount        Int          @default(0) // 🎯 NOVO: Valor LÍQUIDO (sem taxa)
+  feeAmount        Int          @default(0) // 🎯 NOVO: Taxa cobrada (8% + R$2)
+  
   status           String       @default("PENDING")
   pixKey           String    
   keyType          String
   description      String?
   externalId       String       @unique
   webhookToken     String?      @unique
+  
+  failureReason    String?
+  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
-  failureReason    String?
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
 }
 
 // ===================================
