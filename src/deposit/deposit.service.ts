@@ -1,8 +1,9 @@
-// src/deposit/deposit.service.ts
+// src/deposit/service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { KeyclubService } from '../keyclub/keyclub.service';
-import { PrismaService } from 'src/prisma/prisma.service'; // 1. IMPORTAR O PRISMA
-import { CreateDepositDto } from './dto/create-deposit.dto'; // Importa o DTO local
+import { PrismaService } from 'src/prisma/prisma.service';
+import { CreateDepositDto } from './dto/create-deposit.dto'; 
+import * as crypto from 'crypto'; // 1. IMPORTA O CRYPTO
 
 // O DTO que este serviço REALMENTE espera (vem do controller)
 export type CreateDepositServiceDto = {
@@ -21,14 +22,13 @@ export class DepositService {
 
   constructor(
     private readonly keyclub: KeyclubService,
-    private readonly prisma: PrismaService, // 2. INJETAR O PRISMA
+    private readonly prisma: PrismaService, 
   ) {}
 
   // O Controller chama este método
   async createDeposit(userId: string, dto: CreateDepositServiceDto) {
     this.logger.log(`[DepositService] createDeposit chamado para userId=${userId}`);
     
-    // Converte centavos para BRL apenas para enviar à KeyClub
     const amountInBRL = dto.amount / 100;
 
     this.logger.log(
@@ -37,9 +37,9 @@ export class DepositService {
     );
 
     try {
-      // 3. CHAMA A KEYCLUB (como antes)
+      // 3. CHAMA A KEYCLUB
       const keyclubResult = await this.keyclub.createDeposit({
-        amount: amountInBRL, // Envia em BRL para a KeyClub
+        amount: amountInBRL, 
         externalId: dto.externalId,
         clientCallbackUrl: dto.callbackUrl,
         payer: {
@@ -58,7 +58,10 @@ export class DepositService {
         throw new Error('Falha ao obter transactionId da KeyClub.');
       }
 
-      // 4. ✅ SALVA O DEPÓSITO "PENDENTE" NO BANCO DE DADOS
+      // 4. ✅ GERA O TOKEN ÚNICO OBRIGATÓRIO
+      const uniqueToken = crypto.randomBytes(20).toString('hex');
+
+      // 5. ✅ SALVA O DEPÓSITO "PENDENTE" NO BANCO DE DADOS
       this.logger.log(`[DepositService] Salvando depósito PENDENTE no DB: ${transactionId}`);
       
       const newDeposit = await this.prisma.deposit.create({
@@ -70,22 +73,20 @@ export class DepositService {
           payerName: dto.payerName,
           payerEmail: dto.payerEmail,
           payerDocument: dto.payerDocument,
+          webhookToken: uniqueToken, // ✅ CAMPO OBRIGATÓRIO ADICIONADO
           user: { connect: { id: userId } },
-          // Adicione quaisquer outros campos obrigatórios do seu schema.prisma
-          // feeInCents: 0, (se for obrigatório e não tiver default)
-          // webhookToken: '...'. (se for obrigatório e não tiver default)
         },
       });
       
       this.logger.log(`[DepositService] ✅ Depósito ${newDeposit.id} salvo com externalId ${transactionId}`);
 
-      // 5. RETORNA PARA O FRONTEND (como antes)
+      // 6. RETORNA PARA O FRONTEND
       const response = {
         message: keyclubResult?.message || 'Deposit created successfully.',
         transactionId: transactionId,
         status: qr?.status || 'PENDING',
         qrcode: qr?.qrcode,
-        amount: dto.amount, // Mantém o valor original em centavos
+        amount: dto.amount,
       };
       
       return response;
@@ -93,20 +94,12 @@ export class DepositService {
     } catch (err) {
       const msg = (err as Error).message || 'Erro ao criar depósito.';
       
-      if (msg.includes('Access token') || msg.includes('token')) {
-        this.logger.error('[DepositService] ❌ Token KeyClub ausente ou inválido.');
-        throw new Error('Falha de autenticação com KeyClub. Verifique o Bearer token.');
+      if (err.code === 'P2002' && err.meta?.target?.includes('webhookToken')) {
+        this.logger.error(`[DepositService] ❌ Conflito de Token. Tentando novamente...`);
+        throw new Error('Erro ao gerar token, tente novamente.');
       }
       
-      if (msg.toLowerCase().includes('cloudflare') || msg.toLowerCase().includes('waf')) {
-        this.logger.error('[DepositService] ❌ Bloqueado pelo Cloudflare/WAF da KeyClub.');
-        throw new Error(
-          'Chamada bloqueada pelo WAF da KeyClub. ' +
-          'Use KEY_CLUB_ACCESS_TOKEN ou solicite liberação do IP.'
-        );
-      }
-      
-      this.logger.error(`[DepositService] ❌ Erro inesperado: ${msg}`);
+      this.logger.error(`[DepositService] ❌ Erro inesperado: ${msg}`, (err as Error).stack);
       throw new Error(`Erro ao criar depósito: ${msg}`);
     }
   }
