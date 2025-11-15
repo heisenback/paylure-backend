@@ -29,26 +29,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # 👇 AJUSTE CRÍTICO: FORÇA O DOCKER A LER OS VALORES DO ARQUIVO .ENV
+    
+    # ✅ ESTA É A FORMA CORRETA
+    # Esta linha lê o seu arquivo .env e passa TODAS
+    # as variáveis (DB, Keyclub, e VAPID) para o contêiner.
     env_file:
       - .env
-    environment:
-      JWT_SECRET: ${JWT_SECRET}
-      DATABASE_URL: postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?schema=public
-      PORT: 3000
-      KEY_CLUB_CLIENT_ID: ${KEY_CLUB_CLIENT_ID}
-      KEY_CLUB_CLIENT_SECRET: ${KEY_CLUB_CLIENT_SECRET}
-      KEY_CLUB_WEBHOOK_SECRET: ${KEY_CLUB_WEBHOOK_SECRET}
-      KEY_CLUB_BASE_URL: ${KEY_CLUB_BASE_URL}
-      KEY_CLUB_CALLBACK_URL: ${KEY_CLUB_CALLBACK_URL}
-      BASE_URL: ${BASE_URL}
-      API_URL: ${API_URL}
-      FRONTEND_URL: ${FRONTEND_URL}
-      NODE_ENV: ${NODE_ENV}
-      # Variáveis VAPID (devem estar presentes no .env)
-      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
-      VAPID_EMAIL: ${VAPID_EMAIL}
+
+    # ❌ O bloco 'environment:' que estava aqui foi removido
+    # porque ele estava sobrescrevendo as chaves VAPID
+    # e passando-as em BRANCO.
+
     ports:
       - "3030:3000"
     networks:
