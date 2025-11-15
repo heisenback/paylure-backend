@@ -18,7 +18,7 @@ model User {
   password         String
   name             String
   document         String?
-  role             String       @default("USER") // 🎯 NOVO: USER, SUPPORT, ADMIN
+  role             String       @default("USER") // USER, SUPPORT, ADMIN
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
@@ -27,15 +27,61 @@ model User {
   apiKey           String       @unique 
   apiSecret        String       @unique 
 
+  // 🎯 NOVO: 2FA
+  twoFactorEnabled Boolean      @default(false)
+  twoFactorMethod  String?      // 'EMAIL' ou 'GOOGLE_AUTH'
+  twoFactorSecret  String?      // Para Google Authenticator
+  
   // Relações
   merchant         Merchant?
   deposits         Deposit[]
   withdrawals      Withdrawal[]
   pushSubscriptions PushSubscription[]
+  passwordResets   PasswordReset[] // 🎯 NOVO
+  twoFactorCodes   TwoFactorCode[] // 🎯 NOVO
+  memberAccesses   MemberAccess[]  // 🎯 NOVO: Acesso a áreas de membros
 }
 
 // ===================================
-// 🔔 NOVO: MODELO PUSH SUBSCRIPTION
+// 🎯 NOVO: PASSWORD RESET
+// ===================================
+model PasswordReset {
+  id               String       @id @default(uuid())
+  userId           String
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  token            String       @unique
+  expiresAt        DateTime
+  used             Boolean      @default(false)
+  
+  createdAt        DateTime     @default(now())
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+// ===================================
+// 🎯 NOVO: TWO FACTOR CODE (Para 2FA por Email)
+// ===================================
+model TwoFactorCode {
+  id               String       @id @default(uuid())
+  userId           String
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  code             String       // Código de 6 dígitos
+  expiresAt        DateTime
+  used             Boolean      @default(false)
+  
+  createdAt        DateTime     @default(now())
+  
+  @@index([userId])
+  @@index([code])
+  @@index([expiresAt])
+}
+
+// ===================================
+// 📔 MODELO PUSH SUBSCRIPTION
 // ===================================
 model PushSubscription {
   id               String       @id @default(uuid())
@@ -74,7 +120,93 @@ model Merchant {
   paymentLinks     PaymentLink[]
   deposits         Deposit[]
   integrations     MembershipIntegration[]
-  subscriptionPlans SubscriptionPlan[] 
+  subscriptionPlans SubscriptionPlan[]
+  memberAreas      MemberArea[] // 🎯 NOVO: Áreas de membros do seller
+}
+
+// ===================================
+// 🎯 NOVO: MEMBER AREA (Área de Membros Estilo Netflix)
+// ===================================
+model MemberArea {
+  id               String       @id @default(uuid())
+  merchantId       String
+  merchant         Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  
+  name             String       // Ex: "Curso de Marketing Avançado"
+  slug             String       @unique // Ex: "marketing-avancado"
+  description      String?
+  coverImageUrl    String?      // Imagem de capa estilo Netflix
+  logoUrl          String?
+  
+  isActive         Boolean      @default(true)
+  
+  // Configurações visuais
+  primaryColor     String       @default("#9333ea")
+  secondaryColor   String       @default("#06b6d4")
+  
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  // Relações
+  contents         MemberContent[]
+  accesses         MemberAccess[]
+  
+  @@index([merchantId])
+  @@index([slug])
+}
+
+// ===================================
+// 🎯 NOVO: MEMBER CONTENT (Conteúdo da Área de Membros)
+// ===================================
+model MemberContent {
+  id               String       @id @default(uuid())
+  memberAreaId     String
+  memberArea       MemberArea   @relation(fields: [memberAreaId], references: [id], onDelete: Cascade)
+  
+  title            String
+  description      String?
+  type             String       // 'VIDEO', 'PDF', 'AUDIO', 'TEXT', 'EXTERNAL_LINK'
+  contentUrl       String?      // URL do vídeo, PDF, etc
+  thumbnailUrl     String?
+  
+  order            Int          @default(0)
+  duration         Int?         // Duração em segundos (para vídeos)
+  
+  isPublic         Boolean      @default(false) // Se true, não precisa estar logado
+  
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  @@index([memberAreaId])
+  @@index([order])
+}
+
+// ===================================
+// 🎯 NOVO: MEMBER ACCESS (Controle de Acesso)
+// ===================================
+model MemberAccess {
+  id               String       @id @default(uuid())
+  
+  userId           String
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  memberAreaId     String
+  memberArea       MemberArea   @relation(fields: [memberAreaId], references: [id], onDelete: Cascade)
+  
+  // Como o acesso foi concedido
+  grantedBy        String       // 'MANUAL', 'HOTMART', 'KIWIFY', 'PURCHASE'
+  externalId       String?      // ID da transação externa (Hotmart, etc)
+  
+  expiresAt        DateTime?    // null = acesso vitalício
+  isActive         Boolean      @default(true)
+  
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  @@unique([userId, memberAreaId])
+  @@index([userId])
+  @@index([memberAreaId])
+  @@index([expiresAt])
 }
 
 // ===================================
@@ -152,7 +284,6 @@ model Deposit {
 
 // ===================================
 // 6. MODELO WITHDRAWAL (O Saque PIX)
-// 🎯 ATUALIZADO COM CAMPOS DE TAXA
 // ===================================
 model Withdrawal {
   id               String       @id @default(uuid())
@@ -160,8 +291,8 @@ model Withdrawal {
   user             User         @relation(fields: [userId], references: [id])
   
   amount           Int          // Valor SOLICITADO (com taxa)
-  netAmount        Int          @default(0) // 🎯 NOVO: Valor LÍQUIDO (sem taxa)
-  feeAmount        Int          @default(0) // 🎯 NOVO: Taxa cobrada (8% + R$2)
+  netAmount        Int          @default(0) // Valor LÍQUIDO (sem taxa)
+  feeAmount        Int          @default(0) // Taxa cobrada (8% + R$2)
   
   status           String       @default("PENDING")
   pixKey           String    
@@ -187,7 +318,7 @@ model MembershipIntegration {
   id               String       @id @default(uuid())
   name             String
   webhookUrl       String
-  platform         String
+  platform         String       // 'HOTMART', 'KIWIFY', 'EDUZZ', etc
   secretKey        String?
 
   merchant         Merchant     @relation(fields: [merchantId], references: [id])

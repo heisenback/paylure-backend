@@ -16,7 +16,7 @@ export type WithdrawalDto = {
 export type UnifiedTransaction = {
     id: string;
     type: 'DEPOSIT' | 'WITHDRAWAL';
-    amount: number;
+    amount: number; // 🎯 JÁ EM CENTAVOS (não dividir aqui)
     status: string;
     date: Date;
 };
@@ -115,9 +115,15 @@ export class TransactionsService {
     });
   }
 
+  // 🎯 CORREÇÃO: Retornar valores em CENTAVOS (não dividir)
   async getHistory(userId: string): Promise<UnifiedTransaction[]> {
+    this.logger.log(`📋 Buscando histórico para userId: ${userId}`);
+    
     const deposits = await this.prisma.deposit.findMany({
-      where: { userId },
+      where: { 
+        userId,
+        status: { in: ['PENDING', 'PAID', 'COMPLETED', 'CONFIRMED'] } // 🎯 Incluir todos os status relevantes
+      },
       select: {
         id: true,
         amountInCents: true,
@@ -128,7 +134,10 @@ export class TransactionsService {
     });
 
     const withdrawals = await this.prisma.withdrawal.findMany({
-      where: { userId },
+      where: { 
+        userId,
+        status: { in: ['PENDING', 'COMPLETED', 'CONFIRMED', 'FAILED'] } // 🎯 Incluir todos os status
+      },
       select: {
         id: true,
         amount: true,
@@ -142,18 +151,20 @@ export class TransactionsService {
       ...deposits.map(d => ({
         id: d.id,
         type: 'DEPOSIT' as const,
-        amount: d.amountInCents / 100,
+        amount: d.amountInCents, // 🎯 JÁ EM CENTAVOS
         status: d.status,
         date: d.createdAt,
       })),
       ...withdrawals.map(w => ({
         id: w.id,
         type: 'WITHDRAWAL' as const,
-        amount: w.amount / 100,
+        amount: w.amount, // 🎯 JÁ EM CENTAVOS
         status: w.status,
         date: w.createdAt,
       })),
     ].sort((a, b) => b.date.getTime() - a.date.getTime());
+    
+    this.logger.log(`✅ Histórico encontrado: ${history.length} transações`);
     
     return history;
   }
