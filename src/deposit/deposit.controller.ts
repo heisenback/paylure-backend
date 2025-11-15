@@ -9,8 +9,10 @@ import {
   Post, 
   Req,
   UsePipes,
-  ValidationPipe
+  ValidationPipe,
+  UseGuards // 👈 1. IMPORTAR UseGuards
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport'; // 👈 2. IMPORTAR AuthGuard
 import { DepositService } from './deposit.service';
 import { CreateDepositDto } from './dto/create-deposit.dto';
 
@@ -23,6 +25,7 @@ interface RequestWithUser extends Request {
 }
 
 @Controller('deposits')
+@UseGuards(AuthGuard('jwt')) // 👈 3. ADICIONAR O GUARD AQUI
 export class DepositController {
   private readonly logger = new Logger(DepositController.name);
 
@@ -45,9 +48,10 @@ export class DepositController {
 
       this.logger.log(`[CREATE] Recebido: amount=${dto.amount}, payer=${name}`);
 
-      // ✅ CORREÇÃO: Pegar o userId do token JWT (passado pelo AuthGuard)
+      // ✅ AGORA ESTA LINHA VAI FUNCIONAR
       const userId = req?.user?.id;
       if (!userId) {
+        // Esta linha não deve mais ser atingida, pois o Guard vai parar antes
         this.logger.error('[CREATE] ❌ Usuário não autenticado (req.user.id não encontrado).');
         throw new HttpException({ message: 'Usuário não autenticado.' }, HttpStatus.UNAUTHORIZED);
       }
@@ -64,7 +68,6 @@ export class DepositController {
 
       this.logger.log(`[CREATE] Chamando depositService para userId=${userId}`);
       
-      // ✅ CORREÇÃO: Passa o userId para o serviço
       const result = await this.depositService.createDeposit(userId, payload);
       
       this.logger.log(`[CREATE] ✅ Depósito criado com sucesso: ${result.transactionId}`);
