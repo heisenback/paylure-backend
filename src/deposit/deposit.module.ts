@@ -2,18 +2,18 @@
 import { Module } from '@nestjs/common';
 import { DepositController } from './deposit.controller';
 import { DepositService } from './deposit.service';
-// 🚨 ASSUMIMOS QUE ESTES MÓDULOS EXISTEM E EXPORTAM SEUS SERVICES
-import { PrismaModule } from 'src/prisma/prisma.module'; 
+import { PrismaModule } from 'srcsrc/prisma/prisma.module'; 
 import { KeyclubModule } from 'src/keyclub/keyclub.module'; 
+import { AuthModule } from 'src/auth/auth.module'; // 👈 1. IMPORTAR O AuthModule
 
 @Module({
   imports: [
-    // 🚨 CORREÇÃO: Imports são obrigatórios para expor PrismaService e KeyclubService
     PrismaModule, 
     KeyclubModule,
+    AuthModule, // 👈 2. ADICIONAR O AuthModule AQUI
   ],
   controllers: [DepositController],
   providers: [DepositService],
-  exports: [DepositService], // ✅ CORREÇÃO: Exporta o DepositService
+  exports: [DepositService],
 })
 export class DepositModule {}
