@@ -14,7 +14,15 @@ import {
 import { DepositService } from './deposit.service';
 import { CreateDepositDto } from './dto/create-deposit.dto';
 
-@Controller('deposits') // ✅ CORREÇÃO: Sem 'api/v1/' (já está no main.ts)
+// Interface para garantir que req.user exista
+interface RequestWithUser extends Request {
+  user?: {
+    id: string; // ou number, dependendo do seu JWT
+    [key: string]: any;
+  };
+}
+
+@Controller('deposits')
 export class DepositController {
   private readonly logger = new Logger(DepositController.name);
 
@@ -25,20 +33,27 @@ export class DepositController {
   @UsePipes(new ValidationPipe({ 
     transform: true, 
     whitelist: true,
-    forbidNonWhitelisted: false // ✅ PERMITE CAMPOS EXTRAS
+    forbidNonWhitelisted: false
   }))
-  async create(@Body() dto: CreateDepositDto, @Req() req: any) {
+  async create(@Body() dto: CreateDepositDto, @Req() req: RequestWithUser) { // Tipado aqui
     try {
       // ✅ Normalização: aceita formato ANTIGO (user*) e NOVO (payer*)
-      const name = (dto.payerName || '').trim() || 'Usuário da Gateway';
-      const email = (dto.payerEmail || '').trim();
-      const document = (dto.payerDocument || '').replace(/\D+/g, '');
+      const name = (dto.payerName || dto.userName || '').trim() || 'Usuário da Gateway';
+      const email = (dto.payerEmail || dto.userEmail || '').trim();
+      const document = (dto.payerDocument || dto.userDocument || '').replace(/\D+/g, '');
       const phone = (dto.payerPhone || dto.phone || '').replace(/\D+/g, '');
 
       this.logger.log(`[CREATE] Recebido: amount=${dto.amount}, payer=${name}`);
 
+      // ✅ CORREÇÃO: Pegar o userId do token JWT (passado pelo AuthGuard)
+      const userId = req?.user?.id;
+      if (!userId) {
+        this.logger.error('[CREATE] ❌ Usuário não autenticado (req.user.id não encontrado).');
+        throw new HttpException({ message: 'Usuário não autenticado.' }, HttpStatus.UNAUTHORIZED);
+      }
+
       const payload = {
-        amount: Number(dto.amount),
+        amount: Number(dto.amount), // Frontend envia em CENTAVOS
         payerName: name,
         payerEmail: email,
         payerDocument: document,
@@ -47,9 +62,9 @@ export class DepositController {
         callbackUrl: dto.callbackUrl,
       };
 
-      // Se tiver auth no req, pegue o id do usuário
-      const userId = req?.user?.id ?? 'anonymous';
-
+      this.logger.log(`[CREATE] Chamando depositService para userId=${userId}`);
+      
+      // ✅ CORREÇÃO: Passa o userId para o serviço
       const result = await this.depositService.createDeposit(userId, payload);
       
       this.logger.log(`[CREATE] ✅ Depósito criado com sucesso: ${result.transactionId}`);
