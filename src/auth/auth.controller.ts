@@ -49,13 +49,13 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() dto: LoginAuthDto, @Req() req: Request) {
-    this.logger.log('🔐 ========================================');
-    this.logger.log(`🔐 POST /auth/login`);
+    this.logger.log('📝 ========================================');
+    this.logger.log(`📝 POST /auth/login`);
     this.logger.log(`📧 Email: ${dto.email}`);
     this.logger.log(`🌐 Origin: ${req.headers.origin}`);
-    this.logger.log(`📍 URL completa: ${req.url}`);
+    this.logger.log(`📄 URL completa: ${req.url}`);
     this.logger.log(`🔧 Method: ${req.method}`);
-    this.logger.log('🔐 ========================================');
+    this.logger.log('📝 ========================================');
 
     try {
       const result = await this.authService.login(dto);
@@ -69,8 +69,16 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
-  getProfile(@GetUser() user: User) {
+  async getProfile(@GetUser() user: User) {
     this.logger.log(`👤 Perfil acessado: ${user.email}`);
-    return { success: true, user };
+    
+    // 🎯 CORREÇÃO: Busca o usuário completo do banco com balance atualizado
+    const userWithBalance = await this.authService.getUserWithBalance(user.id);
+    
+    return { 
+      success: true, 
+      user: userWithBalance,
+      balance: userWithBalance.balance // 🎯 RETORNA O BALANCE EXPLICITAMENTE
+    };
   }
 }

@@ -4,10 +4,11 @@ import {
   ConflictException,
   UnauthorizedException,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RegisterAuthDto } from './dto/register-auth.dto';
-import { LoginAuthDto } from './dto/login-auth.dto'; // ✅ CORRETO
+import { LoginAuthDto } from './dto/login-auth.dto';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import * as uuid from 'uuid';
@@ -41,7 +42,7 @@ export class AuthService {
   }
 
   async register(dto: RegisterAuthDto) {
-    this.logger.log(`🔄 Iniciando registro para: ${dto.email}`);
+    this.logger.log(`📄 Iniciando registro para: ${dto.email}`);
     
     // 1. Verifica se o email já existe
     const userExists = await this.prisma.user.findUnique({
@@ -90,6 +91,7 @@ export class AuthService {
           document: true,
           createdAt: true,
           updatedAt: true,
+          balance: true, // 🎯 INCLUI BALANCE
           merchant: true,
           apiKey: true,
         },
@@ -115,7 +117,7 @@ export class AuthService {
   }
 
   async login(dto: LoginAuthDto) {
-    this.logger.log(`🔄 Tentativa de login: ${dto.email}`);
+    this.logger.log(`📄 Tentativa de login: ${dto.email}`);
     
     // 1. Busca usuário
     const user = await this.prisma.user.findUnique({
@@ -155,5 +157,34 @@ export class AuthService {
       user: userData,
       merchant: merchant,
     };
+  }
+
+  // 🎯 NOVO MÉTODO: Busca usuário com balance atualizado
+  async getUserWithBalance(userId: string) {
+    this.logger.log(`🔍 Buscando usuário ${userId} com balance atualizado`);
+    
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        document: true,
+        balance: true, // 🎯 IMPORTANTE: Busca o balance do banco
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+        apiKey: true,
+      },
+    });
+
+    if (!user) {
+      this.logger.error(`❌ Usuário ${userId} não encontrado`);
+      throw new NotFoundException('Usuário não encontrado');
+    }
+
+    this.logger.log(`✅ Balance do usuário ${user.email}: ${user.balance} centavos`);
+    
+    return user;
   }
 }
