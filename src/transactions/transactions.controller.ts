@@ -26,7 +26,14 @@ export class TransactionsController {
       throw new Error('Usuário autenticado, mas o ID do usuário está faltando no Token.');
     }
     
-    return this.transactionsService.getHistory(user.id);
+    const history = await this.transactionsService.getHistory(user.id);
+    
+    // 🎯 CORREÇÃO: Retornar no formato esperado pelo frontend
+    return {
+      success: true,
+      data: history,
+      message: `${history.length} transações encontradas`
+    };
   }
 
   @Post('quick-pix')
