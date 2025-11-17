@@ -4,7 +4,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { KeyclubService } from 'src/keyclub/keyclub.service';
 import { v4 as uuidv4 } from 'uuid';
 import { QuickPixDto } from './dto/quick-pix.dto';
-import { Deposit, Withdrawal } from '@prisma/client';
+import { Deposit, Prisma, Withdrawal } from '@prisma/client'; // 🎯 IMPORTA PRISMA
 
 export type WithdrawalDto = {
   amount: number;
@@ -13,12 +13,31 @@ export type WithdrawalDto = {
   description?: string;
 };
 
+// 🎯 ATUALIZADO: Tipo de transação unificada
 export type UnifiedTransaction = {
     id: string;
     type: 'DEPOSIT' | 'WITHDRAWAL';
-    amount: number; // 🎯 JÁ EM CENTAVOS (não dividir aqui)
+    amountInCents: number; // 🎯 Renomeado para consistência
     status: string;
-    date: Date;
+    createdAt: Date; // 🎯 Renomeado para consistência
+};
+
+// 🎯 ATUALIZADO: Tipo de retorno para o frontend
+export type HistoryResponseData = {
+  transactions: UnifiedTransaction[];
+  pagination: {
+    currentPage: number;
+    totalPages: number;
+    totalItems: number;
+    limit: number;
+  };
+};
+
+// 🎯 NOVO: Tipo de opções de busca
+type HistoryOptions = {
+  page: number;
+  limit: number;
+  status: string;
 };
 
 @Injectable()
@@ -115,15 +134,38 @@ export class TransactionsService {
     });
   }
 
-  // 🎯 CORREÇÃO: Retornar valores em CENTAVOS (não dividir)
-  async getHistory(userId: string): Promise<UnifiedTransaction[]> {
-    this.logger.log(`📋 Buscando histórico para userId: ${userId}`);
+  // ===================================
+  // 🚀 CORREÇÃO APLICADA AQUI (FILTROS E PAGINAÇÃO)
+  // ===================================
+  async getHistory(userId: string, options: HistoryOptions): Promise<HistoryResponseData> {
+    const { page, limit, status } = options;
+    const skip = (page - 1) * limit;
+
+    this.logger.log(`📋 Buscando histórico para userId: ${userId} (Página: ${page}, Filtro: ${status})`);
     
+    // 1. Define as cláusulas 'where' com base no filtro
+    let depositWhere: Prisma.DepositWhereInput = { userId };
+    let withdrawalWhere: Prisma.WithdrawalWhereInput = { userId };
+
+    if (status === 'PENDING') {
+      depositWhere.status = 'PENDING';
+      withdrawalWhere.status = 'PENDING';
+    } else if (status === 'CONFIRMED') {
+      // "Confirmado" para o usuário significa Depósito Confirmado ou Saque Completo
+      depositWhere.status = 'CONFIRMED';
+      withdrawalWhere.status = 'COMPLETED';
+    } else if (status === 'FAILED') {
+      depositWhere.status = 'FAILED';
+      withdrawalWhere.status = 'FAILED';
+    } else if (status === 'ALL') {
+      // Não filtra por status, mas é bom excluir os que nunca deveriam aparecer
+      depositWhere.status = { in: ['PENDING', 'CONFIRMED', 'FAILED'] };
+      withdrawalWhere.status = { in: ['PENDING', 'COMPLETED', 'FAILED'] };
+    }
+
+    // 2. Busca os dados (sem paginação ainda, para ordenar corretamente)
     const deposits = await this.prisma.deposit.findMany({
-      where: { 
-        userId,
-        status: { in: ['PENDING', 'PAID', 'COMPLETED', 'CONFIRMED'] } // 🎯 Incluir todos os status relevantes
-      },
+      where: depositWhere,
       select: {
         id: true,
         amountInCents: true,
@@ -134,39 +176,51 @@ export class TransactionsService {
     });
 
     const withdrawals = await this.prisma.withdrawal.findMany({
-      where: { 
-        userId,
-        status: { in: ['PENDING', 'COMPLETED', 'CONFIRMED', 'FAILED'] } // 🎯 Incluir todos os status
-      },
+      where: withdrawalWhere,
       select: {
         id: true,
-        amount: true,
+        amount: true, // amount no Saque já é o total em centavos
         status: true,
         createdAt: true,
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    const history = [
+    // 3. Combina e ordena (como no seu código original)
+    const history: UnifiedTransaction[] = [
       ...deposits.map(d => ({
         id: d.id,
         type: 'DEPOSIT' as const,
-        amount: d.amountInCents, // 🎯 JÁ EM CENTAVOS
+        amountInCents: d.amountInCents, // JÁ EM CENTAVOS
         status: d.status,
-        date: d.createdAt,
+        createdAt: d.createdAt,
       })),
       ...withdrawals.map(w => ({
         id: w.id,
         type: 'WITHDRAWAL' as const,
-        amount: w.amount, // 🎯 JÁ EM CENTAVOS
+        amountInCents: w.amount, // JÁ EM CENTAVOS
         status: w.status,
-        date: w.createdAt,
+        createdAt: w.createdAt,
       })),
-    ].sort((a, b) => b.date.getTime() - a.date.getTime());
+    ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     
-    this.logger.log(`✅ Histórico encontrado: ${history.length} transações`);
+    // 4. Calcula o total e aplica a paginação (o "passar pro lado")
+    const totalItems = history.length;
+    const totalPages = Math.ceil(totalItems / limit);
+    const transactions = history.slice(skip, skip + limit); // Pega apenas os 10 da página
     
-    return history;
+    this.logger.log(`✅ Histórico encontrado: ${transactions.length} de ${totalItems} transações`);
+    
+    // 5. Retorna no formato que o frontend espera
+    return {
+      transactions,
+      pagination: {
+        currentPage: page,
+        totalPages: totalPages,
+        totalItems: totalItems,
+        limit: limit,
+      },
+    };
   }
 
   async createQuickPix(userId: string, merchantId: string, dto: QuickPixDto) {
@@ -217,5 +271,4 @@ export class TransactionsService {
         throw new BadRequestException('Erro ao gerar o PIX: Falha de comunicação com o sistema de pagamentos.');
     }
   }
-
 }
