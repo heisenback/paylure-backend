@@ -10,22 +10,21 @@ import {
   Req,
   UsePipes,
   ValidationPipe,
-  UseGuards // 👈 1. IMPORTAR UseGuards
+  UseGuards
 } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport'; // 👈 2. IMPORTAR AuthGuard
+import { HybridAuthGuard } from '../auth/guards/hybrid-auth.guard'; // 👈 IMPORTAR
 import { DepositService } from './deposit.service';
 import { CreateDepositDto } from './dto/create-deposit.dto';
 
-// Interface para garantir que req.user exista
 interface RequestWithUser extends Request {
   user?: {
-    id: string; // ou number, dependendo do seu JWT
+    id: string;
     [key: string]: any;
   };
 }
 
 @Controller('deposits')
-@UseGuards(AuthGuard('jwt')) // 👈 3. ADICIONAR O GUARD AQUI
+@UseGuards(HybridAuthGuard) // 👈 MUDOU AQUI!
 export class DepositController {
   private readonly logger = new Logger(DepositController.name);
 
@@ -38,9 +37,8 @@ export class DepositController {
     whitelist: true,
     forbidNonWhitelisted: false
   }))
-  async create(@Body() dto: CreateDepositDto, @Req() req: RequestWithUser) { // Tipado aqui
+  async create(@Body() dto: CreateDepositDto, @Req() req: RequestWithUser) {
     try {
-      // ✅ Normalização: aceita formato ANTIGO (user*) e NOVO (payer*)
       const name = (dto.payerName || dto.userName || '').trim() || 'Usuário da Gateway';
       const email = (dto.payerEmail || dto.userEmail || '').trim();
       const document = (dto.payerDocument || dto.userDocument || '').replace(/\D+/g, '');
@@ -48,16 +46,14 @@ export class DepositController {
 
       this.logger.log(`[CREATE] Recebido: amount=${dto.amount}, payer=${name}`);
 
-      // ✅ AGORA ESTA LINHA VAI FUNCIONAR
       const userId = req?.user?.id;
       if (!userId) {
-        // Esta linha não deve mais ser atingida, pois o Guard vai parar antes
         this.logger.error('[CREATE] ❌ Usuário não autenticado (req.user.id não encontrado).');
         throw new HttpException({ message: 'Usuário não autenticado.' }, HttpStatus.UNAUTHORIZED);
       }
 
       const payload = {
-        amount: Number(dto.amount), // Frontend envia em CENTAVOS
+        amount: Number(dto.amount),
         payerName: name,
         payerEmail: email,
         payerDocument: document,
