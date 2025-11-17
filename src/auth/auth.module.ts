@@ -21,7 +21,8 @@ import { ApiKeyStrategy } from './api-key.strategy';
     MailModule,
     PassportModule,
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'secreto_padrao_muito_longo',
+      // 🚀 CORREÇÃO AQUI: Removemos a variável de ambiente para evitar a "race condition"
+      secret: 'secreto_padrao_muito_longo',
       signOptions: { expiresIn: '7d' },
     }),
   ],

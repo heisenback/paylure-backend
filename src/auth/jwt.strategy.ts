@@ -18,8 +18,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      // 🚨 PONTO CRÍTICO: USE A MESMA CHAVE QUE ESTÁ NO AUTH.MODULE.TS
-      secretOrKey: process.env.JWT_SECRET || 'secreto_padrao_muito_longo', 
+      // 🚀 CORREÇÃO AQUI: Removemos a variável de ambiente para forçar o mesmo segredo
+      secretOrKey: 'secreto_padrao_muito_longo', 
     });
   }
 
