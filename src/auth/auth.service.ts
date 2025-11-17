@@ -44,7 +44,6 @@ export class AuthService {
   async register(dto: RegisterAuthDto) {
     this.logger.log(`📄 Iniciando registro para: ${dto.email}`);
     
-    // 1. Verifica se o email já existe
     const userExists = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -54,21 +53,15 @@ export class AuthService {
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
-    // 2. Gera CNPJ único e nome padrão da loja
     const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
     const defaultStoreName = `Loja-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-
-    // 3. Gera credenciais de API
     const apiKey = generateApiKey();
     const apiSecret = generateApiSecret();
-
-    // 4. Hash da senha e do API Secret
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(dto.password, salt);
     const hashedApiSecret = await bcrypt.hash(apiSecret, salt);
 
     try {
-      // 5. Cria usuário com merchant e credenciais
       const userWithMerchant = await this.prisma.user.create({
         data: {
           email: dto.email,
@@ -91,14 +84,13 @@ export class AuthService {
           document: true,
           createdAt: true,
           updatedAt: true,
-          balance: true, // 🎯 INCLUI BALANCE
+          balance: true,
           merchant: true,
           apiKey: true,
         },
       });
 
       const { merchant, ...userData } = userWithMerchant;
-
       this.logger.log(`✅ Usuário criado com sucesso: ${dto.email}`);
 
       return {
@@ -119,7 +111,6 @@ export class AuthService {
   async login(dto: LoginAuthDto) {
     this.logger.log(`📄 Tentativa de login: ${dto.email}`);
     
-    // 1. Busca usuário
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
       include: {
@@ -132,7 +123,6 @@ export class AuthService {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
-    // 2. Valida senha
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
 
     if (!isPasswordValid) {
@@ -140,7 +130,6 @@ export class AuthService {
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
-    // 3. Gera JWT payload
     const payload = {
       sub: user.id,
       email: user.email,
@@ -149,7 +138,6 @@ export class AuthService {
     };
 
     const { password, apiSecret, merchant, ...userData } = user;
-
     this.logger.log(`✅ Login bem-sucedido: ${dto.email}`);
 
     return {
@@ -159,32 +147,71 @@ export class AuthService {
     };
   }
 
-  // 🎯 NOVO MÉTODO: Busca usuário com balance atualizado
+  // ===================================
+  // 🚀 CORREÇÃO APLICADA AQUI
+  // ===================================
   async getUserWithBalance(userId: string) {
-    this.logger.log(`🔍 Buscando usuário ${userId} com balance atualizado`);
+    this.logger.log(`🔍 Buscando usuário ${userId} com balance e stats atualizados`);
     
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        document: true,
-        balance: true, // 🎯 IMPORTANTE: Busca o balance do banco
-        role: true,
-        createdAt: true,
-        updatedAt: true,
-        apiKey: true,
-      },
-    });
+    // 1. Define o início do dia de hoje
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // 2. Busca o usuário e os stats em paralelo
+    const [user, depositsToday, totalConfirmedDeposits, totalCompletedWithdrawals] = await this.prisma.$transaction([
+      // Busca o usuário
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          document: true,
+          balance: true,
+          role: true,
+          createdAt: true,
+          updatedAt: true,
+          apiKey: true,
+        },
+      }),
+      // Calcula "Depósitos Hoje" (APENAS CONFIRMADOS)
+      this.prisma.deposit.aggregate({
+        _sum: { netAmountInCents: true },
+        where: {
+          userId: userId,
+          status: 'CONFIRMED',
+          createdAt: { gte: today }, // Apenas de hoje
+        },
+      }),
+      // Calcula "Total de Transações" (Parte 1: Depósitos)
+      this.prisma.deposit.count({
+        where: { userId: userId, status: 'CONFIRMED' },
+      }),
+      // Calcula "Total de Transações" (Parte 2: Saques)
+      this.prisma.withdrawal.count({
+        where: { userId: userId, status: 'COMPLETED' },
+      }),
+    ]);
 
     if (!user) {
       this.logger.error(`❌ Usuário ${userId} não encontrado`);
       throw new NotFoundException('Usuário não encontrado');
     }
 
-    this.logger.log(`✅ Balance do usuário ${user.email}: ${user.balance} centavos`);
+    // 3. Monta o objeto de stats
+    const depositsTodayAmount = depositsToday._sum.netAmountInCents || 0;
+    const totalTransactions = totalConfirmedDeposits + totalCompletedWithdrawals;
     
-    return user;
+    this.logger.log(`✅ Balance: ${user.balance} | Depósitos Hoje: ${depositsTodayAmount} | Transações Totais: ${totalTransactions}`);
+    
+    // 4. Retorna no formato que o frontend (page.tsx) espera
+    return {
+      user: user,
+      balance: user.balance,
+      stats: {
+        depositsToday: depositsTodayAmount,
+        totalTransactions: totalTransactions,
+      },
+    };
   }
 }
