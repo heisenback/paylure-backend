@@ -4,6 +4,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Strategy } from 'passport-custom';
 import { Request } from 'express';
 import { PrismaService } from 'src/prisma/prisma.service';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
@@ -29,7 +30,6 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
     // 1. Busca o usuário pela API Key (chave pública)
     const user = await this.prisma.user.findUnique({
       where: { apiKey: apiKey },
-      // Incluímos o Merchant, pois ele é necessário para criar a transação
       include: {
         merchant: true,
       },
@@ -40,18 +40,25 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
       throw new UnauthorizedException('API Key inválida.');
     }
 
-    // 2. Valida a chave secreta (API Secret)
-    // Usamos `==` para comparação simples, mas o ideal em produção seria um hash comparision (secreto).
-    if (user.apiSecret !== apiSecret) {
+    // 2. ✅ CORREÇÃO: Valida a chave secreta usando bcrypt.compare
+    const isSecretValid = await bcrypt.compare(apiSecret, user.apiSecret);
+
+    if (!isSecretValid) {
       this.logger.warn(`API Secret inválida para o usuário: ${user.email}`);
       throw new UnauthorizedException('API Secret inválida.');
     }
 
-    // Se as chaves estiverem corretas, retornamos o objeto do usuário (com o merchant incluído)
-    // O objeto retornado será injetado no @GetUser() do controller.
-    this.logger.log(`Autenticação de API Key bem-sucedida para o usuário: ${user.email}`);
+    // 3. Verifica se a conta está ativa
+    if (user.isBanned) {
+      this.logger.warn(`Conta banida tentou acessar API: ${user.email}`);
+      throw new UnauthorizedException('Conta banida.');
+    }
+
+    this.logger.log(`✅ Autenticação de API Key bem-sucedida para: ${user.email}`);
     
-    // Retornamos o objeto completo para uso no controller
-    return user; 
+    // Remove dados sensíveis antes de retornar
+    const { password, apiSecret: secret, ...userWithoutSensitiveData } = user;
+    
+    return userWithoutSensitiveData; 
   }
 }
