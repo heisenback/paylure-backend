@@ -12,7 +12,7 @@ export class MailService {
     this.transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true', // true para 465, false para outros
+      secure: process.env.SMTP_SECURE === 'true',
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
@@ -86,14 +86,19 @@ export class MailService {
     apiSecret: string,
   ): Promise<void> {
     try {
+      // Se o secret está mascarado, é um lembrete
+      const isReminder = apiSecret.includes('•');
+      
       await this.transporter.sendMail({
         from: `"Paylure" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
         to,
-        subject: '🔑 Suas Credenciais de API - Paylure',
-        html: this.getAPICredentialsTemplate(name, apiKey, apiSecret),
+        subject: isReminder ? '🔑 Suas Credenciais de API - Paylure' : '🔑 Novas Credenciais de API - Paylure',
+        html: isReminder ? 
+          this.getAPICredentialsReminderTemplate(name, apiKey) : 
+          this.getAPICredentialsTemplate(name, apiKey, apiSecret),
       });
 
-      this.logger.log(`✅ Credenciais API enviadas para: ${to}`);
+      this.logger.log(`✅ ${isReminder ? 'Lembrete' : 'Credenciais'} enviado(as) para: ${to}`);
     } catch (error) {
       this.logger.error(`❌ Erro ao enviar credenciais para ${to}:`, error);
       throw error;
@@ -247,7 +252,7 @@ export class MailService {
       <body>
         <div class="container">
           <div class="header">
-            <h1>🔑 Credenciais de API</h1>
+            <h1>🔑 Novas Credenciais de API</h1>
           </div>
           <div class="content">
             <p>Olá, <strong>${name}</strong>!</p>
@@ -272,6 +277,56 @@ export class MailService {
                 <li>Este é o único momento que você verá o Secret completo</li>
                 <li>As credenciais antigas foram invalidadas</li>
               </ul>
+            </div>
+          </div>
+          <div class="footer">
+            <p>© ${new Date().getFullYear()} Paylure. Todos os direitos reservados.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  private getAPICredentialsReminderTemplate(name: string, apiKey: string): string {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; margin: 0; padding: 0; }
+          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #1e293b 0%, #4c1d95 100%); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+          .header { background: linear-gradient(90deg, #9333ea 0%, #06b6d4 100%); padding: 40px; text-align: center; }
+          .header h1 { color: white; margin: 0; font-size: 32px; }
+          .content { padding: 40px; color: #e9d5ff; }
+          .credentials { background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(168, 85, 247, 0.2); padding: 20px; border-radius: 12px; margin: 20px 0; }
+          .cred-item { margin: 16px 0; }
+          .cred-label { color: rgba(216, 180, 254, 0.7); font-size: 14px; margin-bottom: 8px; }
+          .cred-value { background: rgba(168, 85, 247, 0.1); padding: 12px; border-radius: 8px; font-family: monospace; word-break: break-all; color: #a855f7; }
+          .footer { padding: 20px 40px; text-align: center; color: rgba(233, 213, 255, 0.5); font-size: 14px; border-top: 1px solid rgba(168, 85, 247, 0.2); }
+          .warning { background: rgba(251, 191, 36, 0.1); border-left: 4px solid #fbbf24; padding: 16px; border-radius: 8px; margin: 20px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🔑 Suas Credenciais de API</h1>
+          </div>
+          <div class="content">
+            <p>Olá, <strong>${name}</strong>!</p>
+            <p>Aqui está seu Client ID (API Key):</p>
+            
+            <div class="credentials">
+              <div class="cred-item">
+                <div class="cred-label">Client ID (API Key)</div>
+                <div class="cred-value">${apiKey}</div>
+              </div>
+            </div>
+
+            <div class="warning">
+              <p style="margin: 0;"><strong>⚠️ SOBRE O CLIENT SECRET:</strong></p>
+              <p style="margin: 8px 0 0 0;">Por segurança, seu Client Secret está criptografado e não pode ser recuperado. Se você perdeu o Secret, será necessário regenerar novas credenciais no painel.</p>
             </div>
           </div>
           <div class="footer">

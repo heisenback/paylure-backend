@@ -86,6 +86,35 @@ export class ApiCredentialsService {
   }
 
   /**
+   * Envia credenciais atuais por email (sem regenerar)
+   */
+  async sendCredentialsReminder(userId: string): Promise<void> {
+    this.logger.log(`📧 Enviando lembrete de credenciais para userId: ${userId}`);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new BadRequestException('Usuário não encontrado.');
+    }
+
+    if (!user.apiKey || !user.apiSecret) {
+      throw new BadRequestException('Você ainda não possui credenciais de API.');
+    }
+
+    // ⚠️ Envia apenas o API Key - o Secret está hasheado e não pode ser recuperado
+    await this.mailService.sendAPICredentials(
+      user.email,
+      user.name,
+      user.apiKey,
+      '••••••••••••••••••••••••••••••••', // Mascara o secret
+    );
+
+    this.logger.log(`✅ Lembrete enviado para: ${user.email}`);
+  }
+
+  /**
    * Obtém apenas a API Key (sem o secret)
    */
   async getApiKey(userId: string): Promise<{ apiKey: string }> {
