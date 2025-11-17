@@ -148,69 +148,42 @@ export class AuthService {
   }
 
   // ===================================
-  // 🚀 CORREÇÃO APLICADA AQUI
+  // 🚀 CORREÇÃO APLICADA AQUI (Para performance)
   // ===================================
   async getUserWithBalance(userId: string) {
-    this.logger.log(`🔍 Buscando usuário ${userId} com balance e stats atualizados`);
+    this.logger.log(`🔍 Buscando usuário ${userId} (VERSÃO RÁPIDA)`);
     
-    // 1. Define o início do dia de hoje
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    // 2. Busca o usuário e os stats em paralelo
-    const [user, depositsToday, totalConfirmedDeposits, totalCompletedWithdrawals] = await this.prisma.$transaction([
-      // Busca o usuário
-      this.prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          document: true,
-          balance: true,
-          role: true,
-          createdAt: true,
-          updatedAt: true,
-          apiKey: true,
-        },
-      }),
-      // Calcula "Depósitos Hoje" (APENAS CONFIRMADOS)
-      this.prisma.deposit.aggregate({
-        _sum: { netAmountInCents: true },
-        where: {
-          userId: userId,
-          status: 'CONFIRMED',
-          createdAt: { gte: today }, // Apenas de hoje
-        },
-      }),
-      // Calcula "Total de Transações" (Parte 1: Depósitos)
-      this.prisma.deposit.count({
-        where: { userId: userId, status: 'CONFIRMED' },
-      }),
-      // Calcula "Total de Transações" (Parte 2: Saques)
-      this.prisma.withdrawal.count({
-        where: { userId: userId, status: 'COMPLETED' },
-      }),
-    ]);
+    // 1. Busca o usuário (ÚNICA CONSULTA)
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        document: true,
+        balance: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+        apiKey: true,
+      },
+    });
 
     if (!user) {
       this.logger.error(`❌ Usuário ${userId} não encontrado`);
       throw new NotFoundException('Usuário não encontrado');
     }
 
-    // 3. Monta o objeto de stats
-    const depositsTodayAmount = depositsToday._sum.netAmountInCents || 0;
-    const totalTransactions = totalConfirmedDeposits + totalCompletedWithdrawals;
-    
-    this.logger.log(`✅ Balance: ${user.balance} | Depósitos Hoje: ${depositsTodayAmount} | Transações Totais: ${totalTransactions}`);
+    this.logger.log(`✅ Balance: ${user.balance} | Stats: 0 (Temporário)`);
     
     // 4. Retorna no formato que o frontend (page.tsx) espera
+    // Vamos enviar 0 para os stats por enquanto, só para o dashboard carregar.
     return {
       user: user,
       balance: user.balance,
       stats: {
-        depositsToday: depositsTodayAmount,
-        totalTransactions: totalTransactions,
+        depositsToday: 0,
+        totalTransactions: 0,
       },
     };
   }
