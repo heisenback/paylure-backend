@@ -1,5 +1,5 @@
 // src/transactions/transactions.controller.ts
-import { Controller, Post, Body, UseGuards, Get, HttpCode, HttpStatus, Query, Param, NotFoundException } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, HttpCode, HttpStatus, Query, Param, NotFoundException, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
 import { TransactionsService, WithdrawalDto } from './transactions.service'; 
 import { QuickPixDto } from './dto/quick-pix.dto';
 import { GetUser } from 'src/auth/decorators/get-user.decorator'; 
@@ -19,20 +19,30 @@ class CreateWithdrawalDto implements WithdrawalDto {
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
 
+  // ===================================
+  // 🚀 CORREÇÃO APLICADA AQUI (FILTROS E PAGINAÇÃO)
+  // ===================================
   @Get('history')
   @UseGuards(AuthGuard('jwt'))
-  async getHistory(@GetUser() user: User) {
+  async getHistory(
+    @GetUser() user: User,
+    // 🎯 Adiciona Query Params para filtro e paginação
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('status', new DefaultValuePipe('ALL')) status: string,
+  ) {
     if (!user || !user.id) {
       throw new Error('Usuário autenticado, mas o ID do usuário está faltando no Token.');
     }
     
-    const history = await this.transactionsService.getHistory(user.id);
+    const options = { page, limit, status };
+    const historyData = await this.transactionsService.getHistory(user.id, options);
     
-    // 🎯 CORREÇÃO: Retornar no formato esperado pelo frontend
+    // 🎯 Retorna no formato que o frontend (page.tsx) espera
     return {
       success: true,
-      data: history,
-      message: `${history.length} transações encontradas`
+      data: historyData, // { transactions: [...], pagination: {...} }
+      message: `${historyData.pagination.totalItems} transações encontradas`
     };
   }
 

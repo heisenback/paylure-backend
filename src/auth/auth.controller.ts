@@ -67,18 +67,22 @@ export class AuthController {
     }
   }
 
+  // ===================================
+  // 🚀 CORREÇÃO APLICADA AQUI
+  // ===================================
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
   async getProfile(@GetUser() user: User) {
     this.logger.log(`👤 Perfil acessado: ${user.email}`);
     
-    // 🎯 CORREÇÃO: Busca o usuário completo do banco com balance atualizado
-    const userWithBalance = await this.authService.getUserWithBalance(user.id);
+    // 🎯 Busca o usuário, balance E OS STATS
+    const fullProfileData = await this.authService.getUserWithBalance(user.id);
     
+    // 🎯 Retorna no formato { success: true, data: { ... } }
+    //    que o novo frontend (page.tsx) espera.
     return { 
       success: true, 
-      user: userWithBalance,
-      balance: userWithBalance.balance // 🎯 RETORNA O BALANCE EXPLICITAMENTE
+      data: fullProfileData
     };
   }
 }
