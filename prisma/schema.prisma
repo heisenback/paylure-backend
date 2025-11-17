@@ -27,7 +27,11 @@ model User {
   apiKey           String       @unique 
   apiSecret        String       @unique 
 
-  // 🎯 NOVO: 2FA
+  // 🎯 NOVO: Taxas individuais de saque
+  withdrawalFeePercent  Float?      // null = usa taxa global
+  withdrawalFeeFixed    Float?      // null = usa taxa global
+
+  // 🎯 2FA
   twoFactorEnabled Boolean      @default(false)
   twoFactorMethod  String?      // 'EMAIL' ou 'GOOGLE_AUTH'
   twoFactorSecret  String?      // Para Google Authenticator
@@ -37,13 +41,25 @@ model User {
   deposits         Deposit[]
   withdrawals      Withdrawal[]
   pushSubscriptions PushSubscription[]
-  passwordResets   PasswordReset[] // 🎯 NOVO
-  twoFactorCodes   TwoFactorCode[] // 🎯 NOVO
-  memberAccesses   MemberAccess[]  // 🎯 NOVO: Acesso a áreas de membros
+  passwordResets   PasswordReset[]
+  twoFactorCodes   TwoFactorCode[]
+  memberAccesses   MemberAccess[]
 }
 
 // ===================================
-// 🎯 NOVO: PASSWORD RESET
+// 🎯 NOVO: System Settings (Configurações Globais)
+// ===================================
+model SystemSettings {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+  
+  @@index([key])
+}
+
+// ===================================
+// 🎯 PASSWORD RESET
 // ===================================
 model PasswordReset {
   id               String       @id @default(uuid())
@@ -62,7 +78,7 @@ model PasswordReset {
 }
 
 // ===================================
-// 🎯 NOVO: TWO FACTOR CODE (Para 2FA por Email)
+// 🎯 TWO FACTOR CODE (Para 2FA por Email)
 // ===================================
 model TwoFactorCode {
   id               String       @id @default(uuid())
@@ -81,7 +97,7 @@ model TwoFactorCode {
 }
 
 // ===================================
-// 📔 MODELO PUSH SUBSCRIPTION
+// 🔔 MODELO PUSH SUBSCRIPTION
 // ===================================
 model PushSubscription {
   id               String       @id @default(uuid())
@@ -121,11 +137,11 @@ model Merchant {
   deposits         Deposit[]
   integrations     MembershipIntegration[]
   subscriptionPlans SubscriptionPlan[]
-  memberAreas      MemberArea[] // 🎯 NOVO: Áreas de membros do seller
+  memberAreas      MemberArea[]
 }
 
 // ===================================
-// 🎯 NOVO: MEMBER AREA (Área de Membros Estilo Netflix)
+// 🎯 MEMBER AREA (Área de Membros Estilo Netflix)
 // ===================================
 model MemberArea {
   id               String       @id @default(uuid())
@@ -156,7 +172,7 @@ model MemberArea {
 }
 
 // ===================================
-// 🎯 NOVO: MEMBER CONTENT (Conteúdo da Área de Membros)
+// 🎯 MEMBER CONTENT (Conteúdo da Área de Membros)
 // ===================================
 model MemberContent {
   id               String       @id @default(uuid())
@@ -182,7 +198,7 @@ model MemberContent {
 }
 
 // ===================================
-// 🎯 NOVO: MEMBER ACCESS (Controle de Acesso)
+// 🎯 MEMBER ACCESS (Controle de Acesso)
 // ===================================
 model MemberAccess {
   id               String       @id @default(uuid())
