@@ -44,6 +44,11 @@ export class WithdrawalService {
       },
     });
 
+    // ✅ VERIFICAÇÃO DE NULL
+    if (!user) {
+      throw new BadRequestException('Usuário não encontrado.');
+    }
+
     let feePercent: number;
     let feeFixed: number;
 

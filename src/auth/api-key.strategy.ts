@@ -14,10 +14,6 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
     super();
   }
 
-  /**
-   * Método de validação da estratégia de API Key.
-   * Procura a chave no cabeçalho 'x-api-key' e a chave secreta no cabeçalho 'x-api-secret'.
-   */
   async validate(req: Request): Promise<any> {
     const apiKey = req.headers['x-api-key'] as string;
     const apiSecret = req.headers['x-api-secret'] as string;
@@ -48,11 +44,8 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
       throw new UnauthorizedException('API Secret inválida.');
     }
 
-    // 3. Verifica se a conta está ativa
-    if (user.isBanned) {
-      this.logger.warn(`Conta banida tentou acessar API: ${user.email}`);
-      throw new UnauthorizedException('Conta banida.');
-    }
+    // 3. ✅ REMOVIDO: Verificação de isBanned (campo não existe)
+    // Se você quiser adicionar essa funcionalidade, precisa adicionar o campo no schema.prisma primeiro
 
     this.logger.log(`✅ Autenticação de API Key bem-sucedida para: ${user.email}`);
     
