@@ -9,6 +9,6 @@ import { PrismaModule } from '../prisma/prisma.module';
   imports: [PrismaModule],
   controllers: [AdminController],
   providers: [AdminService, SystemSettingsService],
-  exports: [AdminService, SystemSettingsService],
+  exports: [AdminService, SystemSettingsService], // 👈 ADICIONE SystemSettingsService AQUI!
 })
 export class AdminModule {}
