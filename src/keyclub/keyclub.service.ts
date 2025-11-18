@@ -54,27 +54,22 @@ export class KeyclubService {
       this.token = preset;
       this.logger.log('✅ [KeyclubService] Usando KEY_CLUB_ACCESS_TOKEN do .env');
     } else {
-      this.logger.warn('⚠️ [KeyclubService] KEY_CLUB_ACCESS_TOKEN não encontrado, será necessário login');
+      this.logger.warn('⚠️ [KeyclubService] KEY_CLUB_ACCESS_TOKEN não encontrado, login automático será usado');
     }
   }
 
-  // ✅ CORREÇÃO: Detecção REAL de bloqueio WAF do Cloudflare
   private isCloudflareBlock(ax: AxiosError<any>): boolean {
     const res = ax.response;
     if (!res) return false;
     
     const status = res.status;
-    
-    // Apenas 403 ou 503 podem ser bloqueios WAF
     if (status !== 403 && status !== 503) return false;
     
     const contentType = String(res.headers?.['content-type'] || '').toLowerCase();
     const body = typeof res.data === 'string' ? res.data : JSON.stringify(res.data || {});
     
-    // Bloqueio WAF real retorna HTML, não JSON
     const isHtml = contentType.includes('text/html');
     
-    // Verifica se o corpo contém indicadores de bloqueio WAF
     const hasWafSignature = 
       body.includes('Attention Required') ||
       body.includes('cf-error-details') ||
@@ -83,7 +78,6 @@ export class KeyclubService {
       body.includes('security check to access') ||
       body.includes('Why have I been blocked');
     
-    // É bloqueio WAF apenas se for HTML E tiver assinatura de bloqueio
     const isWafBlock = isHtml && hasWafSignature;
     
     if (isWafBlock) {
@@ -100,17 +94,12 @@ export class KeyclubService {
   private authHeaders() {
     if (!this.token) {
       this.logger.error('❌ [KeyclubService] Token ausente ao tentar adicionar headers');
-      return {};
+      throw new Error('Token não disponível. Login necessário.');
     }
     return { Authorization: `Bearer ${this.token}` };
   }
 
   private async login(): Promise<string> {
-    if (this.token) {
-      this.logger.log('✅ [KeyclubService] Token já existe, pulando login');
-      return this.token;
-    }
-
     const clientId = (process.env.KEY_CLUB_CLIENT_ID || '').trim();
     const clientSecret = (process.env.KEY_CLUB_CLIENT_SECRET || '').trim();
     
@@ -119,7 +108,8 @@ export class KeyclubService {
       throw new Error('Credenciais da KeyClub ausentes no .env');
     }
 
-    this.logger.log('🔐 [KeyclubService] Iniciando autenticação...');
+    this.logger.log('🔍 [KeyclubService] Iniciando autenticação...');
+    this.logger.log(`🔍 CLIENT_ID: ${clientId.slice(0, 20)}...`);
     
     try {
       const resp = await this.http.post('/api/auth/login', {
@@ -128,9 +118,11 @@ export class KeyclubService {
       });
 
       this.logger.log(`📥 [KeyclubService] Login response: status=${resp.status}`);
+      this.logger.log(`📥 [KeyclubService] Response body: ${JSON.stringify(resp.data).slice(0, 200)}`);
 
       if (resp.status === 200 || resp.status === 201) {
-        const token = resp.data?.accessToken || resp.data?.token || resp.data?.access_token;
+        // 🔥 CORREÇÃO: A resposta da KeyClub tem o campo "token" diretamente
+        const token = resp.data?.token || resp.data?.accessToken || resp.data?.access_token;
         
         if (!token) {
           this.logger.error('❌ [KeyclubService] Token não encontrado na resposta:', resp.data);
@@ -139,10 +131,10 @@ export class KeyclubService {
 
         this.token = String(token).trim();
         this.logger.log('✅ [KeyclubService] Autenticação bem-sucedida!');
+        this.logger.log(`🔑 Token (primeiros 30 chars): ${this.token.slice(0, 30)}...`);
         return this.token;
       }
 
-      // ✅ CORREÇÃO: Verifica bloqueio WAF REAL antes de lançar erro genérico
       if (resp.status === 403) {
         if (this.isCloudflareBlock({ response: resp } as any)) {
           throw new Error('Login bloqueado pelo Cloudflare WAF real. Contate o suporte da KeyClub');
@@ -171,12 +163,17 @@ export class KeyclubService {
     }
   }
 
+  // 🔥 CORREÇÃO CRÍTICA: Garante que SEMPRE terá token antes de fazer requisições
   private async ensureToken(force = false): Promise<string> {
+    // Se já tem token e não está forçando novo login
     if (this.token && !force) {
       this.logger.log('✅ [KeyclubService] Token já disponível');
       return this.token;
     }
-    return this.login();
+    
+    // Se não tem token OU está forçando, faz login
+    this.logger.log('🔄 [KeyclubService] Obtendo novo token...');
+    return await this.login();
   }
 
   private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -186,13 +183,11 @@ export class KeyclubService {
       const ax = e as AxiosError<any>;
       const status = ax.response?.status;
 
-      // ✅ CORREÇÃO: Checa bloqueio WAF REAL
       if (ax.response && this.isCloudflareBlock(ax)) {
         this.logger.error('❌ [KeyclubService] Bloqueio WAF REAL do Cloudflare detectado');
         throw new Error('Requisição bloqueada pelo WAF. Contate o suporte da KeyClub');
       }
 
-      // Se for 401/403 (mas NÃO bloqueio WAF), tenta reautenticar
       if (status === 401 || status === 403) {
         const usingFixedToken = Boolean((process.env.KEY_CLUB_ACCESS_TOKEN || '').trim());
         
@@ -212,8 +207,11 @@ export class KeyclubService {
   }
 
   async createDeposit(input: CreateDepositInput) {
+    // 🔥 CORREÇÃO: SEMPRE garante token antes de fazer requisição
+    this.logger.log('🔍 [KeyclubService] Verificando token antes de criar depósito...');
+    
     try {
-      await this.ensureToken();
+      await this.ensureToken(); // Vai fazer login se necessário
     } catch (error) {
       this.logger.error('❌ [KeyclubService] Falha ao obter token:', error);
       throw new Error('Não foi possível autenticar na KeyClub');
@@ -271,7 +269,7 @@ export class KeyclubService {
 
       const headersToSend = this.authHeaders();
       this.logger.log(`🔍 [DEBUG] Token existe: ${!!this.token}`);
-      this.logger.log(`🔍 [DEBUG] Token (20 chars): ${this.token?.slice(0, 20)}...`);
+      this.logger.log(`🔍 [DEBUG] Token (30 chars): ${this.token?.slice(0, 30)}...`);
 
       const resp = await this.http.post('/api/payments/deposit', payload, {
         headers: headersToSend,
@@ -287,15 +285,12 @@ export class KeyclubService {
         return resp.data;
       }
 
-      // ✅ CORREÇÃO: Tratamento melhorado de 403
       if (resp.status === 403) {
-        // Verifica se é bloqueio WAF REAL
         if (this.isCloudflareBlock({ response: resp } as any)) {
           this.logger.error('❌ Bloqueio WAF REAL - Headers:', resp.headers);
           throw new Error('Bloqueado pelo Cloudflare WAF');
         }
         
-        // Se não for WAF, é erro de permissão da API
         const errorMsg = resp.data?.message || resp.data?.error || 'Acesso negado';
         this.logger.error(`❌ [KeyclubService] 403 da API (não é WAF): ${errorMsg}`);
         throw new Error(`Acesso negado pela KeyClub: ${errorMsg}`);
@@ -326,6 +321,7 @@ export class KeyclubService {
   }
 
   async createWithdrawal(input: CreateWithdrawalInput) {
+    // 🔥 CORREÇÃO: Mesma lógica para saques
     await this.ensureToken();
 
     const amount = Number(input.amount);
@@ -360,7 +356,6 @@ export class KeyclubService {
         return resp.data;
       }
 
-      // ✅ CORREÇÃO: Mesma lógica para saques
       if (resp.status === 403) {
         if (this.isCloudflareBlock({ response: resp } as any)) {
           throw new Error('Saque bloqueado pelo Cloudflare WAF');
