@@ -1,8 +1,9 @@
-// src/auth/jwt.strategy.ts
+// backend/src/auth/jwt.strategy.ts
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
 
 // Define a interface para o payload do JWT
 export type JwtPayload = {
@@ -14,12 +15,15 @@ export type JwtPayload = {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService, // 🔥 ADICIONA ConfigService
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      // 🚀 CORREÇÃO AQUI: Removemos a variável de ambiente para forçar o mesmo segredo
-      secretOrKey: 'secreto_padrao_muito_longo', 
+      // 🔥 CORREÇÃO CRÍTICA: Usar ConfigService para pegar o JWT_SECRET do .env
+      secretOrKey: configService.get<string>('JWT_SECRET') || 'seu_segredo_jwt_aqui_para_testes',
     });
   }
 
@@ -36,8 +40,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     if (!user) {
-        // Se o usuário foi deletado após a emissão do token
-        throw new UnauthorizedException('Token inválido ou usuário não encontrado.');
+      // Se o usuário foi deletado após a emissão do token
+      throw new UnauthorizedException('Token inválido ou usuário não encontrado.');
     }
     
     // Retorna o objeto do usuário (o que será injetado pelo @GetUser)
