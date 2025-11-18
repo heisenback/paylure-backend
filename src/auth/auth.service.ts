@@ -49,7 +49,7 @@ export class AuthService {
     });
 
     if (userExists) {
-      this.logger.warn(`⚠️  Email já cadastrado: ${dto.email}`);
+      this.logger.warn(`⚠️ Email já cadastrado: ${dto.email}`);
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
@@ -119,14 +119,14 @@ export class AuthService {
     });
 
     if (!user) {
-      this.logger.warn(`⚠️  Usuário não encontrado: ${dto.email}`);
+      this.logger.warn(`⚠️ Usuário não encontrado: ${dto.email}`);
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
 
     if (!isPasswordValid) {
-      this.logger.warn(`⚠️  Senha inválida para: ${dto.email}`);
+      this.logger.warn(`⚠️ Senha inválida para: ${dto.email}`);
       throw new UnauthorizedException('E-mail ou senha inválidos.');
     }
 
@@ -148,12 +148,12 @@ export class AuthService {
   }
 
   // ===================================
-  // 🚀 CORREÇÃO APLICADA AQUI (Para performance)
+  // 🚀 CORRIGIDO: Busca stats REAIS do banco
   // ===================================
   async getUserWithBalance(userId: string) {
-    this.logger.log(`🔍 Buscando usuário ${userId} (VERSÃO RÁPIDA)`);
+    this.logger.log(`🔍 Buscando usuário ${userId} com estatísticas reais`);
     
-    // 1. Busca o usuário (ÚNICA CONSULTA)
+    // 1. Busca o usuário
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -174,16 +174,58 @@ export class AuthService {
       throw new NotFoundException('Usuário não encontrado');
     }
 
-    this.logger.log(`✅ Balance: ${user.balance} | Stats: 0 (Temporário)`);
+    // 🚀 2. Calcula o início do dia (00:00:00) no horário de Brasília (UTC-3)
+    const now = new Date();
+    const startOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      0, 0, 0, 0
+    );
+
+    // 🚀 3. Busca depósitos confirmados HOJE
+    const depositsToday = await this.prisma.deposit.aggregate({
+      where: {
+        userId: userId,
+        status: 'CONFIRMED', // Apenas confirmados
+        createdAt: {
+          gte: startOfDay, // Desde o início do dia
+        },
+      },
+      _sum: {
+        netAmountInCents: true, // Soma dos valores líquidos
+      },
+    });
+
+    // 🚀 4. Conta o TOTAL de transações confirmadas (Depósitos + Saques)
+    const totalDeposits = await this.prisma.deposit.count({
+      where: {
+        userId: userId,
+        status: 'CONFIRMED',
+      },
+    });
+
+    const totalWithdrawals = await this.prisma.withdrawal.count({
+      where: {
+        userId: userId,
+        status: 'CONFIRMED',
+      },
+    });
+
+    const totalTransactions = totalDeposits + totalWithdrawals;
+
+    // 🚀 5. Valores em centavos (seguro contra null)
+    const depositsTodayInCents = depositsToday._sum.netAmountInCents || 0;
+
+    this.logger.log(`✅ Stats calculados: DepositosHoje=${depositsTodayInCents} centavos | TotalTransações=${totalTransactions}`);
     
-    // 4. Retorna no formato que o frontend (page.tsx) espera
-    // Vamos enviar 0 para os stats por enquanto, só para o dashboard carregar.
+    // 6. Retorna no formato que o frontend espera
     return {
       user: user,
       balance: user.balance,
       stats: {
-        depositsToday: 0,
-        totalTransactions: 0,
+        depositsToday: depositsTodayInCents, // Em centavos!
+        totalTransactions: totalTransactions,
       },
     };
   }
