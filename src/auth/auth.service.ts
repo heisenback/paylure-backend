@@ -14,17 +14,11 @@ import { JwtService } from '@nestjs/jwt';
 import * as uuid from 'uuid';
 import * as crypto from 'crypto';
 
-/**
- * Gera uma API Key única no formato: paylure_XXXXXXXXXXXX
- */
 function generateApiKey(): string {
   const randomPart = crypto.randomBytes(16).toString('hex');
   return `paylure_${randomPart}`;
 }
 
-/**
- * Gera um API Secret forte
- */
 function generateApiSecret(): string {
   const randomPart = crypto.randomBytes(32).toString('hex');
   return `sk_live_${randomPart}`;
@@ -49,7 +43,6 @@ export class AuthService {
     });
 
     if (userExists) {
-      this.logger.warn(`⚠️ Email já cadastrado: ${dto.email}`);
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
@@ -91,13 +84,11 @@ export class AuthService {
       });
 
       const { merchant, ...userData } = userWithMerchant;
-      this.logger.log(`✅ Usuário criado com sucesso: ${dto.email}`);
-
       return {
         user: userData,
         merchant: merchant,
         apiSecret: apiSecret,
-        message: 'Registro e Lojista criados com sucesso! Salve suas credenciais de API em local seguro.',
+        message: 'Registro criado com sucesso.',
       };
     } catch (error) {
       if (error.code === 'P2002') {
@@ -109,26 +100,15 @@ export class AuthService {
   }
 
   async login(dto: LoginAuthDto) {
-    this.logger.log(`📄 Tentativa de login: ${dto.email}`);
-    
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      include: {
-        merchant: true,
-      },
+      include: { merchant: true },
     });
 
-    if (!user) {
-      this.logger.warn(`⚠️ Usuário não encontrado: ${dto.email}`);
-      throw new UnauthorizedException('E-mail ou senha inválidos.');
-    }
+    if (!user) throw new UnauthorizedException('E-mail ou senha inválidos.');
 
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
-
-    if (!isPasswordValid) {
-      this.logger.warn(`⚠️ Senha inválida para: ${dto.email}`);
-      throw new UnauthorizedException('E-mail ou senha inválidos.');
-    }
+    if (!isPasswordValid) throw new UnauthorizedException('E-mail ou senha inválidos.');
 
     const payload = {
       sub: user.id,
@@ -138,7 +118,6 @@ export class AuthService {
     };
 
     const { password, apiSecret, merchant, ...userData } = user;
-    this.logger.log(`✅ Login bem-sucedido: ${dto.email}`);
 
     return {
       access_token: await this.jwtService.signAsync(payload),
@@ -147,13 +126,9 @@ export class AuthService {
     };
   }
 
-  // ===================================
-  // 🚀 CORRIGIDO: Busca stats REAIS do banco
-  // ===================================
   async getUserWithBalance(userId: string) {
-    this.logger.log(`🔍 Buscando usuário ${userId} com estatísticas reais`);
+    this.logger.log(`🔍 Buscando usuário ${userId}`);
     
-    // 1. Busca o usuário
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -166,66 +141,47 @@ export class AuthService {
         createdAt: true,
         updatedAt: true,
         apiKey: true,
+        // 🔥 CORREÇÃO CRÍTICA: Incluímos o merchant aqui!
+        merchant: {
+          select: {
+            id: true,
+            storeName: true,
+            cnpj: true
+          }
+        }
       },
     });
 
-    if (!user) {
-      this.logger.error(`❌ Usuário ${userId} não encontrado`);
-      throw new NotFoundException('Usuário não encontrado');
-    }
+    if (!user) throw new NotFoundException('Usuário não encontrado');
 
-    // 🚀 2. Calcula o início do dia (00:00:00) no horário de Brasília (UTC-3)
     const now = new Date();
-    const startOfDay = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      0, 0, 0, 0
-    );
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
-    // 🚀 3. Busca depósitos confirmados HOJE
     const depositsToday = await this.prisma.deposit.aggregate({
       where: {
         userId: userId,
-        status: 'CONFIRMED', // Apenas confirmados
-        createdAt: {
-          gte: startOfDay, // Desde o início do dia
-        },
+        status: 'CONFIRMED',
+        createdAt: { gte: startOfDay },
       },
-      _sum: {
-        netAmountInCents: true, // Soma dos valores líquidos
-      },
+      _sum: { netAmountInCents: true },
     });
 
-    // 🚀 4. Conta o TOTAL de transações confirmadas (Depósitos + Saques)
     const totalDeposits = await this.prisma.deposit.count({
-      where: {
-        userId: userId,
-        status: 'CONFIRMED',
-      },
+      where: { userId: userId, status: 'CONFIRMED' },
     });
 
     const totalWithdrawals = await this.prisma.withdrawal.count({
-      where: {
-        userId: userId,
-        status: 'CONFIRMED',
-      },
+      where: { userId: userId, status: 'CONFIRMED' },
     });
 
-    const totalTransactions = totalDeposits + totalWithdrawals;
-
-    // 🚀 5. Valores em centavos (seguro contra null)
     const depositsTodayInCents = depositsToday._sum.netAmountInCents || 0;
 
-    this.logger.log(`✅ Stats calculados: DepositosHoje=${depositsTodayInCents} centavos | TotalTransações=${totalTransactions}`);
-    
-    // 6. Retorna no formato que o frontend espera
     return {
       user: user,
       balance: user.balance,
       stats: {
-        depositsToday: depositsTodayInCents, // Em centavos!
-        totalTransactions: totalTransactions,
+        depositsToday: depositsTodayInCents,
+        totalTransactions: totalDeposits + totalWithdrawals,
       },
     };
   }
