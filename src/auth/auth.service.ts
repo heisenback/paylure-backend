@@ -46,12 +46,21 @@ export class AuthService {
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
-    // 2. Verifica CPF duplicado (novo!)
+    // 2. Verifica CPF duplicado (Blindado)
     if (dto.document) {
       const docClean = dto.document.replace(/\D/g, '');
+      // Formata para comparar caso o banco tenha salvo com pontos
+      const docFormatted = docClean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+
       const cpfExists = await this.prisma.user.findFirst({
-        where: { document: docClean },
+        where: {
+          OR: [
+            { document: docClean },
+            { document: docFormatted }
+          ]
+        },
       });
+      
       if (cpfExists) {
         throw new ConflictException('Este CPF já está cadastrado em outra conta.');
       }
@@ -66,6 +75,7 @@ export class AuthService {
     const hashedApiSecret = await bcrypt.hash(apiSecret, salt);
 
     try {
+      // Cria usuário JÁ com o merchant
       const userWithMerchant = await this.prisma.user.create({
         data: {
           email: dto.email,
@@ -81,24 +91,13 @@ export class AuthService {
             },
           },
         },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          document: true,
-          createdAt: true,
-          updatedAt: true,
-          balance: true,
-          merchant: true,
-          apiKey: true,
-        },
+        include: { merchant: true }, // Garante que retorna o merchant criado
       });
 
-      const { merchant, ...userData } = userWithMerchant;
+      const { password, apiSecret, ...userData } = userWithMerchant;
       return {
         user: userData,
-        merchant: merchant,
-        apiSecret: apiSecret,
+        merchant: userWithMerchant.merchant,
         message: 'Conta criada com sucesso!',
       };
     } catch (error) {
@@ -118,25 +117,9 @@ export class AuthService {
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) throw new UnauthorizedException('E-mail ou senha inválidos.');
 
-    // 🔥 AUTO-FIX: Cria perfil de produtor para contas antigas (ADM)
+    // 🔥 AUTO-FIX NO LOGIN: Se não tiver merchant, cria agora.
     if (!user.merchant) {
-        this.logger.warn(`⚠️ Usuário antigo sem perfil de Produtor: ${user.email}. Corrigindo...`);
-        try {
-            const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
-            const defaultStoreName = `Loja-${user.name.split(' ')[0]}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-            
-            const newMerchant = await this.prisma.merchant.create({
-                data: {
-                    userId: user.id,
-                    storeName: defaultStoreName,
-                    cnpj: uniqueCnpj
-                }
-            });
-            user.merchant = newMerchant;
-            this.logger.log(`✅ Perfil corrigido com sucesso!`);
-        } catch (err) {
-            this.logger.error(`❌ Falha no auto-fix: ${err}`);
-        }
+       user = await this.fixMissingMerchant(user.id, user.name);
     }
 
     const payload = {
@@ -155,8 +138,12 @@ export class AuthService {
     };
   }
 
+  // ============================================================
+  // 🚀 A SOLUÇÃO DEFINITIVA PARA O ERRO "PRODUTOR NÃO CONFIGURADO"
+  // ============================================================
   async getUserWithBalance(userId: string) {
-    const user = await this.prisma.user.findUnique({
+    // Busca o usuário tentando trazer o Merchant
+    let user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true, email: true, name: true, document: true, balance: true,
@@ -167,6 +154,23 @@ export class AuthService {
 
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
+    // 🔥 AUTO-FIX NO DASHBOARD: Se chegou aqui e não tem merchant, CRIA NA HORA.
+    // Isso impede que o frontend quebre ao tentar acessar user.merchant.id
+    if (!user.merchant) {
+      this.logger.warn(`⚠️ Usuário ${userId} acessou Dashboard sem Merchant. Corrigindo...`);
+      const fixedUser = await this.fixMissingMerchant(userId, user.name);
+      // Atualiza a variável local user com o novo merchant
+      user = {
+          ...user,
+          merchant: {
+              id: fixedUser.merchant.id,
+              storeName: fixedUser.merchant.storeName,
+              cnpj: fixedUser.merchant.cnpj
+          }
+      };
+    }
+
+    // Busca estatísticas (código mantido)
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
@@ -179,12 +183,37 @@ export class AuthService {
                        await this.prisma.withdrawal.count({ where: { userId: userId, status: 'CONFIRMED' } });
 
     return {
-      user: user,
+      user: user, // Agora garantimos que user.merchant existe
       balance: user.balance,
       stats: {
         depositsToday: depositsToday._sum.netAmountInCents || 0,
         totalTransactions: totalTrans,
       },
     };
+  }
+
+  // Função auxiliar para criar o merchant se faltar
+  private async fixMissingMerchant(userId: string, userName: string) {
+      try {
+          const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
+          const defaultStoreName = `Loja-${userName.split(' ')[0]}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+          
+          await this.prisma.merchant.create({
+              data: {
+                  userId: userId,
+                  storeName: defaultStoreName,
+                  cnpj: uniqueCnpj
+              }
+          });
+          
+          // Retorna o usuário atualizado
+          return await this.prisma.user.findUnique({
+              where: { id: userId },
+              include: { merchant: true }
+          });
+      } catch (err) {
+          this.logger.error(`❌ Falha crítica no auto-fix do merchant: ${err}`);
+          throw err;
+      }
   }
 }
