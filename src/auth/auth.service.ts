@@ -100,7 +100,8 @@ export class AuthService {
   }
 
   async login(dto: LoginAuthDto) {
-    const user = await this.prisma.user.findUnique({
+    // Busca usuário e já traz o merchant se existir
+    let user = await this.prisma.user.findUnique({
       where: { email: dto.email },
       include: { merchant: true },
     });
@@ -110,11 +111,42 @@ export class AuthService {
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) throw new UnauthorizedException('E-mail ou senha inválidos.');
 
+    // =========================================================
+    // 🛠️ AUTO-CORREÇÃO PARA USUÁRIOS ANTIGOS (SEM MERCHANT)
+    // =========================================================
+    if (!user.merchant) {
+        this.logger.warn(`⚠️ Usuário antigo detectado sem perfil de Produtor: ${user.email}. Corrigindo automaticamente...`);
+        
+        try {
+            const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
+            const defaultStoreName = `Loja-${user.name.split(' ')[0]}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+            // Cria o Merchant vinculado a este usuário
+            const newMerchant = await this.prisma.merchant.create({
+                data: {
+                    userId: user.id,
+                    storeName: defaultStoreName,
+                    cnpj: uniqueCnpj
+                }
+            });
+
+            this.logger.log(`✅ Perfil de Produtor criado automaticamente para: ${user.email}`);
+            
+            // Atualiza o objeto user local para gerar o token corretamente
+            user.merchant = newMerchant;
+            
+        } catch (err) {
+            this.logger.error(`❌ Falha ao auto-corrigir usuário: ${err}`);
+            // Não trava o login, mas o usuário pode ter problemas ao criar produtos
+        }
+    }
+    // =========================================================
+
     const payload = {
       sub: user.id,
       email: user.email,
       name: user.name,
-      merchantId: user.merchant?.id,
+      merchantId: user.merchant?.id, // Agora garantimos que isso existe
     };
 
     const { password, apiSecret, merchant, ...userData } = user;
@@ -141,7 +173,6 @@ export class AuthService {
         createdAt: true,
         updatedAt: true,
         apiKey: true,
-        // 🔥 CORREÇÃO CRÍTICA: Incluímos o merchant aqui!
         merchant: {
           select: {
             id: true,
