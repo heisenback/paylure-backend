@@ -38,12 +38,23 @@ export class AuthService {
   async register(dto: RegisterAuthDto) {
     this.logger.log(`📄 Iniciando registro para: ${dto.email}`);
     
-    const userExists = await this.prisma.user.findUnique({
+    // 1. Verifica E-mail duplicado
+    const emailExists = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
-
-    if (userExists) {
+    if (emailExists) {
       throw new ConflictException('Este e-mail já está em uso.');
+    }
+
+    // 2. Verifica CPF duplicado (novo!)
+    if (dto.document) {
+      const docClean = dto.document.replace(/\D/g, '');
+      const cpfExists = await this.prisma.user.findFirst({
+        where: { document: docClean },
+      });
+      if (cpfExists) {
+        throw new ConflictException('Este CPF já está cadastrado em outra conta.');
+      }
     }
 
     const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
@@ -59,7 +70,7 @@ export class AuthService {
         data: {
           email: dto.email,
           name: dto.name || 'Usuário Padrão',
-          document: dto.document || null,
+          document: dto.document ? dto.document.replace(/\D/g, '') : null,
           password: hashedPassword,
           apiKey: apiKey,
           apiSecret: hashedApiSecret,
@@ -88,19 +99,15 @@ export class AuthService {
         user: userData,
         merchant: merchant,
         apiSecret: apiSecret,
-        message: 'Registro criado com sucesso.',
+        message: 'Conta criada com sucesso!',
       };
     } catch (error) {
-      if (error.code === 'P2002') {
-        throw new ConflictException('O e-mail fornecido já está em uso.');
-      }
       this.logger.error(`❌ Erro ao criar usuário: ${error.message}`);
       throw error;
     }
   }
 
   async login(dto: LoginAuthDto) {
-    // Busca usuário e já traz o merchant se existir
     let user = await this.prisma.user.findUnique({
       where: { email: dto.email },
       include: { merchant: true },
@@ -111,17 +118,13 @@ export class AuthService {
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) throw new UnauthorizedException('E-mail ou senha inválidos.');
 
-    // =========================================================
-    // 🛠️ AUTO-CORREÇÃO PARA USUÁRIOS ANTIGOS (SEM MERCHANT)
-    // =========================================================
+    // 🔥 AUTO-FIX: Cria perfil de produtor para contas antigas (ADM)
     if (!user.merchant) {
-        this.logger.warn(`⚠️ Usuário antigo detectado sem perfil de Produtor: ${user.email}. Corrigindo automaticamente...`);
-        
+        this.logger.warn(`⚠️ Usuário antigo sem perfil de Produtor: ${user.email}. Corrigindo...`);
         try {
             const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
             const defaultStoreName = `Loja-${user.name.split(' ')[0]}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-            // Cria o Merchant vinculado a este usuário
+            
             const newMerchant = await this.prisma.merchant.create({
                 data: {
                     userId: user.id,
@@ -129,24 +132,18 @@ export class AuthService {
                     cnpj: uniqueCnpj
                 }
             });
-
-            this.logger.log(`✅ Perfil de Produtor criado automaticamente para: ${user.email}`);
-            
-            // Atualiza o objeto user local para gerar o token corretamente
             user.merchant = newMerchant;
-            
+            this.logger.log(`✅ Perfil corrigido com sucesso!`);
         } catch (err) {
-            this.logger.error(`❌ Falha ao auto-corrigir usuário: ${err}`);
-            // Não trava o login, mas o usuário pode ter problemas ao criar produtos
+            this.logger.error(`❌ Falha no auto-fix: ${err}`);
         }
     }
-    // =========================================================
 
     const payload = {
       sub: user.id,
       email: user.email,
       name: user.name,
-      merchantId: user.merchant?.id, // Agora garantimos que isso existe
+      merchantId: user.merchant?.id,
     };
 
     const { password, apiSecret, merchant, ...userData } = user;
@@ -159,27 +156,12 @@ export class AuthService {
   }
 
   async getUserWithBalance(userId: string) {
-    this.logger.log(`🔍 Buscando usuário ${userId}`);
-    
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
-        id: true,
-        email: true,
-        name: true,
-        document: true,
-        balance: true,
-        role: true,
-        createdAt: true,
-        updatedAt: true,
-        apiKey: true,
-        merchant: {
-          select: {
-            id: true,
-            storeName: true,
-            cnpj: true
-          }
-        }
+        id: true, email: true, name: true, document: true, balance: true,
+        role: true, createdAt: true, updatedAt: true, apiKey: true,
+        merchant: { select: { id: true, storeName: true, cnpj: true } }
       },
     });
 
@@ -189,30 +171,19 @@ export class AuthService {
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
     const depositsToday = await this.prisma.deposit.aggregate({
-      where: {
-        userId: userId,
-        status: 'CONFIRMED',
-        createdAt: { gte: startOfDay },
-      },
+      where: { userId: userId, status: 'CONFIRMED', createdAt: { gte: startOfDay } },
       _sum: { netAmountInCents: true },
     });
 
-    const totalDeposits = await this.prisma.deposit.count({
-      where: { userId: userId, status: 'CONFIRMED' },
-    });
-
-    const totalWithdrawals = await this.prisma.withdrawal.count({
-      where: { userId: userId, status: 'CONFIRMED' },
-    });
-
-    const depositsTodayInCents = depositsToday._sum.netAmountInCents || 0;
+    const totalTrans = await this.prisma.deposit.count({ where: { userId: userId, status: 'CONFIRMED' } }) + 
+                       await this.prisma.withdrawal.count({ where: { userId: userId, status: 'CONFIRMED' } });
 
     return {
       user: user,
       balance: user.balance,
       stats: {
-        depositsToday: depositsTodayInCents,
-        totalTransactions: totalDeposits + totalWithdrawals,
+        depositsToday: depositsToday._sum.netAmountInCents || 0,
+        totalTransactions: totalTrans,
       },
     };
   }
