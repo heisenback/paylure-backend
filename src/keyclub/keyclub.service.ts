@@ -28,10 +28,29 @@ export type CreateWithdrawalInput = {
 export class KeyclubService {
   private readonly logger = new Logger(KeyclubService.name);
   private readonly baseUrl = (process.env.KEY_CLUB_BASE_URL || 'https://api.the-key.club').replace(/\/+$/, '');
+  private readonly useWhitelist: boolean; // ✅ Flag para usar whitelist
   private token: string | null = null;
   private http: AxiosInstance;
 
   constructor() {
+    // ✅ Detecta se deve usar whitelist ou token
+    const clientId = (process.env.KEY_CLUB_CLIENT_ID || '').trim();
+    const clientSecret = (process.env.KEY_CLUB_CLIENT_SECRET || '').trim();
+    const preset = (process.env.KEY_CLUB_ACCESS_TOKEN || '').trim();
+
+    this.useWhitelist = !!(clientId && !preset); // Se tem CLIENT_ID mas não tem TOKEN, usa whitelist
+    
+    this.logger.log(`🔐 [KeyClub] Modo: ${this.useWhitelist ? 'WHITELIST (IP)' : 'TOKEN'}`);
+    
+    if (this.useWhitelist) {
+      this.logger.log(`✅ [KeyClub] Usando IP na whitelist (CLIENT_ID: ${clientId.substring(0, 10)}...)`);
+    } else if (preset) {
+      this.token = preset;
+      this.logger.log(`✅ [KeyClub] Usando TOKEN de acesso`);
+    } else {
+      this.logger.warn(`⚠️  [KeyClub] Nenhuma credencial configurada!`);
+    }
+
     this.http = axios.create({
       baseURL: this.baseUrl,
       timeout: 30000,
@@ -43,15 +62,9 @@ export class KeyclubService {
       httpsAgent: new https.Agent({ 
         keepAlive: true, 
         maxSockets: 50,
-        rejectUnauthorized: true // Mantenha true para produção segura
+        rejectUnauthorized: true
       })
     });
-
-    // Tenta usar token do env, mas se falhar, o sistema vai se recuperar sozinho
-    const preset = (process.env.KEY_CLUB_ACCESS_TOKEN || '').trim();
-    if (preset) {
-      this.token = preset;
-    }
   }
 
   private isCloudflareBlock(error: any): boolean {
@@ -67,12 +80,28 @@ export class KeyclubService {
     return isHtml && (body.includes('Attention Required') || body.includes('cf-error-details'));
   }
 
-  // Gera headers na hora da chamada para pegar o token atualizado
+  // ✅ NOVO: Gera headers baseado no modo (whitelist ou token)
   private getHeaders() {
-    if (!this.token) {
-      throw new Error('Token de acesso não disponível. O login falhou.');
+    if (this.useWhitelist) {
+      // ✅ IP Whitelist: sem Authorization
+      this.logger.debug('📤 Usando headers SEM token (IP whitelist)');
+      return {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
     }
-    return { Authorization: `Bearer ${this.token}` };
+
+    // ✅ Modo TOKEN: inclui Authorization
+    if (!this.token) {
+      throw new Error('Token de acesso não disponível.');
+    }
+    
+    this.logger.debug(`📤 Usando headers COM token: ${this.token.substring(0, 20)}...`);
+    return { 
+      Authorization: `Bearer ${this.token}`,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
   }
 
   private async login(): Promise<string> {
@@ -86,7 +115,6 @@ export class KeyclubService {
     this.logger.log('🔄 [Keyclub] Tentando renovar token...');
     
     try {
-      // Instância limpa para login
       const resp = await axios.post(`${this.baseUrl}/api/auth/login`, {
         client_id: clientId,
         client_secret: clientSecret,
@@ -111,12 +139,23 @@ export class KeyclubService {
     }
   }
 
-  private async ensureToken(): Promise<string> {
-    if (this.token) return this.token;
-    return await this.login();
+  // ✅ NOVO: Só tenta login se estiver em modo TOKEN
+  private async ensureToken(): Promise<void> {
+    if (this.useWhitelist) {
+      // ✅ Modo whitelist: não precisa de token
+      this.logger.debug('⏭️  Pulando login (usando IP whitelist)');
+      return;
+    }
+
+    if (this.token) {
+      // ✅ Já tem token válido
+      return;
+    }
+
+    // ✅ Modo token mas sem token: tenta fazer login
+    await this.login();
   }
 
-  // Wrapper inteligente para retry
   private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn();
@@ -125,34 +164,41 @@ export class KeyclubService {
       const status = ax.response?.status;
       const responseData = JSON.stringify(ax.response?.data || {}).toLowerCase();
 
-      // Detecção de Token Inválido (Mesmo se for 400 ou 500)
+      // ✅ Se estiver em modo whitelist, não tenta retry com login
+      if (this.useWhitelist) {
+        this.logger.error(`❌ [Keyclub] Erro em modo whitelist: ${status} - ${responseData.substring(0, 100)}`);
+        
+        if (status === 401 || status === 403) {
+          throw new BadRequestException('Acesso negado pela KeyClub. Verifique se o IP está na whitelist.');
+        }
+        
+        throw error;
+      }
+
+      // ✅ Se estiver em modo TOKEN, tenta retry com novo login
       const isTokenError = 
         status === 401 || 
         status === 403 || 
         (status === 400 && (responseData.includes('token') || responseData.includes('unauthorized')));
 
       if (isTokenError && !this.isCloudflareBlock(error)) {
-        this.logger.warn(`⚠️ [Keyclub] Erro de token (${status}). Tentando login novamente...`);
+        this.logger.warn(`⚠️  [Keyclub] Erro de token (${status}). Tentando login novamente...`);
         
-        this.token = null; // Força limpeza
+        this.token = null;
         try {
-          await this.login(); // Busca novo token
-          return await fn();  // Tenta operação novamente
+          await this.login();
+          return await fn();
         } catch (retryError) {
           this.logger.error('❌ [Keyclub] Falha no retry:', retryError.message);
-          // IMPORTANTE: Não lançar 401 aqui para não deslogar o usuário do dashboard
           throw new BadRequestException('Erro na adquirente: Falha de autenticação.');
         }
       }
 
-      // Tratamento de erros para não quebrar o frontend
       if (status === 400) {
-         const msg = (ax.response?.data as any)?.message || 'Dados inválidos enviados para a KeyClub.';
-         throw new BadRequestException(msg);
+        const msg = (ax.response?.data as any)?.message || 'Dados inválidos enviados para a KeyClub.';
+        throw new BadRequestException(msg);
       }
 
-      // Se for erro 401 da Keyclub que não resolveu com retry, transformamos em 500
-      // para o Frontend do Paylure não achar que o usuário deslogou.
       if (status === 401) {
         throw new InternalServerErrorException('Erro interno na integração de pagamentos.');
       }
@@ -179,10 +225,14 @@ export class KeyclubService {
       },
     };
 
+    this.logger.log(`📤 [createDeposit] Enviando para KeyClub: ${JSON.stringify(payload).substring(0, 100)}...`);
+
     return this.withAuthRetry(async () => {
       const resp = await this.http.post('/api/payments/deposit', payload, {
-        headers: this.getHeaders(), // Usa o getter dinâmico
+        headers: this.getHeaders(),
       });
+      
+      this.logger.log(`✅ [createDeposit] Resposta: ${resp.status} - ${JSON.stringify(resp.data).substring(0, 100)}...`);
       return resp.data;
     });
   }
@@ -202,10 +252,14 @@ export class KeyclubService {
       clientCallbackUrl: input.clientCallbackUrl,
     };
 
+    this.logger.log(`📤 [createWithdrawal] Enviando para KeyClub: ${JSON.stringify(payload).substring(0, 100)}...`);
+
     return this.withAuthRetry(async () => {
       const resp = await this.http.post('/api/withdrawals/withdraw', payload, {
         headers: this.getHeaders(),
       });
+      
+      this.logger.log(`✅ [createWithdrawal] Resposta: ${resp.status} - ${JSON.stringify(resp.data).substring(0, 100)}...`);
       return resp.data;
     });
   }
