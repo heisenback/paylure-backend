@@ -1,6 +1,6 @@
 // src/keyclub/keyclub.service.ts
 import axios, { AxiosError, AxiosInstance } from 'axios';
-import { Injectable, Logger, UnauthorizedException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import * as https from 'https';
 
 type CreateDepositInput = {
@@ -28,27 +28,28 @@ export type CreateWithdrawalInput = {
 export class KeyclubService {
   private readonly logger = new Logger(KeyclubService.name);
   private readonly baseUrl = (process.env.KEY_CLUB_BASE_URL || 'https://api.the-key.club').replace(/\/+$/, '');
-  private readonly useWhitelist: boolean; // ✅ Flag para usar whitelist
+  private readonly useWhitelist: boolean;
   private token: string | null = null;
+  private tokenExpiresAt: number = 0;
   private http: AxiosInstance;
 
   constructor() {
-    // ✅ Detecta se deve usar whitelist ou token
     const clientId = (process.env.KEY_CLUB_CLIENT_ID || '').trim();
     const clientSecret = (process.env.KEY_CLUB_CLIENT_SECRET || '').trim();
-    const preset = (process.env.KEY_CLUB_ACCESS_TOKEN || '').trim();
+    const forceWhitelist = (process.env.KEY_CLUB_USE_WHITELIST || '').toLowerCase() === 'true';
 
-    this.useWhitelist = !!(clientId && !preset); // Se tem CLIENT_ID mas não tem TOKEN, usa whitelist
-    
-    this.logger.log(`🔐 [KeyClub] Modo: ${this.useWhitelist ? 'WHITELIST (IP)' : 'TOKEN'}`);
-    
-    if (this.useWhitelist) {
-      this.logger.log(`✅ [KeyClub] Usando IP na whitelist (CLIENT_ID: ${clientId.substring(0, 10)}...)`);
-    } else if (preset) {
-      this.token = preset;
-      this.logger.log(`✅ [KeyClub] Usando TOKEN de acesso`);
+    // 🔍 DETECTA O MODO
+    if (forceWhitelist) {
+      this.useWhitelist = true;
+      this.logger.log('🔐 [KeyClub] Modo: WHITELIST (IP) - Sem token necessário');
+    } else if (clientId && clientSecret) {
+      this.useWhitelist = false;
+      this.logger.log('🔐 [KeyClub] Modo: TOKEN (login automático com renovação)');
+    } else if (clientId && !clientSecret) {
+      this.useWhitelist = true;
+      this.logger.log('🔐 [KeyClub] Modo: WHITELIST (apenas CLIENT_ID detectado)');
     } else {
-      this.logger.warn(`⚠️  [KeyClub] Nenhuma credencial configurada!`);
+      throw new Error('❌ KeyClub não configurada. Defina CLIENT_ID ou CLIENT_ID + CLIENT_SECRET');
     }
 
     this.http = axios.create({
@@ -80,23 +81,20 @@ export class KeyclubService {
     return isHtml && (body.includes('Attention Required') || body.includes('cf-error-details'));
   }
 
-  // ✅ NOVO: Gera headers baseado no modo (whitelist ou token)
   private getHeaders() {
     if (this.useWhitelist) {
-      // ✅ IP Whitelist: sem Authorization
-      this.logger.debug('📤 Usando headers SEM token (IP whitelist)');
+      this.logger.debug('📤 Headers sem token (modo whitelist por IP)');
       return {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       };
     }
 
-    // ✅ Modo TOKEN: inclui Authorization
     if (!this.token) {
-      throw new Error('Token de acesso não disponível.');
+      throw new Error('Token não disponível');
     }
     
-    this.logger.debug(`📤 Usando headers COM token: ${this.token.substring(0, 20)}...`);
+    this.logger.debug(`📤 Headers com token: ${this.token.substring(0, 20)}...`);
     return { 
       Authorization: `Bearer ${this.token}`,
       'Content-Type': 'application/json',
@@ -104,15 +102,23 @@ export class KeyclubService {
     };
   }
 
+  private isTokenExpired(): boolean {
+    if (this.useWhitelist) return false;
+    if (!this.tokenExpiresAt) return true;
+    
+    // Renova 2 minutos antes de expirar (margem de segurança)
+    return Date.now() >= (this.tokenExpiresAt - 120000);
+  }
+
   private async login(): Promise<string> {
     const clientId = (process.env.KEY_CLUB_CLIENT_ID || '').trim();
     const clientSecret = (process.env.KEY_CLUB_CLIENT_SECRET || '').trim();
     
     if (!clientId || !clientSecret) {
-      throw new InternalServerErrorException('Credenciais da KeyClub não configuradas.');
+      throw new InternalServerErrorException('CLIENT_ID e CLIENT_SECRET são obrigatórios para login');
     }
 
-    this.logger.log('🔄 [Keyclub] Tentando renovar token...');
+    this.logger.log('🔄 [KeyClub] Fazendo login para obter novo token...');
     
     try {
       const resp = await axios.post(`${this.baseUrl}/api/auth/login`, {
@@ -120,40 +126,55 @@ export class KeyclubService {
         client_secret: clientSecret,
       }, {
         headers: { 'Content-Type': 'application/json' },
-        httpsAgent: new https.Agent({ rejectUnauthorized: true })
+        httpsAgent: new https.Agent({ rejectUnauthorized: true }),
+        timeout: 15000
       });
 
       const token = resp.data?.token || resp.data?.accessToken || resp.data?.access_token;
+      const expiresIn = resp.data?.expires_in || resp.data?.expiresIn || 3600;
         
       if (!token) {
-        throw new Error('Resposta de login vazia.');
+        this.logger.error(`❌ Resposta de login sem token: ${JSON.stringify(resp.data)}`);
+        throw new Error('Login não retornou token');
       }
 
       this.token = String(token).trim();
-      this.logger.log('✅ [Keyclub] Token renovado com sucesso.');
+      this.tokenExpiresAt = Date.now() + (expiresIn * 1000);
+      
+      const expiresInMin = Math.floor(expiresIn / 60);
+      this.logger.log(`✅ [KeyClub] Token obtido com sucesso (válido por ${expiresInMin} minutos)`);
+      
       return this.token;
       
     } catch (error) {
-      this.logger.error(`❌ [Keyclub] Falha crítica no login: ${error.message}`);
-      throw new InternalServerErrorException('Falha de comunicação com adquirente (Login).');
+      const axError = error as AxiosError;
+      const status = axError.response?.status;
+      const data = axError.response?.data;
+      
+      this.logger.error(`❌ [KeyClub] Erro no login: ${status} - ${JSON.stringify(data)}`);
+      
+      if (status === 401 || status === 403) {
+        throw new InternalServerErrorException('Credenciais inválidas (CLIENT_ID ou CLIENT_SECRET incorretos)');
+      }
+      
+      throw new InternalServerErrorException('Falha ao fazer login na KeyClub');
     }
   }
 
-  // ✅ NOVO: Só tenta login se estiver em modo TOKEN
   private async ensureToken(): Promise<void> {
     if (this.useWhitelist) {
-      // ✅ Modo whitelist: não precisa de token
-      this.logger.debug('⏭️  Pulando login (usando IP whitelist)');
+      this.logger.debug('⏭️ Modo whitelist ativo - sem token necessário');
       return;
     }
 
-    if (this.token) {
-      // ✅ Já tem token válido
-      return;
+    // 🔄 Verifica se precisa renovar o token
+    if (!this.token || this.isTokenExpired()) {
+      this.logger.warn('⚠️ Token ausente ou próximo de expirar - renovando...');
+      await this.login();
+    } else {
+      const timeLeft = Math.floor((this.tokenExpiresAt - Date.now()) / 60000);
+      this.logger.debug(`✅ Token válido (expira em ${timeLeft} minutos)`);
     }
-
-    // ✅ Modo token mas sem token: tenta fazer login
-    await this.login();
   }
 
   private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -162,48 +183,66 @@ export class KeyclubService {
     } catch (error) {
       const ax = error as AxiosError;
       const status = ax.response?.status;
-      const responseData = JSON.stringify(ax.response?.data || {}).toLowerCase();
+      const responseData = ax.response?.data;
+      const dataStr = JSON.stringify(responseData || {}).toLowerCase();
 
-      // ✅ Se estiver em modo whitelist, não tenta retry com login
+      this.logger.error(`❌ [KeyClub] Erro ${status}: ${JSON.stringify(responseData)}`);
+
+      // ❌ MODO WHITELIST: Não tenta retry com login
       if (this.useWhitelist) {
-        this.logger.error(`❌ [Keyclub] Erro em modo whitelist: ${status} - ${responseData.substring(0, 100)}`);
-        
         if (status === 401 || status === 403) {
-          throw new BadRequestException('Acesso negado pela KeyClub. Verifique se o IP está na whitelist.');
+          throw new BadRequestException(
+            'Acesso negado pela KeyClub. ' +
+            'Verifique se o IP do servidor está na whitelist. ' +
+            'Se deveria usar TOKEN, remova KEY_CLUB_USE_WHITELIST do .env'
+          );
         }
         
-        throw error;
+        if (status === 400) {
+          const msg = (responseData as any)?.message || 'Dados inválidos';
+          throw new BadRequestException(`KeyClub: ${msg}`);
+        }
+        
+        throw new InternalServerErrorException(`Erro KeyClub: ${status}`);
       }
 
-      // ✅ Se estiver em modo TOKEN, tenta retry com novo login
-      const isTokenError = 
+      // 🔄 MODO TOKEN: Tenta renovar em caso de erro de autenticação
+      const isAuthError = 
         status === 401 || 
         status === 403 || 
-        (status === 400 && (responseData.includes('token') || responseData.includes('unauthorized')));
+        dataStr.includes('token') ||
+        dataStr.includes('unauthorized') ||
+        dataStr.includes('invalid') ||
+        dataStr.includes('expired');
 
-      if (isTokenError && !this.isCloudflareBlock(error)) {
-        this.logger.warn(`⚠️  [Keyclub] Erro de token (${status}). Tentando login novamente...`);
+      if (isAuthError && !this.isCloudflareBlock(error)) {
+        this.logger.warn(`⚠️ Detectado erro de autenticação. Renovando token e tentando novamente...`);
         
-        this.token = null;
         try {
+          // Força renovação do token
+          this.token = null;
+          this.tokenExpiresAt = 0;
           await this.login();
+          
+          this.logger.log('🔄 Tentando novamente com novo token...');
           return await fn();
+          
         } catch (retryError) {
-          this.logger.error('❌ [Keyclub] Falha no retry:', retryError.message);
-          throw new BadRequestException('Erro na adquirente: Falha de autenticação.');
+          this.logger.error(`❌ Falha no retry: ${retryError.message}`);
+          throw new BadRequestException(
+            'Falha de autenticação com KeyClub. ' +
+            'Verifique se CLIENT_ID e CLIENT_SECRET estão corretos.'
+          );
         }
       }
 
+      // Outros erros
       if (status === 400) {
-        const msg = (ax.response?.data as any)?.message || 'Dados inválidos enviados para a KeyClub.';
-        throw new BadRequestException(msg);
+        const msg = (responseData as any)?.message || 'Dados inválidos';
+        throw new BadRequestException(`KeyClub: ${msg}`);
       }
 
-      if (status === 401) {
-        throw new InternalServerErrorException('Erro interno na integração de pagamentos.');
-      }
-
-      throw error;
+      throw new InternalServerErrorException(`Erro KeyClub: ${status}`);
     }
   }
 
@@ -225,14 +264,14 @@ export class KeyclubService {
       },
     };
 
-    this.logger.log(`📤 [createDeposit] Enviando para KeyClub: ${JSON.stringify(payload).substring(0, 100)}...`);
+    this.logger.log(`📤 [createDeposit] Enviando depósito: R$ ${amount.toFixed(2)}`);
 
     return this.withAuthRetry(async () => {
       const resp = await this.http.post('/api/payments/deposit', payload, {
         headers: this.getHeaders(),
       });
       
-      this.logger.log(`✅ [createDeposit] Resposta: ${resp.status} - ${JSON.stringify(resp.data).substring(0, 100)}...`);
+      this.logger.log(`✅ [createDeposit] Sucesso: ${resp.status}`);
       return resp.data;
     });
   }
@@ -252,14 +291,14 @@ export class KeyclubService {
       clientCallbackUrl: input.clientCallbackUrl,
     };
 
-    this.logger.log(`📤 [createWithdrawal] Enviando para KeyClub: ${JSON.stringify(payload).substring(0, 100)}...`);
+    this.logger.log(`📤 [createWithdrawal] Enviando saque: R$ ${amount.toFixed(2)}`);
 
     return this.withAuthRetry(async () => {
       const resp = await this.http.post('/api/withdrawals/withdraw', payload, {
         headers: this.getHeaders(),
       });
       
-      this.logger.log(`✅ [createWithdrawal] Resposta: ${resp.status} - ${JSON.stringify(resp.data).substring(0, 100)}...`);
+      this.logger.log(`✅ [createWithdrawal] Sucesso: ${resp.status}`);
       return resp.data;
     });
   }
