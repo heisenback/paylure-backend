@@ -1,4 +1,4 @@
-// src/webhooks/webhooks.service.ts (REVISADO E CORRIGIDO)
+// src/webhooks/webhooks.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentGateway } from '../gateway/payment.gateway';
@@ -46,7 +46,6 @@ export class WebhooksService {
       throw new Error('transaction_id é obrigatório no webhook');
     }
 
-    // Com a Correção - Parte 1, esta busca AGORA VAI FUNCIONAR
     const deposit = await this.prisma.deposit.findUnique({
       where: { externalId: transactionId },
     });
@@ -79,38 +78,19 @@ export class WebhooksService {
 
     const mappedStatus = status === 'COMPLETED' ? 'CONFIRMED' : status;
 
-    // =================================================================
-    // 🎯 CORREÇÃO: CREDITAR 100% DO VALOR DEPOSITADO (SEM DESCONTOS)
-    // =================================================================
-    
     let netAmountInCents: number;
-    const grossAmount = parseFloat(String(payload.amount || 0)); // Ex: 100.00 (valor bruto)
+    const grossAmount = parseFloat(String(payload.amount || 0)); 
 
-    // ✅ CREDITA 100% DO VALOR (sem descontar taxa da KeyClub)
+    // ✅ CREDITA 100% DO VALOR
     netAmountInCents = Math.round(grossAmount * 100);
     
-    this.logger.log(
-      `[Cálculo de Saldo] Depositou: R$ ${grossAmount.toFixed(2)} -> ` +
-      `Credita 100%: ${netAmountInCents} centavos`
-    );
-
-    // Validação de segurança
-    if (isNaN(netAmountInCents) || netAmountInCents <= 0) {
-      this.logger.error(`❌ Valor inválido! Payload: ${JSON.stringify(payload)}`);
-      netAmountInCents = 0;
-    }
-    
-    // =================================================================
-    // 🎯 FIM DA CORREÇÃO
-    // =================================================================
-
-    // Atualiza o depósito com o status e o valor líquido correto
+    // Atualiza o depósito
     const updatedDeposit = await this.prisma.deposit.update({
       where: { externalId },
       data: { 
         status: mappedStatus,
-        netAmountInCents: netAmountInCents, // Salva o valor integral
-        feeInCents: 0, // Não cobra taxa no depósito
+        netAmountInCents: netAmountInCents, 
+        feeInCents: 0,
       },
     });
     this.logger.log(`✅ Depósito ${externalId} atualizado para: ${mappedStatus}`);
@@ -118,16 +98,32 @@ export class WebhooksService {
     if (mappedStatus === 'CONFIRMED') {
       const updatedUser = await this.prisma.user.update({
         where: { id: userId },
-        data: { balance: { increment: netAmountInCents } }, // Credita 100%
+        data: { balance: { increment: netAmountInCents } },
       });
 
       this.logger.log(
-        `💰 Saldo creditado: User ${userId} | ` +
-        `+R$${(netAmountInCents / 100).toFixed(2)} | ` +
-        `Novo saldo: R$${(updatedUser.balance / 100).toFixed(2)}`
+        `💰 Saldo creditado: User ${userId} | +R$${(netAmountInCents / 100).toFixed(2)}`
       );
 
-      // 6. Notificar o frontend (via WebSocket) que o saldo mudou
+      // 🔥 CORREÇÃO PRINCIPAL: CRIAR O REGISTRO DE TRANSAÇÃO (EXTRATO)
+      // Se não criar isso, o histórico fica vazio!
+      try {
+        await this.prisma.transaction.create({
+          data: {
+            userId: userId,
+            type: 'DEPOSIT',
+            amountInCents: netAmountInCents,
+            status: 'CONFIRMED', // Confirmado e Pago
+            referenceId: externalId, // Link com o depósito original
+            description: 'Depósito via PIX'
+          }
+        });
+        this.logger.log(`📄 Transação (extrato) criada com sucesso para o depósito ${externalId}`);
+      } catch (txError) {
+        this.logger.error(`❌ Erro ao criar extrato: ${txError.message}`);
+      }
+
+      // Notificar o frontend
       this.paymentGateway.notifyBalanceUpdate(userId, updatedUser.balance);
       this.paymentGateway.notifyDepositConfirmed(userId, {
         externalId,
@@ -148,33 +144,50 @@ export class WebhooksService {
     const { externalId, userId } = withdrawal;
 
     if (withdrawal.status === status) {
-      this.logger.warn(`⚠️ Saque ${externalId} já está no status ${status}. Ignorando.`);
       return { success: true, message: 'Already processed' };
     }
 
     const mappedStatus = status === 'COMPLETED' ? 'COMPLETED' : status;
 
-    // Se o saque FALHOU, devolve o saldo + taxa para o usuário
     if (mappedStatus === 'FAILED' && withdrawal.status !== 'FAILED') {
-      // Devolve o valor ORIGINAL (amount já tem a taxa descontada)
-      const amountToRefund = withdrawal.amount; // Valor que foi debitado
+      const amountToRefund = withdrawal.amount; 
 
       const updatedUser = await this.prisma.user.update({
         where: { id: userId },
         data: { balance: { increment: amountToRefund } },
       });
 
-      this.logger.log(
-        `💰 Saldo devolvido (saque falhou): User ${userId} | ` +
-        `+R$${(amountToRefund / 100).toFixed(2)} | ` +
-        `Novo saldo: R$${(updatedUser.balance / 100).toFixed(2)}`
-      );
+      this.logger.log(`💰 Saldo devolvido (saque falhou): +R$${(amountToRefund / 100).toFixed(2)}`);
+      
+      // 🔥 CRIA TRANSAÇÃO DE ESTORNO NO EXTRATO (Opcional, mas recomendado)
+      await this.prisma.transaction.create({
+        data: {
+          userId: userId,
+          type: 'DEPOSIT', // Entra como um "depósito" de volta
+          amountInCents: amountToRefund,
+          status: 'CONFIRMED',
+          referenceId: `REFUND-${externalId}`,
+          description: 'Estorno de Saque Falho'
+        }
+      });
 
       this.paymentGateway.notifyBalanceUpdate(userId, updatedUser.balance);
     }
 
+    // Se o saque completou, precisamos atualizar a transação original para COMPLETED
     if (mappedStatus === 'COMPLETED') {
-      this.logger.log(`✅ Saque ${externalId} completado`);
+      // Procura a transação de saque pendente e confirma ela
+      const pendingTx = await this.prisma.transaction.findFirst({
+        where: { referenceId: externalId, type: 'WITHDRAWAL' }
+      });
+      
+      if (pendingTx) {
+        await this.prisma.transaction.update({
+          where: { id: pendingTx.id },
+          data: { status: 'COMPLETED' } // Muda de PENDING para COMPLETED no extrato
+        });
+      }
+
       this.paymentGateway.notifyWithdrawalProcessed(userId, {
         externalId,
         amount: withdrawal.amount,
@@ -190,7 +203,6 @@ export class WebhooksService {
       },
     });
 
-    this.logger.log(`✅ Saque ${externalId} atualizado para: ${mappedStatus}`);
     this.paymentGateway.emitWithdrawalUpdate(externalId, {
       status: mappedStatus,
       amount: withdrawal.amount,
