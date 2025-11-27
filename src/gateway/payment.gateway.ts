@@ -34,6 +34,7 @@ export class PaymentGateway
   server: Server;
 
   private readonly logger = new Logger(PaymentGateway.name);
+  // Mapa mantido para controle interno, mas vamos usar Salas (Rooms) para envio
   private userSockets = new Map<string, string>();
 
   afterInit(server: Server) {
@@ -41,16 +42,21 @@ export class PaymentGateway
   }
 
   handleConnection(client: Socket) {
-    this.logger.log(`✅ Cliente conectado: ${client.id}`);
-    
-    const userId = 
+    // Tenta pegar o ID do auth ou da query string
+    const rawUserId = 
       client.handshake.auth?.userId || 
-      client.handshake.query?.userId as string;
+      client.handshake.query?.userId;
+
+    // 🔥 FIX 1: Força conversão para String para padronizar
+    const userId = rawUserId ? String(rawUserId) : null;
 
     if (userId) {
       this.userSockets.set(userId, client.id);
+      
+      // 🔥 FIX 2: Cliente entra na sala "user:ID" (garantido ser string)
       client.join(`user:${userId}`);
-      this.logger.log(`👤 UserId ${userId} mapeado para socket ${client.id}`);
+      
+      this.logger.log(`✅ Cliente conectado: ${client.id} | User: ${userId} | Room: user:${userId}`);
       
       client.emit('connected', { 
         socketId: client.id, 
@@ -65,6 +71,7 @@ export class PaymentGateway
   handleDisconnect(client: Socket) {
     this.logger.log(`❌ Cliente desconectado: ${client.id}`);
     
+    // Limpeza do mapa
     for (const [userId, socketId] of this.userSockets.entries()) {
       if (socketId === client.id) {
         this.userSockets.delete(userId);
@@ -76,31 +83,35 @@ export class PaymentGateway
 
   @SubscribeMessage('ping')
   handlePing(client: Socket): string {
-    this.logger.log(`🏓 Ping recebido de ${client.id}`);
+    // Apenas para debug de latência se precisar
     return 'pong';
   }
 
-  emitToUser(userId: string, event: string, data: any) {
-    const socketId = this.userSockets.get(userId);
-    if (socketId) {
-      this.server.to(`user:${userId}`).emit(event, data);
-      this.logger.log(`📤 Evento '${event}' enviado para userId ${userId}`);
-      return true;
-    } else {
-      this.logger.warn(`⚠️ UserId ${userId} não está conectado`);
-      return false;
-    }
+  // 🔥 FIX 3: Método genérico aceita number ou string e converte
+  emitToUser(userId: string | number, event: string, data: any) {
+    const stringUserId = String(userId);
+
+    // Envia para TODOS os sockets desse usuário (caso ele tenha 2 abas abertas)
+    // Usando .to() na sala é mais seguro que usar o socketId único
+    const roomName = `user:${stringUserId}`;
+    
+    // Debug para você ver no terminal
+    this.logger.log(`Tentando emitir '${event}' para sala '${roomName}'`);
+
+    this.server.to(roomName).emit(event, data);
+    
+    return true;
   }
 
-  notifyBalanceUpdate(userId: string, balance: number) {
+  notifyBalanceUpdate(userId: string | number, balance: number) {
     this.emitToUser(userId, 'balance_updated', { balance });
   }
 
-  notifyDepositConfirmed(userId: string, deposit: any) {
+  notifyDepositConfirmed(userId: string | number, deposit: any) {
     this.emitToUser(userId, 'deposit_confirmed', deposit);
   }
 
-  notifyWithdrawalProcessed(userId: string, withdrawal: any) {
+  notifyWithdrawalProcessed(userId: string | number, withdrawal: any) {
     this.emitToUser(userId, 'withdrawal_processed', withdrawal);
   }
 
@@ -111,11 +122,9 @@ export class PaymentGateway
 
   emitDepositUpdate(externalId: string, data: any) {
     this.server.emit('deposit_updated', { externalId, ...data });
-    this.logger.log(`📤 Evento 'deposit_updated' enviado para externalId ${externalId}`);
   }
 
   emitWithdrawalUpdate(externalId: string, data: any) {
     this.server.emit('withdrawal_updated', { externalId, ...data });
-    this.logger.log(`📤 Evento 'withdrawal_updated' enviado para externalId ${externalId}`);
   }
 }
