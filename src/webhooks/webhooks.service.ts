@@ -15,10 +15,7 @@ export class WebhooksService {
 
   validateSignature(rawBody: string | Buffer, signature: string): boolean {
     const secret = process.env.KEY_CLUB_WEBHOOK_SECRET;
-    if (!secret) {
-      this.logger.warn('⚠️ KEY_CLUB_WEBHOOK_SECRET não configurado');
-      return false;
-    }
+    if (!secret) return false;
 
     try {
       const body = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
@@ -31,183 +28,142 @@ export class WebhooksService {
         Buffer.from(expectedSignature)
       );
     } catch (error) {
-      this.logger.error(`❌ Erro ao verificar assinatura: ${error.message}`);
       return false;
     }
   }
 
   async handleKeyClubWebhook(payload: any) {
-    this.logger.log(`[KeyClub Webhook] Payload recebido: ${JSON.stringify(payload)}`);
+    this.logger.log(`[Webhook] Recebido: ${JSON.stringify(payload)}`);
 
     const transactionId = payload.transaction_id || payload.transactionId || payload.externalId;
     const status = payload.status?.toUpperCase();
 
-    if (!transactionId) {
-      throw new Error('transaction_id é obrigatório no webhook');
-    }
+    if (!transactionId) throw new Error('transaction_id obrigatório');
 
-    const deposit = await this.prisma.deposit.findUnique({
-      where: { externalId: transactionId },
-    });
+    // 1. Procura Depósito
+    const deposit = await this.prisma.deposit.findUnique({ where: { externalId: transactionId } });
+    if (deposit) return this.processDepositWebhook(deposit, payload, status);
 
-    if (deposit) {
-      this.logger.log(`✅ Encontrado DEPÓSITO: ${transactionId}`);
-      return this.processDepositWebhook(deposit, payload, status);
-    }
-
-    const withdrawal = await this.prisma.withdrawal.findUnique({
-      where: { externalId: transactionId },
-    });
-
-    if (withdrawal) {
-      this.logger.log(`✅ Encontrado SAQUE: ${transactionId}`);
-      return this.processWithdrawalWebhook(withdrawal, payload, status);
-    }
+    // 2. Procura Saque
+    const withdrawal = await this.prisma.withdrawal.findUnique({ where: { externalId: transactionId } });
+    if (withdrawal) return this.processWithdrawalWebhook(withdrawal, payload, status);
 
     this.logger.warn(`⚠️ Transação não encontrada: ${transactionId}`);
-    throw new Error(`Transação ${transactionId} não encontrada`);
+    throw new Error('Transação não encontrada');
   }
 
   private async processDepositWebhook(deposit: any, payload: any, status: string) {
     const { externalId, userId } = deposit;
 
+    // Evita duplicidade
     if (deposit.status === 'CONFIRMED' && (status === 'COMPLETED' || status === 'CONFIRMED')) {
-      this.logger.warn(`⚠️ Depósito ${externalId} já confirmado. Ignorando.`);
       return { success: true, message: 'Already processed' };
     }
 
     const mappedStatus = status === 'COMPLETED' ? 'CONFIRMED' : status;
+    const grossAmount = parseFloat(String(payload.amount || 0));
+    const netAmountInCents = Math.round(grossAmount * 100);
 
-    let netAmountInCents: number;
-    const grossAmount = parseFloat(String(payload.amount || 0)); 
-
-    // ✅ CREDITA 100% DO VALOR
-    netAmountInCents = Math.round(grossAmount * 100);
-    
-    // Atualiza o depósito
+    // Atualiza o Depósito
     const updatedDeposit = await this.prisma.deposit.update({
       where: { externalId },
-      data: { 
-        status: mappedStatus,
-        netAmountInCents: netAmountInCents, 
-        feeInCents: 0,
-      },
+      data: { status: mappedStatus, netAmountInCents, feeInCents: 0 },
     });
-    this.logger.log(`✅ Depósito ${externalId} atualizado para: ${mappedStatus}`);
 
     if (mappedStatus === 'CONFIRMED') {
+      // 1. Atualiza Saldo do Usuário
       const updatedUser = await this.prisma.user.update({
         where: { id: userId },
         data: { balance: { increment: netAmountInCents } },
       });
 
-      this.logger.log(
-        `💰 Saldo creditado: User ${userId} | +R$${(netAmountInCents / 100).toFixed(2)}`
-      );
+      this.logger.log(`💰 Saldo atualizado: User ${userId} | +R$ ${(netAmountInCents/100).toFixed(2)}`);
 
-      // 🔥 CORREÇÃO PRINCIPAL: CRIAR O REGISTRO DE TRANSAÇÃO (EXTRATO)
-      // Se não criar isso, o histórico fica vazio!
-      try {
-        await this.prisma.transaction.create({
-          data: {
-            userId: userId,
-            type: 'DEPOSIT',
-            amountInCents: netAmountInCents,
-            status: 'CONFIRMED', // Confirmado e Pago
-            referenceId: externalId, // Link com o depósito original
-            description: 'Depósito via PIX'
-          }
-        });
-        this.logger.log(`📄 Transação (extrato) criada com sucesso para o depósito ${externalId}`);
-      } catch (txError) {
-        this.logger.error(`❌ Erro ao criar extrato: ${txError.message}`);
-      }
+      // 2. 🔥 CRIA O REGISTRO NO EXTRATO (CRÍTICO)
+      // Isso faz aparecer na tabela "Extrato Recente"
+      await this.prisma.transaction.create({
+        data: {
+          userId,
+          type: 'DEPOSIT',
+          amountInCents: netAmountInCents,
+          status: 'CONFIRMED',
+          referenceId: externalId,
+          description: 'Depósito via PIX'
+        }
+      });
 
-      // Notificar o frontend
+      // 3. Notifica Frontend (WebSocket)
       this.paymentGateway.notifyBalanceUpdate(userId, updatedUser.balance);
       this.paymentGateway.notifyDepositConfirmed(userId, {
         externalId,
         amount: updatedDeposit.amountInCents,
         netAmount: netAmountInCents,
       });
+      // Emite evento genérico para atualizar tabelas
       this.paymentGateway.emitDepositUpdate(externalId, {
         status: 'CONFIRMED',
         amount: updatedDeposit.amountInCents,
-        netAmount: netAmountInCents,
+        netAmount: netAmountInCents
       });
     }
 
-    return { success: true, deposit: updatedDeposit };
+    return { success: true };
   }
 
   private async processWithdrawalWebhook(withdrawal: any, payload: any, status: string) {
     const { externalId, userId } = withdrawal;
 
-    if (withdrawal.status === status) {
-      return { success: true, message: 'Already processed' };
-    }
+    if (withdrawal.status === status) return { success: true };
 
     const mappedStatus = status === 'COMPLETED' ? 'COMPLETED' : status;
 
+    // Se falhou, devolve o dinheiro
     if (mappedStatus === 'FAILED' && withdrawal.status !== 'FAILED') {
-      const amountToRefund = withdrawal.amount; 
-
+      const refundAmount = withdrawal.amount;
       const updatedUser = await this.prisma.user.update({
         where: { id: userId },
-        data: { balance: { increment: amountToRefund } },
+        data: { balance: { increment: refundAmount } },
       });
-
-      this.logger.log(`💰 Saldo devolvido (saque falhou): +R$${(amountToRefund / 100).toFixed(2)}`);
       
-      // 🔥 CRIA TRANSAÇÃO DE ESTORNO NO EXTRATO (Opcional, mas recomendado)
+      // Cria registro de estorno no extrato
       await this.prisma.transaction.create({
         data: {
-          userId: userId,
-          type: 'DEPOSIT', // Entra como um "depósito" de volta
-          amountInCents: amountToRefund,
+          userId,
+          type: 'DEPOSIT',
+          amountInCents: refundAmount,
           status: 'CONFIRMED',
           referenceId: `REFUND-${externalId}`,
-          description: 'Estorno de Saque Falho'
+          description: 'Estorno de Saque'
         }
       });
 
       this.paymentGateway.notifyBalanceUpdate(userId, updatedUser.balance);
     }
 
-    // Se o saque completou, precisamos atualizar a transação original para COMPLETED
+    // Se completou, atualiza o status da transação original no extrato
     if (mappedStatus === 'COMPLETED') {
-      // Procura a transação de saque pendente e confirma ela
-      const pendingTx = await this.prisma.transaction.findFirst({
-        where: { referenceId: externalId, type: 'WITHDRAWAL' }
-      });
-      
-      if (pendingTx) {
-        await this.prisma.transaction.update({
-          where: { id: pendingTx.id },
-          data: { status: 'COMPLETED' } // Muda de PENDING para COMPLETED no extrato
+        const tx = await this.prisma.transaction.findFirst({
+            where: { referenceId: externalId, type: 'WITHDRAWAL' }
         });
-      }
-
-      this.paymentGateway.notifyWithdrawalProcessed(userId, {
-        externalId,
-        amount: withdrawal.amount,
-        status: 'COMPLETED',
-      });
+        if (tx) {
+            await this.prisma.transaction.update({
+                where: { id: tx.id },
+                data: { status: 'COMPLETED' }
+            });
+        }
+        
+        this.paymentGateway.notifyWithdrawalProcessed(userId, {
+            externalId,
+            amount: withdrawal.amount,
+            status: 'COMPLETED',
+        });
     }
 
-    const updatedWithdrawal = await this.prisma.withdrawal.update({
+    await this.prisma.withdrawal.update({
       where: { externalId },
-      data: { 
-        status: mappedStatus,
-        failureReason: payload.failure_reason || withdrawal.failureReason,
-      },
+      data: { status: mappedStatus, failureReason: payload.failure_reason },
     });
 
-    this.paymentGateway.emitWithdrawalUpdate(externalId, {
-      status: mappedStatus,
-      amount: withdrawal.amount,
-    });
-
-    return { success: true, withdrawal: updatedWithdrawal };
+    return { success: true };
   }
 }
