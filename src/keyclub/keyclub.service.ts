@@ -38,14 +38,12 @@ export class KeyclubService {
     const clientId = (process.env.KEY_CLUB_CLIENT_ID || '').trim();
     const clientSecret = (process.env.KEY_CLUB_CLIENT_SECRET || '').trim();
     
-    // 🔥 LÓGICA DEFINITIVA: Se tem senha, USA A SENHA.
-    // Ignora o KEY_CLUB_USE_WHITELIST se as credenciais existirem, pois Token é mais seguro.
     if (clientId && clientSecret) {
       this.hasCredentials = true;
-      this.logger.log('🔐 [KeyClub] Credenciais detectadas. Modo: TOKEN (Mais estável)');
+      this.logger.log('🔐 [KeyClub] Serviço iniciado. Modo: TOKEN (Seguro).');
     } else {
       this.hasCredentials = false;
-      this.logger.warn('⚠️ [KeyClub] Sem Client Secret. Modo: WHITELIST (Depende do IP estar liberado)');
+      this.logger.error('❌ [KeyClub] Credenciais não encontradas no .env! O serviço vai falhar.');
     }
 
     this.http = axios.create({
@@ -54,30 +52,17 @@ export class KeyclubService {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'User-Agent': 'PaymentGateway/2.0',
+        'User-Agent': 'PaylureGateway/2.0',
       },
       httpsAgent: new https.Agent({ 
         keepAlive: true, 
         maxSockets: 50,
-        rejectUnauthorized: true
+        rejectUnauthorized: false 
       })
     });
   }
 
   private getHeaders() {
-    // Se não tem credenciais, tenta ir sem token (modo whitelist puro)
-    if (!this.hasCredentials) {
-      return {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
-    }
-
-    // Se tem credenciais mas não tem token, é um erro de fluxo (deveria ter logado antes)
-    if (!this.token) {
-        this.logger.warn('⚠️ Token não encontrado no momento do header. Tentando prosseguir...');
-    }
-    
     return { 
       Authorization: `Bearer ${this.token}`,
       'Content-Type': 'application/json',
@@ -85,20 +70,13 @@ export class KeyclubService {
     };
   }
 
-  private isTokenExpired(): boolean {
-    if (!this.hasCredentials) return false;
-    if (!this.token || !this.tokenExpiresAt) return true;
-    // Renova 5 minutos antes de expirar
-    return Date.now() >= (this.tokenExpiresAt - 300000);
-  }
-
   private async login(): Promise<string> {
     if (!this.hasCredentials) return '';
 
-    const clientId = process.env.KEY_CLUB_CLIENT_ID;
-    const clientSecret = process.env.KEY_CLUB_CLIENT_SECRET;
+    const clientId = process.env.KEY_CLUB_CLIENT_ID?.trim();
+    const clientSecret = process.env.KEY_CLUB_CLIENT_SECRET?.trim();
 
-    this.logger.log('🔄 [KeyClub] Renovando token de acesso...');
+    this.logger.log(`🔄 [KeyClub] Renovando token de acesso...`);
     
     try {
       const resp = await axios.post(`${this.baseUrl}/api/auth/login`, {
@@ -106,81 +84,68 @@ export class KeyclubService {
         client_secret: clientSecret,
       }, {
         headers: { 'Content-Type': 'application/json' },
-        httpsAgent: new https.Agent({ rejectUnauthorized: true }),
-        timeout: 10000
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        timeout: 15000
       });
 
       const token = resp.data?.token || resp.data?.accessToken || resp.data?.access_token;
-      // Define 50 minutos de validade padrão se a API não retornar (segurança)
-      const expiresIn = resp.data?.expires_in || 3600; 
-        
-      if (!token) {
-        throw new Error('Login retornou sucesso mas sem token.');
-      }
+      
+      if (!token) throw new Error('API retornou sucesso mas sem token.');
 
       this.token = String(token).trim();
-      this.tokenExpiresAt = Date.now() + (expiresIn * 1000);
+      // Token vale por 1 hora, renovamos com segurança em 50 min
+      this.tokenExpiresAt = Date.now() + (3000 * 1000); 
       
       this.logger.log('✅ [KeyClub] Token renovado com sucesso!');
       return this.token;
       
-    } catch (error) {
-      this.logger.error(`❌ [KeyClub] Falha no login: ${(error as any).message}`);
-      throw error;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const data = error.response?.data;
+      this.logger.error(`❌ [KeyClub] Erro no LOGIN (${status}): ${JSON.stringify(data)}`);
+      throw new Error(`Falha na autenticação KeyClub: ${status}`);
     }
   }
 
   private async ensureToken(): Promise<void> {
     if (!this.hasCredentials) return;
-
-    if (this.isTokenExpired()) {
+    // Se não tem token ou falta menos de 5 minutos para expirar
+    if (!this.token || Date.now() >= (this.tokenExpiresAt - 300000)) {
       await this.login();
     }
   }
 
-  // 🔥 O SEGREDO DA CORREÇÃO ESTÁ AQUI
+  // Wrapper inteligente que tenta a requisição e, se der erro de token, renova e tenta de novo
   private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
     try {
-      // 1. Tenta executar a requisição
+      await this.ensureToken();
       return await fn();
     } catch (error) {
       const ax = error as AxiosError;
       const status = ax.response?.status;
       
-      // 2. Se der erro de autenticação (401/403) E nós temos credenciais configuradas
+      // Se for erro de autenticação (401/403), tenta renovar 1 vez
       if ((status === 401 || status === 403) && this.hasCredentials) {
-        this.logger.warn(`⚠️ [KeyClub] Erro ${status} (Token inválido/expirado). Tentando renovar e repetir...`);
-        
+        this.logger.warn(`⚠️ [KeyClub] Token expirado (${status}). Tentando renovar...`);
         try {
-          // Força renovação do token
           this.token = null;
           this.tokenExpiresAt = 0;
           await this.login();
-          
-          // 3. Tenta de novo com o token novo
-          return await fn();
+          return await fn(); // Tenta de novo com token novo
         } catch (retryError) {
-          this.logger.error(`❌ [KeyClub] Erro fatal após tentativa de renovação.`);
           throw new BadRequestException('Falha de comunicação com a adquirente (Auth).');
         }
       }
 
-      // Tratamento de outros erros
       const responseData = ax.response?.data as any;
-      if (status === 400) {
-        const msg = responseData?.message || JSON.stringify(responseData);
-        throw new BadRequestException(`KeyClub: ${msg}`);
-      }
-
-      this.logger.error(`❌ [KeyClub] Erro ${status}: ${JSON.stringify(responseData)}`);
-      throw new InternalServerErrorException('Erro ao processar pagamento na KeyClub.');
+      const msg = responseData?.message || JSON.stringify(responseData);
+      
+      this.logger.error(`❌ [KeyClub] Erro na operação: ${msg}`);
+      throw new BadRequestException(typeof msg === 'string' ? msg : 'Erro na transação');
     }
   }
 
   async createDeposit(input: CreateDepositInput) {
-    // Garante token antes de começar
-    await this.ensureToken();
-
     const amount = Number(input.amount);
     if (amount < 1) throw new BadRequestException('Valor mínimo R$ 1,00');
 
@@ -192,14 +157,10 @@ export class KeyclubService {
         name: input.payer.name || 'Cliente',
         email: input.payer.email,
         document: input.payer.document.replace(/\D/g, ''),
-        ...(input.payer.phone ? { phone: input.payer.phone.replace(/\D/g, '') } : {}),
       },
     };
 
-    this.logger.log(`📤 [Deposit] Enviando R$ ${amount.toFixed(2)}...`);
-
     return this.withAuthRetry(async () => {
-      // Pega os headers na hora da execução para garantir que o token esteja atualizado
       const resp = await this.http.post('/api/payments/deposit', payload, {
         headers: this.getHeaders(),
       });
@@ -208,8 +169,6 @@ export class KeyclubService {
   }
 
   async createWithdrawal(input: CreateWithdrawalInput) {
-    await this.ensureToken();
-
     const amount = Number(input.amount);
     if (amount < 1) throw new BadRequestException('Valor mínimo R$ 1,00');
 
@@ -218,11 +177,9 @@ export class KeyclubService {
       external_id: input.externalId,
       pix_key: input.pix_key,
       key_type: input.key_type,
-      description: input.description || `Saque ${input.externalId}`,
+      description: input.description,
       clientCallbackUrl: input.clientCallbackUrl,
     };
-
-    this.logger.log(`📤 [Withdrawal] Enviando R$ ${amount.toFixed(2)}...`);
 
     return this.withAuthRetry(async () => {
       const resp = await this.http.post('/api/withdrawals/withdraw', payload, {
