@@ -26,9 +26,9 @@ export class KeyclubService implements OnModuleInit {
   
   private hasCredentials = false;
   private token: string | null = null;
-  private tokenExpiresAt: number = 0;
+  // Reduzi o tempo de segurança para forçar renovação antes de expirar
+  private tokenExpiresAt: number = 0; 
   private http: AxiosInstance;
-  private heartbeatInterval: NodeJS.Timeout;
 
   constructor() {
     const clientId = (process.env.KEY_CLUB_CLIENT_ID || '').trim();
@@ -47,123 +47,141 @@ export class KeyclubService implements OnModuleInit {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'User-Agent': 'PaylureGateway/2.0',
+        'User-Agent': 'PaylureGateway/2.1-AutoRenew',
       },
-      httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 50, rejectUnauthorized: false })
+      // Mantém conexão viva para ser mais rápido
+      httpsAgent: new https.Agent({ keepAlive: true, rejectUnauthorized: false })
     });
   }
 
-  // 🔥 1. INICIA O SISTEMA ASSIM QUE O BACKEND LIGA
   async onModuleInit() {
     if (this.hasCredentials) {
-        this.logger.log('💓 [KeyClub] Iniciando Heartbeat (Renovação Automática)...');
-        await this.login(); // Primeiro login
-        this.startHeartbeat(); // Inicia o ciclo
+        // Tenta um login inicial apenas para validar credenciais no boot
+        try {
+            this.logger.log('🔌 [KeyClub] Verificando credenciais iniciais...');
+            await this.login();
+        } catch (e) {
+            this.logger.warn('⚠️ [KeyClub] Falha no login inicial. O sistema tentará novamente na primeira transação.');
+        }
     }
   }
 
-  // 🔥 2. O CORAÇÃO DO SISTEMA (Roda a cada 45 minutos)
-  private startHeartbeat() {
-    // 45 minutos em milissegundos = 45 * 60 * 1000
-    const INTERVAL_MS = 45 * 60 * 1000; 
-
-    this.heartbeatInterval = setInterval(async () => {
-        this.logger.log('💓 [KeyClub Heartbeat] Verificando saúde do token...');
-        try {
-            await this.login();
-        } catch (e) {
-            this.logger.error('❌ [KeyClub Heartbeat] Falha ao renovar token em segundo plano.');
-        }
-    }, INTERVAL_MS);
-  }
-
-  // Método de diagnóstico manual (para você testar)
-  async checkStatus() {
-    if (!this.hasCredentials) return { status: 'ERROR', message: 'Sem credenciais' };
-    const minutesLeft = Math.floor((this.tokenExpiresAt - Date.now()) / 60000);
-    return { status: 'OK', message: 'Sistema Online', expiresIn: `${minutesLeft} minutos` };
-  }
-
-  private getHeaders() {
-    return { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json', 'Accept': 'application/json' };
-  }
-
+  /**
+   * Realiza o login na API e salva o token na memória
+   */
   private async login(): Promise<string> {
-    if (!this.hasCredentials) return '';
+    if (!this.hasCredentials) throw new Error('Sem credenciais KeyClub configuradas.');
+
     const clientId = process.env.KEY_CLUB_CLIENT_ID?.trim();
     const clientSecret = process.env.KEY_CLUB_CLIENT_SECRET?.trim();
 
-    // Log discreto apenas para debug interno
-    // this.logger.debug(`🔄 [KeyClub] Renovando token...`);
+    this.logger.log(`🔄 [KeyClub] Obtendo NOVO Token de Acesso...`);
     
     try {
-      const resp = await axios.post(`${this.baseUrl}/api/auth/login`, {
+      // Cria uma instância limpa do axios para o login (sem headers antigos)
+      const loginResponse = await axios.post(`${this.baseUrl}/api/auth/login`, {
         client_id: clientId,
         client_secret: clientSecret,
       }, {
         headers: { 'Content-Type': 'application/json' },
         httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-        timeout: 15000
+        timeout: 10000
       });
 
-      const token = resp.data?.token || resp.data?.accessToken || resp.data?.access_token;
-      if (!token) throw new Error('API retornou sucesso mas sem token.');
+      const token = loginResponse.data?.token || loginResponse.data?.accessToken || loginResponse.data?.access_token;
+      
+      if (!token) {
+        throw new Error('API retornou 200 OK mas não enviou o token.');
+      }
 
       this.token = String(token).trim();
-      this.tokenExpiresAt = Date.now() + (3000 * 1000); // Validade teórica de 50 min
+      // Define expiração segura (45 minutos a partir de agora)
+      this.tokenExpiresAt = Date.now() + (45 * 60 * 1000); 
       
-      this.logger.log('✅ [KeyClub] Token ativo e renovado.');
+      this.logger.log('✅ [KeyClub] Token renovado com sucesso.');
       return this.token;
       
     } catch (error: any) {
-      const status = error.response?.status || 'Unknown';
-      this.logger.error(`❌ [KeyClub] Falha no Login (${status})`);
-      throw new Error(`Falha auth KeyClub`);
+      const status = error.response?.status || 'Erro';
+      const msg = error.response?.data?.message || error.message;
+      this.logger.error(`❌ [KeyClub] Falha Crítica no Login (${status}): ${msg}`);
+      throw new Error(`Falha de autenticação no Gateway: ${msg}`);
     }
   }
 
+  /**
+   * Garante que existe um token válido antes de fazer a requisição.
+   */
   private async ensureToken(): Promise<void> {
     if (!this.hasCredentials) return;
-    // Se o token venceu ou está prestes a vencer (menos de 5 min), força login
-    if (!this.token || Date.now() >= (this.tokenExpiresAt - 300000)) {
+
+    // Se não tem token OU se já passou do tempo de expiração
+    if (!this.token || Date.now() >= this.tokenExpiresAt) {
+      this.logger.warn('⚠️ [KeyClub] Token expirado ou inexistente. Renovando antes da requisição...');
       await this.login();
     }
   }
 
-  private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
+  /**
+   * Wrapper Mágico: Executa a função, se der erro 401 (Auth), faz login e tenta de novo.
+   */
+  private async withAuthRetry<T>(operation: () => Promise<T>, attempt = 1): Promise<T> {
     try {
+      // 1. Garante token antes de tentar
       await this.ensureToken();
-      return await fn();
+      
+      // 2. Tenta executar a operação
+      return await operation();
+
     } catch (error) {
       const ax = error as AxiosError;
       const status = ax.response?.status;
-      
-      // Se der erro de token, tenta renovar na hora e repetir a operação
-      if ((status === 401 || status === 403) && this.hasCredentials) {
-        this.logger.warn(`⚠️ [KeyClub] Token rejeitado (${status}). Tentando recuperação imediata...`);
+      const errorData = ax.response?.data as any;
+      const errorMessage = JSON.stringify(errorData || '').toLowerCase();
+
+      // LOGICA DE RETRY (Se for erro de token/auth e for a primeira tentativa)
+      const isAuthError = status === 401 || status === 403 || errorMessage.includes('token') || errorMessage.includes('unauthorized');
+
+      if (isAuthError && attempt === 1 && this.hasCredentials) {
+        this.logger.warn(`🛑 [KeyClub] Token rejeitado pela API (Status: ${status}). Forçando renovação imediata e retentando...`);
+        
+        // Força limpeza do token para obrigar o login
+        this.token = null;
+        this.tokenExpiresAt = 0;
+        
         try {
-          this.token = null;
-          this.tokenExpiresAt = 0;
-          await this.login(); // Login forçado
-          return await fn();  // Tenta de novo a operação do cliente
-        } catch (retryError) {
-          throw new BadRequestException('Erro de comunicação com o banco (Auth). Tente novamente.');
+          // Faz login forçado
+          await this.login();
+          // 🔥 RECURSIVIDADE: Chama a mesma função de novo (attempt 2)
+          return await this.withAuthRetry(operation, 2); 
+        } catch (retryErr) {
+          this.logger.error('❌ [KeyClub] Falha na segunda tentativa após renovar token.');
+          throw new BadRequestException('Falha de comunicação com Gateway (Retry Failed).');
         }
       }
 
-      const responseData = ax.response?.data as any;
-      const msg = responseData?.message || JSON.stringify(responseData);
-      this.logger.error(`❌ [KeyClub] Erro Operacional: ${msg}`);
-      throw new BadRequestException(typeof msg === 'string' ? msg : 'Erro ao processar transação.');
+      // Se não for erro de Auth ou já for a segunda tentativa, estoura o erro real
+      const finalMsg = errorData?.message || errorData?.error || 'Erro desconhecido no Gateway';
+      this.logger.error(`❌ [KeyClub] Erro na Operação: ${finalMsg}`);
+      throw new BadRequestException(typeof finalMsg === 'string' ? finalMsg : 'Erro ao processar pagamento.');
     }
   }
 
+  // --- MÉTODOS PÚBLICOS ---
+
+  private getHeaders() {
+    return { 
+        Authorization: `Bearer ${this.token}`, 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json' 
+    };
+  }
+
   async createDeposit(input: CreateDepositInput) {
-    const amount = Number(input.amount);
-    if (amount < 1) throw new BadRequestException('Valor mínimo R$ 1,00');
+    if (!input.amount || input.amount < 1) throw new BadRequestException('Valor inválido (Mín R$ 1,00)');
 
     const payload = {
-      amount: Number(amount.toFixed(2)),
+      amount: Number(input.amount.toFixed(2)),
       external_id: input.externalId || `DEP-${Date.now()}`,
       clientCallbackUrl: input.clientCallbackUrl,
       payer: {
@@ -173,6 +191,7 @@ export class KeyclubService implements OnModuleInit {
       },
     };
 
+    // Envolvemos a chamada no Retry Automático
     return this.withAuthRetry(async () => {
       const resp = await this.http.post('/api/payments/deposit', payload, { headers: this.getHeaders() });
       return resp.data;
@@ -181,8 +200,7 @@ export class KeyclubService implements OnModuleInit {
 
   async createWithdrawal(input: CreateWithdrawalInput) {
     const amount = Number(input.amount);
-    if (amount < 1) throw new BadRequestException('Valor mínimo R$ 1,00');
-
+    
     const payload = {
       amount: Number(amount.toFixed(2)),
       external_id: input.externalId,
