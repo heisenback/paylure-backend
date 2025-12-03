@@ -1,9 +1,7 @@
-// src/deposit/service.ts
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { KeyclubService } from '../keyclub/keyclub.service';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { CreateDepositDto } from './dto/create-deposit.dto'; 
-import * as crypto from 'crypto';
+import * as crypto from 'crypto'; // Usado para gerar IDs únicos
 
 // O DTO que este serviço REALMENTE espera (vem do controller)
 export type CreateDepositServiceDto = {
@@ -21,57 +19,58 @@ export class DepositService {
     private readonly prisma: PrismaService, 
   ) {}
 
-  // 🔥 CORREÇÃO: Agora busca os dados do MERCHANT ao invés do usuário
   async createDeposit(userId: string, dto: CreateDepositServiceDto) {
     this.logger.log(`[DepositService] createDeposit chamado para userId=${userId}`);
     
     const amountInBRL = dto.amount / 100;
 
+    // 🔥 CORREÇÃO 1: Garante que SEMPRE exista um externalId
+    // Se o frontend não mandar, a gente cria um agora mesmo.
+    const finalExternalId = dto.externalId || crypto.randomUUID();
+
     this.logger.log(
       `[DepositService] Iniciando depósito de R$${amountInBRL.toFixed(2)} ` +
-      `(${dto.amount} centavos)`
+      `| ID: ${finalExternalId}`
     );
 
     try {
-      // 🔥 BUSCA O USUÁRIO E SEU MERCHANT ASSOCIADO
+      // 1. Busca Usuário e Merchant
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
-        include: { 
-          merchant: true // Inclui os dados do Merchant
-        }
+        include: { merchant: true }
       });
 
       if (!user) {
-        this.logger.error(`[DepositService] ❌ Usuário ${userId} não encontrado.`);
         throw new NotFoundException('Usuário não encontrado.');
       }
 
       if (!user.merchant) {
-        this.logger.error(`[DepositService] ❌ Usuário ${userId} não possui merchant associado.`);
         throw new Error('Merchant não encontrado. Configure seus dados cadastrais primeiro.');
       }
 
       const merchant = user.merchant;
 
-      // 🔥 VALIDA SE O MERCHANT TEM OS DADOS OBRIGATÓRIOS
-      // O Merchant tem: storeName, cnpj, e o User tem: name, email
+      // 2. Validação dos dados obrigatórios
       if (!merchant.storeName || !merchant.cnpj || !user.email) {
-        this.logger.error(`[DepositService] ❌ Merchant ${merchant.id} está com dados incompletos.`);
-        throw new Error('Dados do merchant incompletos. Complete seu cadastro antes de gerar PIX.');
+        this.logger.error(`[DepositService] ❌ Dados incompletos. Merchant: ${merchant.storeName}, CNPJ: ${merchant.cnpj}, Email: ${user.email}`);
+        throw new Error('Dados do merchant incompletos (CNPJ, Nome ou Email faltando).');
       }
 
-      this.logger.log(`[DepositService] ✅ Usando dados do Merchant: ${merchant.storeName} (${merchant.cnpj})`);
+      // Limpa o CNPJ (remove pontos e traços) para enviar apenas números
+      const cleanDocument = merchant.cnpj.replace(/\D/g, '');
 
-      // 3. CHAMA A KEYCLUB COM OS DADOS DO MERCHANT + USER
+      this.logger.log(`[DepositService] 🚀 Enviando para Keyclub: Payer=${merchant.storeName}, Doc=${cleanDocument}`);
+
+      // 3. CHAMA A KEYCLUB (Aqui estava o erro)
       const keyclubResult = await this.keyclub.createDeposit({
         amount: amountInBRL, 
-        externalId: dto.externalId,
-        clientCallbackUrl: dto.callbackUrl,
+        externalId: finalExternalId, // ✅ Agora garantimos que isso nunca é undefined
+        clientCallbackUrl: dto.callbackUrl || 'https://api.paylure.com.br/api/webhooks/keyclub', // Fallback se não vier
         payer: {
-          name: merchant.storeName, // Nome da loja
-          email: user.email, // Email do usuário
-          document: merchant.cnpj.replace(/\D/g, ''), // CNPJ limpo
-          phone: undefined, // Opcional - pode adicionar depois se necessário
+          name: merchant.storeName,
+          email: user.email,
+          document: cleanDocument,
+          // phone: undefined -- Removido para evitar erro de build
         },
       });
 
@@ -79,53 +78,46 @@ export class DepositService {
       const transactionId = qr?.transactionId;
 
       if (!transactionId) {
-        this.logger.error('[DepositService] ❌ KeyClub não retornou um transactionId.');
+        this.logger.error('[DepositService] ❌ KeyClub não retornou transactionId.');
         throw new Error('Falha ao obter transactionId da KeyClub.');
       }
 
-      // 4. ✅ GERA O TOKEN ÚNICO OBRIGATÓRIO
+      // 4. Gera Token do Webhook
       const uniqueToken = crypto.randomBytes(20).toString('hex');
 
-      // 5. ✅ SALVA O DEPÓSITO "PENDENTE" NO BANCO DE DADOS
-      this.logger.log(`[DepositService] Salvando depósito PENDENTE no DB: ${transactionId}`);
+      // 5. SALVA NO PRISMA (Agora vai chegar aqui!)
+      this.logger.log(`[DepositService] Salvando no DB...`);
       
       const newDeposit = await this.prisma.deposit.create({
         data: {
-          externalId: transactionId,
+          externalId: transactionId, // ID da Keyclub
           amountInCents: dto.amount,
-          netAmountInCents: dto.amount, // Valor líquido será atualizado pelo webhook
+          netAmountInCents: dto.amount,
           status: 'PENDING',
-          payerName: merchant.storeName, // Nome da loja
-          payerEmail: user.email, // Email do usuário
-          payerDocument: merchant.cnpj, // CNPJ
-          webhookToken: uniqueToken, // ✅ CAMPO OBRIGATÓRIO ADICIONADO
+          payerName: merchant.storeName,
+          payerEmail: user.email,
+          payerDocument: merchant.cnpj,
+          webhookToken: uniqueToken,
           user: { connect: { id: userId } },
         },
       });
       
-      this.logger.log(`[DepositService] ✅ Depósito ${newDeposit.id} salvo com externalId ${transactionId}`);
+      this.logger.log(`[DepositService] ✅ Sucesso! Depósito salvo: ${newDeposit.id}`);
 
-      // 6. RETORNA PARA O FRONTEND
-      const response = {
-        message: keyclubResult?.message || 'Deposit created successfully.',
+      return {
+        message: 'Deposit created successfully.',
         transactionId: transactionId,
         status: qr?.status || 'PENDING',
         qrcode: qr?.qrcode,
         amount: dto.amount,
       };
       
-      return response;
-      
     } catch (err) {
-      const msg = (err as Error).message || 'Erro ao criar depósito.';
+      const msg = (err as Error).message || 'Erro desconhecido';
+      this.logger.error(`[DepositService] ❌ ERRO: ${msg}`, (err as Error).stack);
       
-      if (err.code === 'P2002' && err.meta?.target?.includes('webhookToken')) {
-        this.logger.error(`[DepositService] ❌ Conflito de Token. Tentando novamente...`);
-        throw new Error('Erro ao gerar token, tente novamente.');
-      }
-      
-      this.logger.error(`[DepositService] ❌ Erro inesperado: ${msg}`, (err as Error).stack);
-      throw new Error(`Erro ao criar depósito: ${msg}`);
+      // Relança o erro para o Controller pegar e mostrar pro usuário
+      throw new Error(msg);
     }
   }
 }
