@@ -71,7 +71,7 @@ export class DepositService {
           name: merchant.storeName, // Nome da loja
           email: user.email, // Email do usuário
           document: merchant.cnpj.replace(/\D/g, ''), // CNPJ limpo
-          phone: user.phone || undefined, // Telefone do usuário (se existir)
+          phone: undefined, // Opcional - pode adicionar depois se necessário
         },
       });
 
