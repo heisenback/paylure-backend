@@ -12,7 +12,7 @@ import {
   ValidationPipe,
   UseGuards
 } from '@nestjs/common';
-import { HybridAuthGuard } from '../auth/guards/hybrid-auth.guard'; // 👈 IMPORTAR
+import { HybridAuthGuard } from '../auth/guards/hybrid-auth.guard';
 import { DepositService } from './deposit.service';
 import { CreateDepositDto } from './dto/create-deposit.dto';
 
@@ -24,7 +24,7 @@ interface RequestWithUser extends Request {
 }
 
 @Controller('deposits')
-@UseGuards(HybridAuthGuard) // 👈 MUDOU AQUI!
+@UseGuards(HybridAuthGuard)
 export class DepositController {
   private readonly logger = new Logger(DepositController.name);
 
@@ -39,12 +39,10 @@ export class DepositController {
   }))
   async create(@Body() dto: CreateDepositDto, @Req() req: RequestWithUser) {
     try {
-      const name = (dto.payerName || dto.userName || '').trim() || 'Usuário da Gateway';
-      const email = (dto.payerEmail || dto.userEmail || '').trim();
-      const document = (dto.payerDocument || dto.userDocument || '').replace(/\D+/g, '');
-      const phone = (dto.payerPhone || dto.phone || '').replace(/\D+/g, '');
-
-      this.logger.log(`[CREATE] Recebido: amount=${dto.amount}, payer=${name}`);
+      // 🔥 AGORA NÃO PRECISA MAIS DOS DADOS DO PAYER NO DTO
+      // O Service vai buscar do Merchant automaticamente
+      
+      this.logger.log(`[CREATE] Recebido: amount=${dto.amount}`);
 
       const userId = req?.user?.id;
       if (!userId) {
@@ -52,12 +50,9 @@ export class DepositController {
         throw new HttpException({ message: 'Usuário não autenticado.' }, HttpStatus.UNAUTHORIZED);
       }
 
+      // 🔥 PAYLOAD SIMPLIFICADO - Apenas amount é obrigatório
       const payload = {
         amount: Number(dto.amount),
-        payerName: name,
-        payerEmail: email,
-        payerDocument: document,
-        phone: phone || undefined,
         externalId: dto.externalId,
         callbackUrl: dto.callbackUrl,
       };
@@ -75,6 +70,13 @@ export class DepositController {
       
       if (e instanceof HttpException) {
         throw e;
+      }
+      
+      // 🔥 TRATAMENTO ESPECÍFICO PARA MERCHANT NÃO ENCONTRADO
+      if (msg.includes('Merchant não encontrado') || msg.includes('dados incompletos')) {
+        throw new HttpException({ 
+          message: 'Erro ao criar depósito: ' + msg 
+        }, HttpStatus.BAD_REQUEST);
       }
       
       if (msg.includes('autenticação') || msg.includes('token')) {

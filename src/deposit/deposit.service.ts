@@ -1,19 +1,15 @@
 // src/deposit/service.ts
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { KeyclubService } from '../keyclub/keyclub.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateDepositDto } from './dto/create-deposit.dto'; 
-import * as crypto from 'crypto'; // 1. IMPORTA O CRYPTO
+import * as crypto from 'crypto';
 
 // O DTO que este serviço REALMENTE espera (vem do controller)
 export type CreateDepositServiceDto = {
   amount: number; // EM CENTAVOS
-  payerName: string;
-  payerEmail: string;
-  payerDocument: string;
   externalId?: string;
   callbackUrl?: string;
-  phone?: string;
 };
 
 @Injectable()
@@ -25,7 +21,7 @@ export class DepositService {
     private readonly prisma: PrismaService, 
   ) {}
 
-  // O Controller chama este método
+  // 🔥 CORREÇÃO: Agora busca os dados do MERCHANT ao invés do usuário
   async createDeposit(userId: string, dto: CreateDepositServiceDto) {
     this.logger.log(`[DepositService] createDeposit chamado para userId=${userId}`);
     
@@ -33,20 +29,48 @@ export class DepositService {
 
     this.logger.log(
       `[DepositService] Iniciando depósito de R$${amountInBRL.toFixed(2)} ` +
-      `(${dto.amount} centavos) para ${dto.payerName}`
+      `(${dto.amount} centavos)`
     );
 
     try {
-      // 3. CHAMA A KEYCLUB
+      // 🔥 BUSCA O USUÁRIO E SEU MERCHANT ASSOCIADO
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        include: { 
+          merchant: true // Inclui os dados do Merchant
+        }
+      });
+
+      if (!user) {
+        this.logger.error(`[DepositService] ❌ Usuário ${userId} não encontrado.`);
+        throw new NotFoundException('Usuário não encontrado.');
+      }
+
+      if (!user.merchant) {
+        this.logger.error(`[DepositService] ❌ Usuário ${userId} não possui merchant associado.`);
+        throw new Error('Merchant não encontrado. Configure seus dados cadastrais primeiro.');
+      }
+
+      const merchant = user.merchant;
+
+      // 🔥 VALIDA SE O MERCHANT TEM OS DADOS OBRIGATÓRIOS
+      if (!merchant.name || !merchant.email || !merchant.document) {
+        this.logger.error(`[DepositService] ❌ Merchant ${merchant.id} está com dados incompletos.`);
+        throw new Error('Dados do merchant incompletos. Complete seu cadastro antes de gerar PIX.');
+      }
+
+      this.logger.log(`[DepositService] ✅ Usando dados do Merchant: ${merchant.name} (${merchant.document})`);
+
+      // 3. CHAMA A KEYCLUB COM OS DADOS DO MERCHANT
       const keyclubResult = await this.keyclub.createDeposit({
         amount: amountInBRL, 
         externalId: dto.externalId,
         clientCallbackUrl: dto.callbackUrl,
         payer: {
-          name: dto.payerName,
-          email: dto.payerEmail,
-          document: dto.payerDocument,
-          phone: dto.phone,
+          name: merchant.name,
+          email: merchant.email,
+          document: merchant.document,
+          phone: merchant.phone || undefined,
         },
       });
 
@@ -70,9 +94,9 @@ export class DepositService {
           amountInCents: dto.amount,
           netAmountInCents: dto.amount, // Valor líquido será atualizado pelo webhook
           status: 'PENDING',
-          payerName: dto.payerName,
-          payerEmail: dto.payerEmail,
-          payerDocument: dto.payerDocument,
+          payerName: merchant.name,
+          payerEmail: merchant.email,
+          payerDocument: merchant.document,
           webhookToken: uniqueToken, // ✅ CAMPO OBRIGATÓRIO ADICIONADO
           user: { connect: { id: userId } },
         },
