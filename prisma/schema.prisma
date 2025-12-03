@@ -44,6 +44,7 @@ model User {
   passwordResets   PasswordReset[]
   twoFactorCodes   TwoFactorCode[]
   memberAccesses   MemberAccess[]
+  transactions     Transaction[]
 }
 
 // ===================================
@@ -415,4 +416,32 @@ model Subscription {
 
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
+}
+
+// ===================================
+// 🎯 NOVO: TRANSACTION (Histórico de Transações)
+// ===================================
+model Transaction {
+  id               String       @id @default(uuid())
+  userId           String
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type             String       // 'DEPOSIT', 'WITHDRAWAL', 'FEE', 'REFUND', etc
+  amount           Int          // Valor em centavos
+  description      String?
+  status           String       @default("COMPLETED")
+  
+  referenceId      String?      // ID da transação relacionada (deposit, withdrawal, etc)
+  referenceType    String?      // Tipo da referência ('deposit', 'withdrawal', etc)
+  
+  metadata         Json?        // Dados adicionais em formato JSON
+  
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@index([referenceId])
 }

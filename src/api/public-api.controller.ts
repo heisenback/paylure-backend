@@ -19,15 +19,6 @@ import { CreateDepositDto } from 'src/deposit/dto/create-deposit.dto';
 import { CreateWithdrawalDto } from 'src/withdrawal/dto/create-withdrawal.dto';
 import type { User } from '@prisma/client';
 
-/**
- * Controller de API Pública.
- * 
- * Endpoints para integração externa usando Client ID/Secret.
- * Rota base: /api/public/*
- * 
- * Autenticação:
- * Authorization: ApiKey client_id:client_secret
- */
 @Controller('public')
 @UseGuards(ApiKeyGuard)
 export class PublicApiController {
@@ -40,10 +31,6 @@ export class PublicApiController {
     private readonly productService: ProductService,
   ) {}
 
-  /**
-   * POST /api/public/deposits
-   * Cria um novo depósito (PIX)
-   */
   @Post('deposits')
   @HttpCode(HttpStatus.CREATED)
   async createDeposit(
@@ -52,7 +39,6 @@ export class PublicApiController {
   ) {
     this.logger.log(`[API Pública] Depósito solicitado por: ${user.email}`);
     
-    // ✅ CORREÇÃO: Normalizar os dados do DTO antes de passar para o service
     const normalizedDto = {
       amount: Number(dto.amount),
       payerName: (dto.payerName || dto.userName || 'Usuário da Gateway').trim(),
@@ -77,10 +63,6 @@ export class PublicApiController {
     };
   }
 
-  /**
-   * POST /api/public/withdrawals
-   * Solicita um saque
-   */
   @Post('withdrawals')
   @HttpCode(HttpStatus.CREATED)
   async createWithdrawal(
@@ -102,8 +84,7 @@ export class PublicApiController {
   }
 
   /**
-   * GET /api/public/transactions
-   * Lista o histórico de transações
+   * 🎯 CORREÇÃO: Adiciona os parâmetros obrigatórios para getHistory
    */
   @Get('transactions')
   @HttpCode(HttpStatus.OK)
@@ -112,7 +93,14 @@ export class PublicApiController {
   ) {
     this.logger.log(`[API Pública] Histórico solicitado por: ${user.email}`);
     
-    const history = await this.transactionsService.getHistory(user.id);
+    // Passa os parâmetros necessários
+    const options = {
+      page: 1,
+      limit: 100,
+      status: 'ALL'
+    };
+    
+    const history = await this.transactionsService.getHistory(user.id, options);
     
     return {
       success: true,
@@ -120,10 +108,6 @@ export class PublicApiController {
     };
   }
 
-  /**
-   * GET /api/public/products
-   * Lista os produtos do merchant
-   */
   @Get('products')
   @HttpCode(HttpStatus.OK)
   async getProducts(
@@ -156,10 +140,6 @@ export class PublicApiController {
     };
   }
 
-  /**
-   * GET /api/public/balance
-   * Consulta o saldo disponível
-   */
   @Get('balance')
   @HttpCode(HttpStatus.OK)
   async getBalance(
@@ -176,10 +156,6 @@ export class PublicApiController {
     };
   }
 
-  /**
-   * GET /api/public/me
-   * Retorna informações do usuário autenticado
-   */
   @Get('me')
   @HttpCode(HttpStatus.OK)
   async getMe(

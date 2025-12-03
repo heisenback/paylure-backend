@@ -49,7 +49,6 @@ export class AuthService {
     // 2. Verifica CPF duplicado (Blindado)
     if (dto.document) {
       const docClean = dto.document.replace(/\D/g, '');
-      // Formata para comparar caso o banco tenha salvo com pontos
       const docFormatted = docClean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
 
       const cpfExists = await this.prisma.user.findFirst({
@@ -75,7 +74,6 @@ export class AuthService {
     const hashedApiSecret = await bcrypt.hash(apiSecret, salt);
 
     try {
-      // Cria usuário JÁ com o merchant
       const userWithMerchant = await this.prisma.user.create({
         data: {
           email: dto.email,
@@ -91,10 +89,10 @@ export class AuthService {
             },
           },
         },
-        include: { merchant: true }, // Garante que retorna o merchant criado
+        include: { merchant: true },
       });
 
-      const { password, apiSecret, ...userData } = userWithMerchant;
+      const { password, apiSecret: secret, ...userData } = userWithMerchant;
       return {
         user: userData,
         merchant: userWithMerchant.merchant,
@@ -122,6 +120,11 @@ export class AuthService {
        user = await this.fixMissingMerchant(user.id, user.name);
     }
 
+    // 🎯 CORREÇÃO: Verificação de null antes de acessar propriedades
+    if (!user) {
+      throw new UnauthorizedException('Erro ao carregar dados do usuário.');
+    }
+
     const payload = {
       sub: user.id,
       email: user.email,
@@ -138,11 +141,7 @@ export class AuthService {
     };
   }
 
-  // ============================================================
-  // 🚀 A SOLUÇÃO DEFINITIVA PARA O ERRO "PRODUTOR NÃO CONFIGURADO"
-  // ============================================================
   async getUserWithBalance(userId: string) {
-    // Busca o usuário tentando trazer o Merchant
     let user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -154,23 +153,24 @@ export class AuthService {
 
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
-    // 🔥 AUTO-FIX NO DASHBOARD: Se chegou aqui e não tem merchant, CRIA NA HORA.
-    // Isso impede que o frontend quebre ao tentar acessar user.merchant.id
+    // 🔥 AUTO-FIX NO DASHBOARD
     if (!user.merchant) {
       this.logger.warn(`⚠️ Usuário ${userId} acessou Dashboard sem Merchant. Corrigindo...`);
       const fixedUser = await this.fixMissingMerchant(userId, user.name);
-      // Atualiza a variável local user com o novo merchant
-      user = {
-          ...user,
-          merchant: {
-              id: fixedUser.merchant.id,
-              storeName: fixedUser.merchant.storeName,
-              cnpj: fixedUser.merchant.cnpj
-          }
-      };
+      
+      // 🎯 CORREÇÃO: Verificação adicional de null
+      if (fixedUser && fixedUser.merchant) {
+        user = {
+            ...user,
+            merchant: {
+                id: fixedUser.merchant.id,
+                storeName: fixedUser.merchant.storeName,
+                cnpj: fixedUser.merchant.cnpj
+            }
+        };
+      }
     }
 
-    // Busca estatísticas (código mantido)
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 
@@ -183,7 +183,7 @@ export class AuthService {
                        await this.prisma.withdrawal.count({ where: { userId: userId, status: 'CONFIRMED' } });
 
     return {
-      user: user, // Agora garantimos que user.merchant existe
+      user: user,
       balance: user.balance,
       stats: {
         depositsToday: depositsToday._sum.netAmountInCents || 0,
@@ -192,7 +192,7 @@ export class AuthService {
     };
   }
 
-  // Função auxiliar para criar o merchant se faltar
+  // 🎯 CORREÇÃO: Tipo de retorno explícito e verificação de null
   private async fixMissingMerchant(userId: string, userName: string) {
       try {
           const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
@@ -206,11 +206,16 @@ export class AuthService {
               }
           });
           
-          // Retorna o usuário atualizado
-          return await this.prisma.user.findUnique({
+          const updatedUser = await this.prisma.user.findUnique({
               where: { id: userId },
               include: { merchant: true }
           });
+          
+          if (!updatedUser) {
+              throw new Error('Falha ao recuperar usuário após criar merchant');
+          }
+          
+          return updatedUser;
       } catch (err) {
           this.logger.error(`❌ Falha crítica no auto-fix do merchant: ${err}`);
           throw err;

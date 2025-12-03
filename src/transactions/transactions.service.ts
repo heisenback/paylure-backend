@@ -4,7 +4,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { KeyclubService } from 'src/keyclub/keyclub.service';
 import { v4 as uuidv4 } from 'uuid';
 import { QuickPixDto } from './dto/quick-pix.dto';
-import { Deposit, Prisma, Withdrawal } from '@prisma/client'; // 🎯 IMPORTA PRISMA
+import { Deposit, Prisma, Withdrawal } from '@prisma/client';
 
 export type WithdrawalDto = {
   amount: number;
@@ -17,9 +17,9 @@ export type WithdrawalDto = {
 export type UnifiedTransaction = {
     id: string;
     type: 'DEPOSIT' | 'WITHDRAWAL';
-    amountInCents: number; // 🎯 Renomeado para consistência
+    amountInCents: number;
     status: string;
-    createdAt: Date; // 🎯 Renomeado para consistência
+    createdAt: Date;
 };
 
 // 🎯 ATUALIZADO: Tipo de retorno para o frontend
@@ -34,7 +34,7 @@ export type HistoryResponseData = {
 };
 
 // 🎯 NOVO: Tipo de opções de busca
-type HistoryOptions = {
+export type HistoryOptions = {
   page: number;
   limit: number;
   status: string;
@@ -135,9 +135,9 @@ export class TransactionsService {
   }
 
   // ===================================
-  // 🚀 CORREÇÃO APLICADA AQUI (FILTROS E PAGINAÇÃO)
+  // 🚀 CORREÇÃO: Removido o parâmetro p0
   // ===================================
-  async getHistory(userId: string, options: HistoryOptions, p0: {}): Promise<HistoryResponseData> {
+  async getHistory(userId: string, options: HistoryOptions): Promise<HistoryResponseData> {
     const { page, limit, status } = options;
     const skip = (page - 1) * limit;
 
@@ -151,19 +151,17 @@ export class TransactionsService {
       depositWhere.status = 'PENDING';
       withdrawalWhere.status = 'PENDING';
     } else if (status === 'CONFIRMED') {
-      // "Confirmado" para o usuário significa Depósito Confirmado ou Saque Completo
       depositWhere.status = 'CONFIRMED';
       withdrawalWhere.status = 'COMPLETED';
     } else if (status === 'FAILED') {
       depositWhere.status = 'FAILED';
       withdrawalWhere.status = 'FAILED';
     } else if (status === 'ALL') {
-      // Não filtra por status, mas é bom excluir os que nunca deveriam aparecer
       depositWhere.status = { in: ['PENDING', 'CONFIRMED', 'FAILED'] };
       withdrawalWhere.status = { in: ['PENDING', 'COMPLETED', 'FAILED'] };
     }
 
-    // 2. Busca os dados (sem paginação ainda, para ordenar corretamente)
+    // 2. Busca os dados
     const deposits = await this.prisma.deposit.findMany({
       where: depositWhere,
       select: {
@@ -179,35 +177,35 @@ export class TransactionsService {
       where: withdrawalWhere,
       select: {
         id: true,
-        amount: true, // amount no Saque já é o total em centavos
+        amount: true,
         status: true,
         createdAt: true,
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    // 3. Combina e ordena (como no seu código original)
+    // 3. Combina e ordena
     const history: UnifiedTransaction[] = [
       ...deposits.map(d => ({
         id: d.id,
         type: 'DEPOSIT' as const,
-        amountInCents: d.amountInCents, // JÁ EM CENTAVOS
+        amountInCents: d.amountInCents,
         status: d.status,
         createdAt: d.createdAt,
       })),
       ...withdrawals.map(w => ({
         id: w.id,
         type: 'WITHDRAWAL' as const,
-        amountInCents: w.amount, // JÁ EM CENTAVOS
+        amountInCents: w.amount,
         status: w.status,
         createdAt: w.createdAt,
       })),
     ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     
-    // 4. Calcula o total e aplica a paginação (o "passar pro lado")
+    // 4. Calcula o total e aplica a paginação
     const totalItems = history.length;
     const totalPages = Math.ceil(totalItems / limit);
-    const transactions = history.slice(skip, skip + limit); // Pega apenas os 10 da página
+    const transactions = history.slice(skip, skip + limit);
     
     this.logger.log(`✅ Histórico encontrado: ${transactions.length} de ${totalItems} transações`);
     

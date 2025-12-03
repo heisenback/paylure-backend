@@ -19,14 +19,13 @@ class CreateWithdrawalDto implements WithdrawalDto {
 export class TransactionsController {
   constructor(private readonly transactionsService: TransactionsService) {}
 
-  // ===================================
-  // 🚀 CORREÇÃO APLICADA AQUI (FILTROS E PAGINAÇÃO)
-  // ===================================
+  /**
+   * 🎯 CORREÇÃO: Parâmetros corretos (apenas 2 parâmetros)
+   */
   @Get('history')
   @UseGuards(AuthGuard('jwt'))
   async getHistory(
     @GetUser() user: User,
-    // 🎯 Adiciona Query Params para filtro e paginação
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @Query('status', new DefaultValuePipe('ALL')) status: string,
@@ -38,10 +37,9 @@ export class TransactionsController {
     const options = { page, limit, status };
     const historyData = await this.transactionsService.getHistory(user.id, options);
     
-    // 🎯 Retorna no formato que o frontend (page.tsx) espera
     return {
       success: true,
-      data: historyData, // { transactions: [...], pagination: {...} }
+      data: historyData,
       message: `${historyData.pagination.totalItems} transações encontradas`
     };
   }
