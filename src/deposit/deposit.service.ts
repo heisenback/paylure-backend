@@ -54,23 +54,24 @@ export class DepositService {
       const merchant = user.merchant;
 
       // 🔥 VALIDA SE O MERCHANT TEM OS DADOS OBRIGATÓRIOS
-      if (!merchant.name || !merchant.email || !merchant.document) {
+      // O Merchant tem: storeName, cnpj, e o User tem: name, email
+      if (!merchant.storeName || !merchant.cnpj || !user.email) {
         this.logger.error(`[DepositService] ❌ Merchant ${merchant.id} está com dados incompletos.`);
         throw new Error('Dados do merchant incompletos. Complete seu cadastro antes de gerar PIX.');
       }
 
-      this.logger.log(`[DepositService] ✅ Usando dados do Merchant: ${merchant.name} (${merchant.document})`);
+      this.logger.log(`[DepositService] ✅ Usando dados do Merchant: ${merchant.storeName} (${merchant.cnpj})`);
 
-      // 3. CHAMA A KEYCLUB COM OS DADOS DO MERCHANT
+      // 3. CHAMA A KEYCLUB COM OS DADOS DO MERCHANT + USER
       const keyclubResult = await this.keyclub.createDeposit({
         amount: amountInBRL, 
         externalId: dto.externalId,
         clientCallbackUrl: dto.callbackUrl,
         payer: {
-          name: merchant.name,
-          email: merchant.email,
-          document: merchant.document,
-          phone: merchant.phone || undefined,
+          name: merchant.storeName, // Nome da loja
+          email: user.email, // Email do usuário
+          document: merchant.cnpj.replace(/\D/g, ''), // CNPJ limpo
+          phone: user.phone || undefined, // Telefone do usuário (se existir)
         },
       });
 
@@ -94,9 +95,9 @@ export class DepositService {
           amountInCents: dto.amount,
           netAmountInCents: dto.amount, // Valor líquido será atualizado pelo webhook
           status: 'PENDING',
-          payerName: merchant.name,
-          payerEmail: merchant.email,
-          payerDocument: merchant.document,
+          payerName: merchant.storeName, // Nome da loja
+          payerEmail: user.email, // Email do usuário
+          payerDocument: merchant.cnpj, // CNPJ
           webhookToken: uniqueToken, // ✅ CAMPO OBRIGATÓRIO ADICIONADO
           user: { connect: { id: userId } },
         },
