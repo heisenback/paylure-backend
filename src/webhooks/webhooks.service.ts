@@ -79,13 +79,12 @@ export class WebhooksService {
 
       this.logger.log(`💰 Saldo atualizado: User ${userId} | +R$ ${(netAmountInCents/100).toFixed(2)}`);
 
-      // 2. 🔥 CRIA O REGISTRO NO EXTRATO (CRÍTICO)
-      // Isso faz aparecer na tabela "Extrato Recente"
+      // 2. 🔥 CORREÇÃO: Campo correto é 'amount' e não 'amountInCents'
       await this.prisma.transaction.create({
         data: {
           userId,
           type: 'DEPOSIT',
-          amountInCents: netAmountInCents,
+          amount: netAmountInCents, // ✅ CORRIGIDO
           status: 'CONFIRMED',
           referenceId: externalId,
           description: 'Depósito via PIX'
@@ -99,7 +98,6 @@ export class WebhooksService {
         amount: updatedDeposit.amountInCents,
         netAmount: netAmountInCents,
       });
-      // Emite evento genérico para atualizar tabelas
       this.paymentGateway.emitDepositUpdate(externalId, {
         status: 'CONFIRMED',
         amount: updatedDeposit.amountInCents,
@@ -125,12 +123,12 @@ export class WebhooksService {
         data: { balance: { increment: refundAmount } },
       });
       
-      // Cria registro de estorno no extrato
+      // 🔥 CORREÇÃO: Campo correto é 'amount' e não 'amountInCents'
       await this.prisma.transaction.create({
         data: {
           userId,
           type: 'DEPOSIT',
-          amountInCents: refundAmount,
+          amount: refundAmount, // ✅ CORRIGIDO
           status: 'CONFIRMED',
           referenceId: `REFUND-${externalId}`,
           description: 'Estorno de Saque'
