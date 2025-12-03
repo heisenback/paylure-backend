@@ -12,7 +12,7 @@ COPY prisma ./prisma/
 RUN npm install
 
 # 🚨 CACHE BUSTER: Adiciona um argumento para forçar o rebuild da camada de código
-ARG CACHE_BUST=2025-11-04-09h33m
+# ARG CACHE_BUST=2025-11-04-09h33m
 
 # código + build
 COPY . .

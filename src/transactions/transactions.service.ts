@@ -137,7 +137,7 @@ export class TransactionsService {
   // ===================================
   // 🚀 CORREÇÃO APLICADA AQUI (FILTROS E PAGINAÇÃO)
   // ===================================
-  async getHistory(userId: string, options: HistoryOptions): Promise<HistoryResponseData> {
+  async getHistory(userId: string, options: HistoryOptions, p0: {}): Promise<HistoryResponseData> {
     const { page, limit, status } = options;
     const skip = (page - 1) * limit;
 
