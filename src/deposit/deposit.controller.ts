@@ -55,6 +55,8 @@ export class DepositController {
         amount: Number(dto.amount), // Em centavos
         externalId: dto.externalId,
         callbackUrl: dto.callbackUrl,
+        // 👇 AQUI ESTA A CORREÇÃO: Repassando o CPF que veio do front
+        payerDocument: (dto as any).payerDocument || dto.payerDocument, 
       };
 
       this.logger.log(`[DepositController] Chamando DepositService...`);

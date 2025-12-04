@@ -8,6 +8,7 @@ export type CreateDepositServiceDto = {
   amount: number; // EM CENTAVOS
   externalId?: string;
   callbackUrl?: string;
+  payerDocument?: string; // 👈 Adicionado campo opcional
 };
 
 @Injectable()
@@ -47,21 +48,25 @@ export class DepositService {
       const userData = user as any;
 
       // 2. Lógica Inteligente de Documento (Smart Document Picker)
-      // Tenta: CNPJ do Merchant -> OU CPF do Usuário -> OU Documento genérico
-      const rawDocument = user.merchant?.cnpj || userData.cpf || userData.document || '';
+      // ORDEM DE PRIORIDADE:
+      // 1º: O CPF enviado pelo Frontend (dto.payerDocument)
+      // 2º: O CNPJ do Merchant no banco
+      // 3º: O CPF/Document do User no banco
+      
+      const rawDocument = dto.payerDocument || user.merchant?.cnpj || userData.cpf || userData.document || '';
       const cleanDocument = rawDocument.replace(/\D/g, '');
       
       const payerName = user.name || user.merchant?.storeName || 'Cliente Paylure';
 
       this.logger.log(`[DepositService] 👤 Pagador Identificado: ${payerName}`);
-      this.logger.log(`[DepositService] 📄 Documento Bruto: ${rawDocument}`);
+      this.logger.log(`[DepositService] 📄 Documento Bruto (Origem: ${dto.payerDocument ? 'Frontend' : 'Banco'}): ${rawDocument}`);
       this.logger.log(`[DepositService] 📄 Documento Limpo: ${cleanDocument}`);
 
       // 3. ✅ VALIDAÇÃO PREVENTIVA (Onde estava o erro)
       if (!cleanDocument || cleanDocument.length < 11) {
         this.logger.error(`[DepositService] ❌ Documento inválido ou muito curto: "${cleanDocument}"`);
         throw new BadRequestException(
-          'CPF/CNPJ inválido no seu cadastro. Por favor, atualize seus dados (CPF ou CNPJ) no perfil.'
+          'CPF/CNPJ inválido ou não informado. Por favor, verifique seus dados.'
         );
       }
 
