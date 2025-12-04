@@ -13,7 +13,6 @@ export type WithdrawalDto = {
   description?: string;
 };
 
-// 🎯 ATUALIZADO: Tipo de transação unificada
 export type UnifiedTransaction = {
     id: string;
     type: 'DEPOSIT' | 'WITHDRAWAL';
@@ -22,7 +21,6 @@ export type UnifiedTransaction = {
     createdAt: Date;
 };
 
-// 🎯 ATUALIZADO: Tipo de retorno para o frontend
 export type HistoryResponseData = {
   transactions: UnifiedTransaction[];
   pagination: {
@@ -33,7 +31,6 @@ export type HistoryResponseData = {
   };
 };
 
-// 🎯 NOVO: Tipo de opções de busca
 export type HistoryOptions = {
   page: number;
   limit: number;
@@ -98,13 +95,13 @@ export class TransactionsService {
       try {
         const keyTypeForKeyclub = dto.keyType === 'RANDOM' ? 'EVP' : dto.keyType;
         
+        // ✅ LINHA 104 CORRIGIDA: pixKey e keyType (não pix_key e key_type)
         await this.keyclubService.createWithdrawal({
           amount: dto.amount,
           externalId: withdrawal.externalId,
-          pix_key: dto.pixKey,
-          key_type: keyTypeForKeyclub,
+          pixKey: dto.pixKey,
+          keyType: keyTypeForKeyclub,
           description: dto.description || 'Saque Paylure',
-          clientCallbackUrl: `${process.env.API_URL}/keyclub/withdrawal-callback`, 
         });
 
       } catch (error) {
@@ -134,16 +131,12 @@ export class TransactionsService {
     });
   }
 
-  // ===================================
-  // 🚀 CORREÇÃO: Removido o parâmetro p0
-  // ===================================
   async getHistory(userId: string, options: HistoryOptions): Promise<HistoryResponseData> {
     const { page, limit, status } = options;
     const skip = (page - 1) * limit;
 
     this.logger.log(`📋 Buscando histórico para userId: ${userId} (Página: ${page}, Filtro: ${status})`);
     
-    // 1. Define as cláusulas 'where' com base no filtro
     let depositWhere: Prisma.DepositWhereInput = { userId };
     let withdrawalWhere: Prisma.WithdrawalWhereInput = { userId };
 
@@ -161,7 +154,6 @@ export class TransactionsService {
       withdrawalWhere.status = { in: ['PENDING', 'COMPLETED', 'FAILED'] };
     }
 
-    // 2. Busca os dados
     const deposits = await this.prisma.deposit.findMany({
       where: depositWhere,
       select: {
@@ -184,7 +176,6 @@ export class TransactionsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    // 3. Combina e ordena
     const history: UnifiedTransaction[] = [
       ...deposits.map(d => ({
         id: d.id,
@@ -202,14 +193,12 @@ export class TransactionsService {
       })),
     ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     
-    // 4. Calcula o total e aplica a paginação
     const totalItems = history.length;
     const totalPages = Math.ceil(totalItems / limit);
     const transactions = history.slice(skip, skip + limit);
     
     this.logger.log(`✅ Histórico encontrado: ${transactions.length} de ${totalItems} transações`);
     
-    // 5. Retorna no formato que o frontend espera
     return {
       transactions,
       pagination: {
@@ -242,15 +231,13 @@ export class TransactionsService {
     });
 
     try {
+      // ✅ LINHA 248 CORRIGIDA: payerName, payerEmail, payerDocument (não payer)
       const keyclubResponse = await this.keyclubService.createDeposit({
         amount: dto.amount,
         externalId: deposit.externalId,
-        payer: {
-          name: dto.payerName,
-          email: dto.payerEmail,
-          document: dto.payerDocument,
-        },
-        clientCallbackUrl: `${process.env.API_URL}/keyclub/callback/${deposit.webhookToken}`,
+        payerName: dto.payerName,
+        payerEmail: dto.payerEmail,
+        payerDocument: dto.payerDocument,
       });
       
       return {
