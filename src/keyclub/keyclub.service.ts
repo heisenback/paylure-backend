@@ -43,6 +43,7 @@ export class KeyclubService implements OnModuleInit {
     
     if (clientId && clientSecret) {
       this.hasCredentials = true;
+      this.logger.log('✅ [KeyClub] Credenciais encontradas');
     } else {
       this.hasCredentials = false;
       this.logger.error('❌ [KeyClub] Credenciais não encontradas no .env! O serviço vai falhar.');
@@ -58,16 +59,19 @@ export class KeyclubService implements OnModuleInit {
       },
       httpsAgent: new https.Agent({ keepAlive: true, rejectUnauthorized: false })
     });
+    
+    this.logger.log(`🌐 [KeyClub] Base URL configurada: ${this.baseUrl}`);
   }
 
   async onModuleInit() {
     if (this.hasCredentials) {
-        try {
-            this.logger.log('🔌 [KeyClub] Verificando credenciais iniciais...');
-            await this.login();
-        } catch (e) {
-            this.logger.warn('⚠️ [KeyClub] Falha no login inicial. O sistema tentará novamente na primeira transação.');
-        }
+      try {
+        this.logger.log('🔌 [KeyClub] Fazendo login inicial...');
+        await this.login();
+        this.logger.log('✅ [KeyClub] Login inicial bem-sucedido!');
+      } catch (e) {
+        this.logger.warn('⚠️ [KeyClub] Falha no login inicial. O sistema tentará novamente na primeira transação.');
+      }
     }
   }
 
@@ -77,7 +81,7 @@ export class KeyclubService implements OnModuleInit {
     const clientId = (process.env.KEY_CLUB_CLIENT_ID || '').replace(/"/g, '').trim();
     const clientSecret = (process.env.KEY_CLUB_CLIENT_SECRET || '').replace(/"/g, '').trim();
 
-    this.logger.log(`🔄 [KeyClub] Obtendo NOVO Token de Acesso...`);
+    this.logger.log(`🔄 [KeyClub] Obtendo token de acesso...`);
     
     try {
       const loginResponse = await axios.post(`${this.baseUrl}/api/auth/login`, {
@@ -112,7 +116,7 @@ export class KeyclubService implements OnModuleInit {
   private async ensureToken(): Promise<void> {
     if (!this.hasCredentials) return;
     if (!this.token || Date.now() >= this.tokenExpiresAt) {
-      this.logger.warn('⚠️ [KeyClub] Token expirado ou inexistente. Renovando antes da requisição...');
+      this.logger.warn('⚠️ [KeyClub] Token expirado ou inexistente. Renovando...');
       await this.login();
     }
   }
@@ -148,43 +152,59 @@ export class KeyclubService implements OnModuleInit {
 
   private getHeaders() {
     return { 
-        Authorization: `Bearer ${this.token}`, 
-        'Content-Type': 'application/json',
-        'Accept': 'application/json' 
+      Authorization: `Bearer ${this.token}`, 
+      'Content-Type': 'application/json',
+      'Accept': 'application/json' 
     };
   }
 
   /**
-   * Helper que lê as variáveis exatas do seu .env
+   * 🔥 CORREÇÃO CRÍTICA: Monta a URL correta do webhook
    */
   private getCallbackUrl(providedUrl?: string): string {
-    // 1. Se o controller mandou, usa o que mandou
-    if (providedUrl) return providedUrl;
+    // 1. Se foi fornecida explicitamente, usa ela
+    if (providedUrl) {
+      this.logger.log(`📍 [Callback] URL fornecida: ${providedUrl}`);
+      return providedUrl;
+    }
 
-    // 2. Tenta pegar a variável exata KEY_CLUB_CALLBACK_URL do seu .env
-    // Ela já está como: "https://api.paylure.com.br/api/v1/webhooks/keyclub"
+    // 2. Tenta pegar do .env (KEY_CLUB_CALLBACK_URL)
     let envCallback = process.env.KEY_CLUB_CALLBACK_URL;
     if (envCallback) {
-        return envCallback.replace(/"/g, '').trim();
+      const cleanCallback = envCallback.replace(/"/g, '').trim();
+      this.logger.log(`📍 [Callback] URL do .env: ${cleanCallback}`);
+      return cleanCallback;
     }
 
-    // 3. Se não achar, tenta montar usando BASE_URL
+    // 3. Constrói usando BASE_URL do .env
     const baseUrl = process.env.BASE_URL;
     if (baseUrl) {
-        const cleanBase = baseUrl.replace(/"/g, '').trim().replace(/\/+$/, '');
-        // Adiciona /api/v1 pois geralmente apps NestJS usam esse prefixo global
-        return `${cleanBase}/api/v1/webhooks/keyclub`;
+      const cleanBase = baseUrl.replace(/"/g, '').trim().replace(/\/+$/, '');
+      
+      // 🔥 CORREÇÃO: URL sem /v1 (ajustada conforme seu controller)
+      const callbackUrl = `${cleanBase}/api/webhooks/keyclub`;
+      
+      this.logger.log(`📍 [Callback] URL construída: ${callbackUrl}`);
+      return callbackUrl;
     }
 
-    this.logger.error('❌ ERRO GRAVE: Nenhuma URL de Callback configurada (KEY_CLUB_CALLBACK_URL ou BASE_URL ausentes no .env). O Dashboard não vai atualizar!');
-    return '';
+    // 4. Fallback (não deveria chegar aqui em produção)
+    this.logger.error('❌ ERRO GRAVE: Nenhuma URL de Callback configurada!');
+    this.logger.error('Configure KEY_CLUB_CALLBACK_URL ou BASE_URL no .env');
+    
+    return 'https://api.paylure.com.br/api/webhooks/keyclub'; // Fallback hardcoded
   }
 
   async createDeposit(input: CreateDepositInput) {
-    if (!input.amount || input.amount < 1) throw new BadRequestException('Valor inválido (Mín R$ 1,00)');
+    if (!input.amount || input.amount < 1) {
+      throw new BadRequestException('Valor inválido (Mín R$ 1,00)');
+    }
 
     const callbackUrl = this.getCallbackUrl(input.clientCallbackUrl);
-    this.logger.log(`🔗 [CreateDeposit] Callback URL definida: ${callbackUrl}`);
+    
+    if (!callbackUrl) {
+      throw new BadRequestException('URL de callback não configurada. Configure BASE_URL no .env');
+    }
 
     const payload = {
       amount: Number(input.amount.toFixed(2)),
@@ -197,27 +217,59 @@ export class KeyclubService implements OnModuleInit {
       },
     };
 
+    this.logger.log(`🔥 [CreateDeposit] Enviando para KeyClub:`);
+    this.logger.log(`   💵 Valor: R$ ${payload.amount}`);
+    this.logger.log(`   🆔 ExternalId: ${payload.external_id}`);
+    this.logger.log(`   🔗 Callback: ${callbackUrl}`);
+    this.logger.log(`   👤 Pagador: ${payload.payer.name} (${payload.payer.email})`);
+
     return this.withAuthRetry(async () => {
-      const resp = await this.http.post('/api/payments/deposit', payload, { headers: this.getHeaders() });
+      const resp = await this.http.post('/api/payments/deposit', payload, { 
+        headers: this.getHeaders() 
+      });
+      
+      this.logger.log(`✅ [CreateDeposit] Resposta recebida da KeyClub`);
+      this.logger.log(`   TransactionId: ${resp.data?.transactionId || 'N/A'}`);
+      
       return resp.data;
     });
   }
 
   async createWithdrawal(input: CreateWithdrawalInput) {
     const amount = Number(input.amount);
+    
+    if (amount < 1) {
+      throw new BadRequestException('Valor mínimo para saque: R$ 1,00');
+    }
+    
     const callbackUrl = this.getCallbackUrl(input.clientCallbackUrl);
+    
+    if (!callbackUrl) {
+      throw new BadRequestException('URL de callback não configurada. Configure BASE_URL no .env');
+    }
     
     const payload = {
       amount: Number(amount.toFixed(2)),
       external_id: input.externalId,
       pix_key: input.pix_key,
       key_type: input.key_type,
-      description: input.description,
+      description: input.description || 'Saque via Paylure',
       clientCallbackUrl: callbackUrl,
     };
 
+    this.logger.log(`🔥 [CreateWithdrawal] Enviando para KeyClub:`);
+    this.logger.log(`   💵 Valor: R$ ${payload.amount}`);
+    this.logger.log(`   🆔 ExternalId: ${payload.external_id}`);
+    this.logger.log(`   🔗 Callback: ${callbackUrl}`);
+    this.logger.log(`   🔑 Chave PIX: ${payload.pix_key} (${payload.key_type})`);
+
     return this.withAuthRetry(async () => {
-      const resp = await this.http.post('/api/withdrawals/withdraw', payload, { headers: this.getHeaders() });
+      const resp = await this.http.post('/api/withdrawals/withdraw', payload, { 
+        headers: this.getHeaders() 
+      });
+      
+      this.logger.log(`✅ [CreateWithdrawal] Resposta recebida da KeyClub`);
+      
       return resp.data;
     });
   }
