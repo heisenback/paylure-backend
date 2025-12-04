@@ -1,5 +1,6 @@
+// src/keyclub/keyclub.service.ts
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 
 @Injectable()
 export class KeyclubService {
@@ -21,7 +22,7 @@ export class KeyclubService {
    * 🔥 CRIAR DEPÓSITO NA KEYCLUB (FORMATO CORRETO)
    */
   async createDeposit(data: {
-    amount: number;
+    amount: number; // EM REAIS (ex: 10.00)
     external_id: string;
     clientCallbackUrl: string;
     payer: {
@@ -35,12 +36,12 @@ export class KeyclubService {
       this.logger.log(`🔥 [CreateDeposit] ==========================================`);
       this.logger.log(`📤 Payload enviado para KeyClub:`);
       this.logger.log(JSON.stringify(data, null, 2));
-      this.logger.log(`==========================================================`);
 
       // ✅ URL CORRIGIDA: /api/payments/deposit (conforme documentação)
       const endpoint = `${this.apiUrl}/api/payments/deposit`;
       
       this.logger.log(`🎯 Endpoint: ${endpoint}`);
+      this.logger.log(`🔑 API Key: ${this.apiKey?.substring(0, 20)}...`);
 
       const response = await axios.post(endpoint, data, {
         headers: {
@@ -48,12 +49,19 @@ export class KeyclubService {
           'Content-Type': 'application/json',
         },
         timeout: 30000, // 30 segundos
+        validateStatus: (status) => status < 600, // Aceita qualquer status para logar
       });
 
       this.logger.log(`✅ [CreateDeposit] Resposta recebida da KeyClub:`);
       this.logger.log(`📊 Status HTTP: ${response.status}`);
       this.logger.log(`📦 Response Data:`);
       this.logger.log(JSON.stringify(response.data, null, 2));
+
+      // ✅ VERIFICA SE A RESPOSTA FOI BEM-SUCEDIDA
+      if (response.status !== 200 && response.status !== 201) {
+        this.logger.error(`❌ Erro HTTP ${response.status}`);
+        throw new Error(`KeyClub retornou status ${response.status}: ${JSON.stringify(response.data)}`);
+      }
 
       // ✅ EXTRAÇÃO CORRETA DA RESPOSTA
       // Segundo a documentação, a resposta vem assim:
@@ -89,26 +97,28 @@ export class KeyclubService {
       return response.data;
       
     } catch (error) {
-      this.logger.error(`❌ [CreateDeposit] ERRO COMPLETO:`);
-      this.logger.error(`📋 Mensagem: ${error.message}`);
+      const axiosError = error as AxiosError;
       
-      if (error.response) {
-        this.logger.error(`📊 Status HTTP: ${error.response.status}`);
+      this.logger.error(`❌ [CreateDeposit] ERRO COMPLETO:`);
+      this.logger.error(`📋 Mensagem: ${axiosError.message}`);
+      
+      if (axiosError.response) {
+        this.logger.error(`📊 Status HTTP: ${axiosError.response.status}`);
         this.logger.error(`📦 Response Data:`);
-        this.logger.error(JSON.stringify(error.response.data, null, 2));
+        this.logger.error(JSON.stringify(axiosError.response.data, null, 2));
         this.logger.error(`📋 Headers:`);
-        this.logger.error(JSON.stringify(error.response.headers, null, 2));
-      } else if (error.request) {
+        this.logger.error(JSON.stringify(axiosError.response.headers, null, 2));
+      } else if (axiosError.request) {
         this.logger.error(`📡 Sem resposta do servidor`);
-        this.logger.error(`Request:`, error.request);
+        this.logger.error(`Request config:`, JSON.stringify(axiosError.config, null, 2));
       } else {
-        this.logger.error(`⚠️ Erro ao configurar request:`, error.message);
+        this.logger.error(`⚠️ Erro ao configurar request:`, axiosError.message);
       }
 
       // Lança erro com mensagem clara
-      const errorMessage = error.response?.data?.message 
-        || error.response?.data?.error
-        || error.message 
+      const errorMessage = (axiosError.response?.data as any)?.message 
+        || (axiosError.response?.data as any)?.error
+        || axiosError.message 
         || 'Erro ao criar depósito na KeyClub';
 
       throw new BadRequestException(errorMessage);
@@ -151,6 +161,7 @@ export class KeyclubService {
             Authorization: `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json',
           },
+          timeout: 30000,
         },
       );
 
@@ -159,16 +170,18 @@ export class KeyclubService {
 
       return response.data;
     } catch (error) {
-      this.logger.error(`❌ [CreateWithdrawal] Erro ao criar saque na KeyClub:`);
-      this.logger.error(`   📄 Mensagem: ${error.message}`);
+      const axiosError = error as AxiosError;
       
-      if (error.response) {
-        this.logger.error(`   📊 Status HTTP: ${error.response.status}`);
-        this.logger.error(`   📋 Dados: ${JSON.stringify(error.response.data)}`);
+      this.logger.error(`❌ [CreateWithdrawal] Erro ao criar saque na KeyClub:`);
+      this.logger.error(`   📄 Mensagem: ${axiosError.message}`);
+      
+      if (axiosError.response) {
+        this.logger.error(`   📊 Status HTTP: ${axiosError.response.status}`);
+        this.logger.error(`   📋 Dados: ${JSON.stringify(axiosError.response.data)}`);
       }
 
       throw new BadRequestException(
-        error.response?.data?.message || 'Failed to create withdrawal in KeyClub',
+        (axiosError.response?.data as any)?.message || 'Failed to create withdrawal in KeyClub',
       );
     }
   }

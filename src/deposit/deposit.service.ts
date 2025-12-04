@@ -1,4 +1,5 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+// src/deposit/deposit.service.ts
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { KeyclubService } from '../keyclub/keyclub.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as crypto from 'crypto';
@@ -23,6 +24,11 @@ export class DepositService {
     this.logger.log(`[DepositService] createDeposit chamado para userId=${userId}`);
     this.logger.log(`[DepositService] Valor recebido: ${dto.amount} centavos`);
     
+    // ✅ VALIDAÇÃO DO VALOR MÍNIMO
+    if (!dto.amount || dto.amount < 100) { // Mínimo R$ 1,00
+      throw new BadRequestException('Valor mínimo de depósito é R$ 1,00');
+    }
+    
     // ✅ CONVERSÃO CORRETA: Centavos -> BRL
     const amountInBRL = dto.amount / 100;
     const finalExternalId = dto.externalId || crypto.randomUUID();
@@ -44,7 +50,7 @@ export class DepositService {
       }
 
       if (!user.merchant) {
-        throw new Error('Merchant não encontrado. Configure seus dados cadastrais primeiro.');
+        throw new BadRequestException('Merchant não encontrado. Configure seus dados cadastrais primeiro.');
       }
 
       const merchant = user.merchant;
@@ -55,7 +61,7 @@ export class DepositService {
         this.logger.error(`   Merchant: ${merchant.storeName}`);
         this.logger.error(`   CNPJ: ${merchant.cnpj}`);
         this.logger.error(`   Email: ${user.email}`);
-        throw new Error('Dados do merchant incompletos (CNPJ, Nome ou Email faltando).');
+        throw new BadRequestException('Dados do merchant incompletos (CNPJ, Nome ou Email faltando).');
       }
 
       const cleanDocument = merchant.cnpj.replace(/\D/g, '');
@@ -89,7 +95,7 @@ export class DepositService {
       // 4. ✅ CHAMA A KEYCLUB
       const keyclubResult = await this.keyclub.createDeposit(keyclubPayload);
 
-      this.logger.log('[DepositService] 📥 Resposta da KeyClub:');
+      this.logger.log('[DepositService] 🔥 Resposta da KeyClub:');
       this.logger.log(JSON.stringify(keyclubResult, null, 2));
 
       // 5. ✅ EXTRAI DADOS DA RESPOSTA
@@ -100,12 +106,12 @@ export class DepositService {
       if (!transactionId) {
         this.logger.error('[DepositService] ❌ KeyClub não retornou transactionId.');
         this.logger.error('[DepositService] Resposta completa:', JSON.stringify(keyclubResult, null, 2));
-        throw new Error('Falha ao obter transactionId da KeyClub.');
+        throw new BadRequestException('Falha ao obter transactionId da KeyClub.');
       }
 
       if (!qrCode) {
         this.logger.error('[DepositService] ❌ KeyClub não retornou QR Code.');
-        throw new Error('Falha ao obter QR Code da KeyClub.');
+        throw new BadRequestException('Falha ao obter QR Code da KeyClub.');
       }
 
       // 6. Gera Token do Webhook
@@ -144,12 +150,17 @@ export class DepositService {
       };
       
     } catch (err) {
-      const msg = (err as Error).message || 'Erro desconhecido';
+      const error = err as Error;
+      const msg = error.message || 'Erro desconhecido';
       this.logger.error(`[DepositService] ❌ ERRO FATAL: ${msg}`);
-      this.logger.error((err as Error).stack);
+      this.logger.error(error.stack);
       
       // ✅ LANÇA ERRO COM MENSAGEM CLARA
-      throw new Error(`Erro ao processar depósito: ${msg}`);
+      if (err instanceof BadRequestException || err instanceof NotFoundException) {
+        throw err;
+      }
+      
+      throw new BadRequestException(`Erro ao processar depósito: ${msg}`);
     }
   }
 }
