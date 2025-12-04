@@ -27,13 +27,13 @@ model User {
   apiKey           String       @unique 
   apiSecret        String       @unique 
 
-  // 🎯 NOVO: Taxas individuais de saque
-  withdrawalFeePercent  Float?      // null = usa taxa global
-  withdrawalFeeFixed    Float?      // null = usa taxa global
+  // 🎯 TAXAS E SAQUES (Corrigido para o Admin Controller)
+  withdrawalFeePercent  Float?  @default(0.0) // Taxa personalizada %
+  withdrawalFeeFixed    Int?    @default(0)   // Taxa fixa em Centavos (Int é melhor para dinheiro)
 
-  // 🎯 2FA
+  // 🎯 2FA (Autenticação de Dois Fatores)
   twoFactorEnabled Boolean      @default(false)
-  twoFactorMethod  String?      // 'EMAIL' ou 'GOOGLE_AUTH'
+  twoFactorMethod  String?      @default("APP") // 'EMAIL' ou 'APP'
   twoFactorSecret  String?      // Para Google Authenticator
   
   // Relações
@@ -48,12 +48,13 @@ model User {
 }
 
 // ===================================
-// 🎯 NOVO: System Settings (Configurações Globais)
+// 🎯 SYSTEM SETTINGS (Configurações Globais)
 // ===================================
 model SystemSettings {
   id        String   @id @default(uuid())
   key       String   @unique
   value     String
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
   @@index([key])
@@ -75,7 +76,6 @@ model PasswordReset {
   
   @@index([userId])
   @@index([token])
-  @@index([expiresAt])
 }
 
 // ===================================
@@ -94,7 +94,6 @@ model TwoFactorCode {
   
   @@index([userId])
   @@index([code])
-  @@index([expiresAt])
 }
 
 // ===================================
@@ -142,29 +141,26 @@ model Merchant {
 }
 
 // ===================================
-// 🎯 MEMBER AREA (Área de Membros Estilo Netflix)
+// 🎯 MEMBER AREA (Área de Membros)
 // ===================================
 model MemberArea {
   id               String       @id @default(uuid())
   merchantId       String
   merchant         Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   
-  name             String       // Ex: "Curso de Marketing Avançado"
-  slug             String       @unique // Ex: "marketing-avancado"
+  name             String       
+  slug             String       @unique 
   description      String?
-  coverImageUrl    String?      // Imagem de capa estilo Netflix
+  coverImageUrl    String?      
   logoUrl          String?
-  
   isActive         Boolean      @default(true)
   
-  // Configurações visuais
   primaryColor     String       @default("#9333ea")
   secondaryColor   String       @default("#06b6d4")
   
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
-  // Relações
   contents         MemberContent[]
   accesses         MemberAccess[]
   
@@ -173,7 +169,7 @@ model MemberArea {
 }
 
 // ===================================
-// 🎯 MEMBER CONTENT (Conteúdo da Área de Membros)
+// 🎯 MEMBER CONTENT
 // ===================================
 model MemberContent {
   id               String       @id @default(uuid())
@@ -182,14 +178,14 @@ model MemberContent {
   
   title            String
   description      String?
-  type             String       // 'VIDEO', 'PDF', 'AUDIO', 'TEXT', 'EXTERNAL_LINK'
-  contentUrl       String?      // URL do vídeo, PDF, etc
+  type             String       // 'VIDEO', 'PDF', 'AUDIO', 'TEXT'
+  contentUrl       String?
   thumbnailUrl     String?
+  textBody         String?      @db.Text
   
   order            Int          @default(0)
-  duration         Int?         // Duração em segundos (para vídeos)
-  
-  isPublic         Boolean      @default(false) // Se true, não precisa estar logado
+  duration         Int?         // Segundos
+  isPublic         Boolean      @default(false) 
   
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
@@ -199,7 +195,7 @@ model MemberContent {
 }
 
 // ===================================
-// 🎯 MEMBER ACCESS (Controle de Acesso)
+// 🎯 MEMBER ACCESS
 // ===================================
 model MemberAccess {
   id               String       @id @default(uuid())
@@ -210,11 +206,10 @@ model MemberAccess {
   memberAreaId     String
   memberArea       MemberArea   @relation(fields: [memberAreaId], references: [id], onDelete: Cascade)
   
-  // Como o acesso foi concedido
-  grantedBy        String       // 'MANUAL', 'HOTMART', 'KIWIFY', 'PURCHASE'
-  externalId       String?      // ID da transação externa (Hotmart, etc)
+  grantedBy        String       @default("PURCHASE") // 'MANUAL', 'PURCHASE'
+  externalId       String?
   
-  expiresAt        DateTime?    // null = acesso vitalício
+  expiresAt        DateTime?
   isActive         Boolean      @default(true)
   
   createdAt        DateTime     @default(now())
@@ -222,12 +217,10 @@ model MemberAccess {
   
   @@unique([userId, memberAreaId])
   @@index([userId])
-  @@index([memberAreaId])
-  @@index([expiresAt])
 }
 
 // ===================================
-// 3. MODELO PRODUCT (O Produto Digital)
+// 3. MODELO PRODUCT
 // ===================================
 model Product {
   id               String       @id @default(uuid())
@@ -270,7 +263,7 @@ model PaymentLink {
 }
 
 // ===================================
-// 5. MODELO DEPOSIT (O Pagamento PIX)
+// 5. MODELO DEPOSIT
 // ===================================
 model Deposit {
   id                   String      @id @default(uuid())
@@ -294,22 +287,22 @@ model Deposit {
   
   paymentLink          PaymentLink? @relation(fields: [paymentLinkId], references: [id])
   paymentLinkId        String?
-
+  
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 }
 
 // ===================================
-// 6. MODELO WITHDRAWAL (O Saque PIX)
+// 6. MODELO WITHDRAWAL
 // ===================================
 model Withdrawal {
   id               String       @id @default(uuid())
   userId           String
   user             User         @relation(fields: [userId], references: [id])
   
-  amount           Int          // Valor SOLICITADO (com taxa)
-  netAmount        Int          @default(0) // Valor LÍQUIDO (sem taxa)
-  feeAmount        Int          @default(0) // Taxa cobrada (8% + R$2)
+  amount           Int          // Valor SOLICITADO
+  netAmount        Int          @default(0) // Valor LÍQUIDO
+  feeAmount        Int          @default(0) // Taxa cobrada
   
   status           String       @default("PENDING")
   pixKey           String    
@@ -325,19 +318,17 @@ model Withdrawal {
   
   @@index([userId])
   @@index([status])
-  @@index([createdAt])
 }
 
 // ===================================
-// 7. MODELO MEMBERSHIP INTEGRATION
+// 7. MEMBERSHIP INTEGRATION
 // ===================================
 model MembershipIntegration {
   id               String       @id @default(uuid())
   name             String
   webhookUrl       String
-  platform         String       // 'HOTMART', 'KIWIFY', 'EDUZZ', etc
+  platform         String       
   secretKey        String?
-
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
 
@@ -346,11 +337,11 @@ model MembershipIntegration {
 }
 
 // ===================================
-// 8. MODELO MARKETPLACE PRODUCT
+// 8. MARKETPLACE PRODUCT
 // ===================================
 model MarketplaceProduct {
   id               String       @id @default(uuid())
-  commissionRate   Float        
+  commissionRate   Float      
   status           String       @default("AVAILABLE") 
   attributionType  String       @default("LAST_CLICK") 
 
@@ -364,7 +355,7 @@ model MarketplaceProduct {
 }
 
 // ===================================
-// 9. MODELO AFFILIATE
+// 9. AFFILIATE
 // ===================================
 model Affiliate {
   id               String       @id @default(uuid())
@@ -380,7 +371,7 @@ model Affiliate {
 }
 
 // ===================================
-// 10. MODELO SUBSCRIPTION PLAN
+// 10. SUBSCRIPTION PLAN
 // ===================================
 model SubscriptionPlan {
   id               String       @id @default(uuid())
@@ -401,7 +392,7 @@ model SubscriptionPlan {
 }
 
 // ===================================
-// 11. MODELO SUBSCRIPTION (Assinatura Ativa do Cliente)
+// 11. SUBSCRIPTION
 // ===================================
 model Subscription {
   id               String       @id @default(uuid())
@@ -410,7 +401,6 @@ model Subscription {
   status           String       @default("ACTIVE") 
   nextBillingDate  DateTime     
   gatewaySubscriptionId String?
-  
   plan             SubscriptionPlan @relation(fields: [planId], references: [id])
   planId           String
 
@@ -419,29 +409,26 @@ model Subscription {
 }
 
 // ===================================
-// 🎯 NOVO: TRANSACTION (Histórico de Transações)
+// 12. TRANSACTION (Extrato Unificado)
 // ===================================
 model Transaction {
   id               String       @id @default(uuid())
   userId           String
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  type             String       // 'DEPOSIT', 'WITHDRAWAL', 'FEE', 'REFUND', etc
+  type             String       // 'DEPOSIT', 'WITHDRAWAL', 'FEE'
   amount           Int          // Valor em centavos
   description      String?
   status           String       @default("COMPLETED")
   
-  referenceId      String?      // ID da transação relacionada (deposit, withdrawal, etc)
-  referenceType    String?      // Tipo da referência ('deposit', 'withdrawal', etc)
-  
-  metadata         Json?        // Dados adicionais em formato JSON
+  referenceId      String?
+  referenceType    String?
+  metadata         Json?
   
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
   @@index([userId])
   @@index([type])
-  @@index([status])
   @@index([createdAt])
-  @@index([referenceId])
 }
