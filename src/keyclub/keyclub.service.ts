@@ -1,209 +1,347 @@
 // src/keyclub/keyclub.service.ts
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
-import axios, { AxiosError } from 'axios';
+import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
+import axios from 'axios';
+import { ConfigService } from '@nestjs/config';
+
+interface CreateDepositRequest {
+  amount: number;
+  externalId: string;
+  payerName: string;
+  payerDocument: string;
+  payerEmail: string;
+  payerPhone?: string;
+}
+
+interface CreateDepositResponse {
+  transactionId: string;
+  status: string;
+  qrcode: string;
+  amount: number;
+}
+
+interface LoginResponse {
+  token: string;
+  user: {
+    id: number;
+    name: string;
+    email: string;
+  };
+}
 
 @Injectable()
-export class KeyclubService {
-  private readonly logger = new Logger(KeyclubService.name);
+export class KeyClubService {
+  private readonly logger = new Logger(KeyClubService.name);
+  private readonly apiUrl: string;
+  private readonly clientId: string;
+  private readonly clientSecret: string;
+  private readonly publicUrl: string;
   
-  private readonly apiUrl = process.env.KEY_CLUB_API_URL || process.env.KEY_CLUB_BASE_URL || 'https://api.the-key.club';
-  private readonly apiKey = process.env.KEY_CLUB_API_KEY;
+  private cachedToken: string | null = null;
+  private tokenExpiration: number = 0;
+  private isRefreshing = false;
+  private refreshSubscribers: Array<(token: string) => void> = [];
 
-  constructor() {
-    this.logger.log(`🔧 [Init] KeyClub API URL: ${this.apiUrl}`);
-    this.logger.log(`🔧 [Init] API Key configurada: ${this.apiKey ? 'Sim ✅' : 'Não ❌'}`);
-    
-    if (!this.apiKey) {
-      this.logger.error('❌ [Init] KEY_CLUB_API_KEY não configurada no .env!');
-    }
+  constructor(private readonly configService: ConfigService) {
+    this.apiUrl = this.configService.get<string>('KEY_CLUB_API_URL') || 'https://api.the-key.club';
+    this.clientId = this.configService.get<string>('KEY_CLUB_CLIENT_ID') || '';
+    this.clientSecret = this.configService.get<string>('KEY_CLUB_CLIENT_SECRET') || '';
+    this.publicUrl = this.configService.get<string>('PUBLIC_URL') || 'https://api.paylure.com.br';
+
+    this.logger.log('🔧 KeyClub Service Inicializado');
+    this.logger.log(`📡 API URL: ${this.apiUrl}`);
+    this.logger.log(`🔗 Callback URL: ${this.getCallbackUrl()}`);
   }
 
   /**
-   * 🔥 CRIAR DEPÓSITO NA KEYCLUB (FORMATO CORRETO)
+   * Decodifica JWT e extrai expiração
    */
-  async createDeposit(data: {
-    amount: number; // EM REAIS (ex: 10.00)
-    external_id: string;
-    clientCallbackUrl: string;
-    payer: {
-      name: string;
-      email: string;
-      document: string;
-      phone?: string;
-    };
-  }) {
+  private decodeToken(token: string): { exp: number } | null {
     try {
-      this.logger.log(`🔥 [CreateDeposit] ==========================================`);
-      this.logger.log(`📤 Payload enviado para KeyClub:`);
-      this.logger.log(JSON.stringify(data, null, 2));
-
-      // ✅ URL CORRIGIDA: /api/payments/deposit (conforme documentação)
-      const endpoint = `${this.apiUrl}/api/payments/deposit`;
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
       
-      this.logger.log(`🎯 Endpoint: ${endpoint}`);
-      this.logger.log(`🔑 API Key: ${this.apiKey?.substring(0, 20)}...`);
-
-      const response = await axios.post(endpoint, data, {
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000, // 30 segundos
-        validateStatus: (status) => status < 600, // Aceita qualquer status para logar
-      });
-
-      this.logger.log(`✅ [CreateDeposit] Resposta recebida da KeyClub:`);
-      this.logger.log(`📊 Status HTTP: ${response.status}`);
-      this.logger.log(`📦 Response Data:`);
-      this.logger.log(JSON.stringify(response.data, null, 2));
-
-      // ✅ VERIFICA SE A RESPOSTA FOI BEM-SUCEDIDA
-      if (response.status !== 200 && response.status !== 201) {
-        this.logger.error(`❌ Erro HTTP ${response.status}`);
-        throw new Error(`KeyClub retornou status ${response.status}: ${JSON.stringify(response.data)}`);
-      }
-
-      // ✅ EXTRAÇÃO CORRETA DA RESPOSTA
-      // Segundo a documentação, a resposta vem assim:
-      // {
-      //   "message": "Deposit created successfully.",
-      //   "qrCodeResponse": {
-      //     "transactionId": "abc123",
-      //     "status": "PENDING",
-      //     "qrcode": "00020126...",
-      //     "amount": 100.50
-      //   }
-      // }
-
-      const qrData = response.data.qrCodeResponse || response.data;
-      
-      if (!qrData.transactionId) {
-        this.logger.error('❌ transactionId não encontrado na resposta!');
-        this.logger.error('Resposta completa:', JSON.stringify(response.data, null, 2));
-        throw new Error('KeyClub não retornou transactionId');
-      }
-
-      if (!qrData.qrcode) {
-        this.logger.error('❌ QR Code não encontrado na resposta!');
-        this.logger.error('Resposta completa:', JSON.stringify(response.data, null, 2));
-        throw new Error('KeyClub não retornou QR Code');
-      }
-
-      this.logger.log(`✅ Depósito criado com sucesso!`);
-      this.logger.log(`🆔 Transaction ID: ${qrData.transactionId}`);
-      this.logger.log(`💰 Valor: R$ ${qrData.amount}`);
-      this.logger.log(`📱 QR Code: ${qrData.qrcode.substring(0, 50)}...`);
-
-      return response.data;
-      
+      const payload = Buffer.from(parts[1], 'base64').toString('utf-8');
+      return JSON.parse(payload);
     } catch (error) {
-      const axiosError = error as AxiosError;
-      
-      this.logger.error(`❌ [CreateDeposit] ERRO COMPLETO:`);
-      this.logger.error(`📋 Mensagem: ${axiosError.message}`);
-      
-      if (axiosError.response) {
-        this.logger.error(`📊 Status HTTP: ${axiosError.response.status}`);
-        this.logger.error(`📦 Response Data:`);
-        this.logger.error(JSON.stringify(axiosError.response.data, null, 2));
-        this.logger.error(`📋 Headers:`);
-        this.logger.error(JSON.stringify(axiosError.response.headers, null, 2));
-      } else if (axiosError.request) {
-        this.logger.error(`📡 Sem resposta do servidor`);
-        this.logger.error(`Request config:`, JSON.stringify(axiosError.config, null, 2));
-      } else {
-        this.logger.error(`⚠️ Erro ao configurar request:`, axiosError.message);
-      }
-
-      // Lança erro com mensagem clara
-      const errorMessage = (axiosError.response?.data as any)?.message 
-        || (axiosError.response?.data as any)?.error
-        || axiosError.message 
-        || 'Erro ao criar depósito na KeyClub';
-
-      throw new BadRequestException(errorMessage);
+      this.logger.error('❌ Erro ao decodificar token', error);
+      return null;
     }
   }
 
   /**
-   * 🔥 CRIAR SAQUE NA KEYCLUB
+   * Verifica se o token está próximo de expirar (menos de 5 minutos)
    */
-  async createWithdrawal(data: {
-    amount: number;
-    externalId: string;
-    pixKey: string;
-    keyType: string;
-    description?: string;
-  }) {
+  private isTokenExpiringSoon(): boolean {
+    if (!this.cachedToken || !this.tokenExpiration) return true;
+    
+    const now = Math.floor(Date.now() / 1000);
+    const timeRemaining = this.tokenExpiration - now;
+    
+    if (timeRemaining < 300) { // 5 minutos
+      this.logger.warn(`⚠️ Token vai expirar em ${Math.floor(timeRemaining / 60)} minutos`);
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Faz login na KeyClub e retorna o token
+   */
+  private async login(): Promise<string> {
+    try {
+      this.logger.log('🔐 [Login] Fazendo login na KeyClub...');
+      
+      const response = await axios.post<LoginResponse>(
+        `${this.apiUrl}/api/auth/login`,
+        {
+          client_id: this.clientId,
+          client_secret: this.clientSecret,
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 10000,
+        }
+      );
+
+      const token = response.data.token;
+      
+      if (!token) {
+        throw new Error('Token não retornado pela API');
+      }
+
+      // Decodifica o token para extrair a expiração
+      const decoded = this.decodeToken(token);
+      if (decoded && decoded.exp) {
+        this.tokenExpiration = decoded.exp;
+        const expirationDate = new Date(decoded.exp * 1000).toLocaleString('pt-BR');
+        this.logger.log(`✅ [Login] Login bem-sucedido!`);
+        this.logger.log(`⏰ Token expira em: ${expirationDate}`);
+        this.logger.log(`⏳ Tempo restante: ${Math.floor((decoded.exp - Date.now() / 1000) / 60)} minutos`);
+      }
+
+      this.cachedToken = token;
+      return token;
+
+    } catch (error: any) {
+      this.logger.error('❌ [Login] Erro ao fazer login na KeyClub:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+      });
+      throw new HttpException(
+        'Erro ao autenticar na KeyClub',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Obtém o token válido (renovando se necessário)
+   */
+  private async getToken(): Promise<string> {
+    // Se o token está válido e não vai expirar logo, retorna ele
+    if (this.cachedToken && !this.isTokenExpiringSoon()) {
+      return this.cachedToken;
+    }
+
+    // Se já está renovando, aguarda
+    if (this.isRefreshing) {
+      return new Promise((resolve) => {
+        this.refreshSubscribers.push(resolve);
+      });
+    }
+
+    // Inicia renovação
+    this.isRefreshing = true;
+    
+    try {
+      const token = await this.login();
+      
+      // Notifica todos que estavam aguardando
+      this.refreshSubscribers.forEach(callback => callback(token));
+      this.refreshSubscribers = [];
+      
+      return token;
+    } finally {
+      this.isRefreshing = false;
+    }
+  }
+
+  /**
+   * Retorna a URL do callback
+   */
+  private getCallbackUrl(): string {
+    return `${this.publicUrl}/api/v1/webhooks/keyclub`;
+  }
+
+  /**
+   * 🔥 CRIA UM DEPÓSITO PIX NA KEYCLUB
+   * 
+   * ⚠️ IMPORTANTE: Este método DEVE receber os dados do LEAD/CLIENTE,
+   * NÃO os dados do merchant/dono da conta KeyClub!
+   * 
+   * @param data Dados do depósito (amount, payerName, etc.)
+   * @returns Dados do QR Code PIX gerado
+   */
+  async createDeposit(data: CreateDepositRequest): Promise<CreateDepositResponse> {
     try {
       const callbackUrl = this.getCallbackUrl();
-
-      this.logger.log(`🔥 [CreateWithdrawal] Enviando saque para KeyClub:`);
+      
+      this.logger.log('🔥 [CreateDeposit] Enviando para KeyClub:');
       this.logger.log(`   💵 Valor: R$ ${data.amount.toFixed(2)}`);
       this.logger.log(`   🆔 ExternalId: ${data.externalId}`);
-      this.logger.log(`   🔑 Chave PIX: ${data.pixKey} (${data.keyType})`);
       this.logger.log(`   🔗 Callback: ${callbackUrl}`);
+      this.logger.log(`   👤 Pagador (LEAD): ${data.payerName} (${data.payerEmail})`);
+      this.logger.log(`   📄 CPF/CNPJ: ${data.payerDocument}`);
+
+      // ⚠️ ATENÇÃO: Validação dos dados do LEAD
+      if (!data.payerName || data.payerName.trim() === '') {
+        throw new Error('Nome do pagador (Lead) é obrigatório');
+      }
+      if (!data.payerEmail || !data.payerEmail.includes('@')) {
+        throw new Error('Email do pagador (Lead) é obrigatório e deve ser válido');
+      }
+      if (!data.payerDocument || data.payerDocument.length < 11) {
+        throw new Error('CPF/CNPJ do pagador (Lead) é obrigatório');
+      }
 
       const payload = {
         amount: data.amount,
         external_id: data.externalId,
-        pix_key: data.pixKey,
-        key_type: data.keyType,
-        description: data.description || 'Saque via plataforma',
+        payer: {
+          name: data.payerName,        // ✅ Nome do LEAD
+          document: data.payerDocument, // ✅ CPF do LEAD
+          email: data.payerEmail,       // ✅ Email do LEAD
+          ...(data.payerPhone && { phone: data.payerPhone }),
+        },
         clientCallbackUrl: callbackUrl,
       };
 
+      this.logger.debug('📦 Payload completo:', JSON.stringify(payload, null, 2));
+
+      // Obtém token válido
+      const token = await this.getToken();
+
+      // 🔥 ENDPOINT CORRIGIDO: /api/payments/deposit (NÃO /api/deposits/deposit!)
+      const endpoint = `${this.apiUrl}/api/payments/deposit`;
+      this.logger.log(`📡 Endpoint: ${endpoint}`);
+
       const response = await axios.post(
-        `${this.apiUrl}/api/withdrawals/withdraw`,
+        endpoint,
         payload,
         {
           headers: {
-            Authorization: `Bearer ${this.apiKey}`,
+            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          timeout: 30000,
-        },
+          timeout: 30000, // 30 segundos
+        }
       );
 
-      this.logger.log(`✅ [CreateWithdrawal] Saque criado com sucesso`);
-      this.logger.log(`   📋 Transaction ID: ${response.data.withdrawal?.transaction_id}`);
+      this.logger.log('✅ [CreateDeposit] Depósito criado com sucesso!');
+      this.logger.log(`   🆔 Transaction ID: ${response.data.qrCodeResponse?.transactionId}`);
+      this.logger.log(`   📱 QR Code gerado: ${response.data.qrCodeResponse?.qrcode?.substring(0, 50)}...`);
 
-      return response.data;
-    } catch (error) {
-      const axiosError = error as AxiosError;
-      
-      this.logger.error(`❌ [CreateWithdrawal] Erro ao criar saque na KeyClub:`);
-      this.logger.error(`   📄 Mensagem: ${axiosError.message}`);
-      
-      if (axiosError.response) {
-        this.logger.error(`   📊 Status HTTP: ${axiosError.response.status}`);
-        this.logger.error(`   📋 Dados: ${JSON.stringify(axiosError.response.data)}`);
+      return {
+        transactionId: response.data.qrCodeResponse.transactionId,
+        status: response.data.qrCodeResponse.status,
+        qrcode: response.data.qrCodeResponse.qrcode,
+        amount: response.data.qrCodeResponse.amount,
+      };
+
+    } catch (error: any) {
+      // Se recebeu 401, tenta renovar o token e tentar novamente (uma vez apenas)
+      if (error.response?.status === 401 && this.cachedToken) {
+        this.logger.warn('⚠️ Recebeu 401, renovando token e tentando novamente...');
+        this.cachedToken = null; // Invalida o token
+        this.tokenExpiration = 0;
+        
+        // Tenta novamente (recursão controlada - apenas 1 vez)
+        return this.createDepositWithRetry(data);
       }
 
-      throw new BadRequestException(
-        (axiosError.response?.data as any)?.message || 'Failed to create withdrawal in KeyClub',
+      this.logger.error('❌ [CreateDeposit] Erro ao criar depósito na KeyClub:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+        endpoint: `${this.apiUrl}/api/payments/deposit`,
+      });
+
+      // Retorna mensagem de erro detalhada
+      const errorMessage = error.response?.data?.message || error.message || 'Erro desconhecido';
+      throw new HttpException(
+        `Erro ao criar depósito: ${errorMessage}`,
+        error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }
 
   /**
-   * 🔧 OBTER URL DE CALLBACK
+   * Tenta criar depósito novamente após renovar o token (apenas 1 tentativa)
    */
-  private getCallbackUrl(): string {
-    const envUrl = process.env.KEY_CLUB_CALLBACK_URL;
+  private async createDepositWithRetry(data: CreateDepositRequest): Promise<CreateDepositResponse> {
+    try {
+      const token = await this.getToken();
+      const endpoint = `${this.apiUrl}/api/payments/deposit`;
+      const callbackUrl = this.getCallbackUrl();
 
-    if (envUrl) {
-      this.logger.log(`🔗 [CallbackUrl] Usando URL do .env: ${envUrl}`);
-      return envUrl;
+      const payload = {
+        amount: data.amount,
+        external_id: data.externalId,
+        payer: {
+          name: data.payerName,
+          document: data.payerDocument,
+          email: data.payerEmail,
+          ...(data.payerPhone && { phone: data.payerPhone }),
+        },
+        clientCallbackUrl: callbackUrl,
+      };
+
+      const response = await axios.post(endpoint, payload, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      });
+
+      this.logger.log('✅ [CreateDeposit] Depósito criado com sucesso na segunda tentativa!');
+
+      return {
+        transactionId: response.data.qrCodeResponse.transactionId,
+        status: response.data.qrCodeResponse.status,
+        qrcode: response.data.qrCodeResponse.qrcode,
+        amount: response.data.qrCodeResponse.amount,
+      };
+
+    } catch (error: any) {
+      this.logger.error('❌ [CreateDeposit] Erro na segunda tentativa:', error.response?.data);
+      throw error;
     }
+  }
 
-    const baseUrl = process.env.API_BASE_URL || process.env.BASE_URL || 'https://api.paylure.com.br';
-    const cleanBase = baseUrl.replace(/\/+$/, '');
-    const fallbackUrl = `${cleanBase}/api/webhooks/keyclub`;
-    
-    this.logger.warn(`⚠️ [CallbackUrl] KEY_CLUB_CALLBACK_URL não definida no .env`);
-    this.logger.warn(`   🔧 Usando fallback: ${fallbackUrl}`);
-    
-    return fallbackUrl;
+  /**
+   * Processa webhook da KeyClub (atualização de status de depósito)
+   */
+  async handleWebhook(payload: any): Promise<void> {
+    try {
+      this.logger.log('📩 [Webhook] Recebido da KeyClub:', JSON.stringify(payload, null, 2));
+
+      const { transaction_id, status, amount, type } = payload;
+
+      if (!transaction_id || !status) {
+        throw new Error('Webhook inválido: transaction_id ou status ausente');
+      }
+
+      this.logger.log(`🔄 [Webhook] Status atualizado: ${transaction_id} -> ${status}`);
+
+      // TODO: Atualizar o status do depósito no banco de dados
+      // Exemplo: await this.depositsService.updateStatus(transaction_id, status);
+
+    } catch (error: any) {
+      this.logger.error('❌ [Webhook] Erro ao processar webhook:', error.message);
+      throw error;
+    }
   }
 }
