@@ -1,9 +1,8 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { KeyclubService } from '../keyclub/keyclub.service';
 import { PrismaService } from 'src/prisma/prisma.service';
-import * as crypto from 'crypto'; // Usado para gerar IDs únicos
+import * as crypto from 'crypto';
 
-// O DTO que este serviço REALMENTE espera (vem do controller)
 export type CreateDepositServiceDto = {
   amount: number; // EM CENTAVOS
   externalId?: string;
@@ -23,9 +22,6 @@ export class DepositService {
     this.logger.log(`[DepositService] createDeposit chamado para userId=${userId}`);
     
     const amountInBRL = dto.amount / 100;
-
-    // 🔥 CORREÇÃO 1: Garante que SEMPRE exista um externalId
-    // Se o frontend não mandar, a gente cria um agora mesmo.
     const finalExternalId = dto.externalId || crypto.randomUUID();
 
     this.logger.log(
@@ -56,22 +52,17 @@ export class DepositService {
         throw new Error('Dados do merchant incompletos (CNPJ, Nome ou Email faltando).');
       }
 
-      // Limpa o CNPJ (remove pontos e traços) para enviar apenas números
       const cleanDocument = merchant.cnpj.replace(/\D/g, '');
 
       this.logger.log(`[DepositService] 🚀 Enviando para Keyclub: Payer=${merchant.storeName}, Doc=${cleanDocument}`);
 
-      // 3. CHAMA A KEYCLUB (Aqui estava o erro)
+      // 3. CHAMA A KEYCLUB - ✅ CORRIGIDO: Removido clientCallbackUrl e payer
       const keyclubResult = await this.keyclub.createDeposit({
         amount: amountInBRL, 
-        externalId: finalExternalId, // ✅ Agora garantimos que isso nunca é undefined
-        clientCallbackUrl: dto.callbackUrl || 'https://api.paylure.com.br/api/webhooks/keyclub', // Fallback se não vier
-        payer: {
-          name: merchant.storeName,
-          email: user.email,
-          document: cleanDocument,
-          // phone: undefined -- Removido para evitar erro de build
-        },
+        externalId: finalExternalId,
+        payerName: merchant.storeName,
+        payerEmail: user.email,
+        payerDocument: cleanDocument,
       });
 
       const qr = keyclubResult?.qrCodeResponse || keyclubResult;
@@ -85,12 +76,12 @@ export class DepositService {
       // 4. Gera Token do Webhook
       const uniqueToken = crypto.randomBytes(20).toString('hex');
 
-      // 5. SALVA NO PRISMA (Agora vai chegar aqui!)
+      // 5. SALVA NO PRISMA
       this.logger.log(`[DepositService] Salvando no DB...`);
       
       const newDeposit = await this.prisma.deposit.create({
         data: {
-          externalId: transactionId, // ID da Keyclub
+          externalId: transactionId,
           amountInCents: dto.amount,
           netAmountInCents: dto.amount,
           status: 'PENDING',
@@ -115,8 +106,6 @@ export class DepositService {
     } catch (err) {
       const msg = (err as Error).message || 'Erro desconhecido';
       this.logger.error(`[DepositService] ❌ ERRO: ${msg}`, (err as Error).stack);
-      
-      // Relança o erro para o Controller pegar e mostrar pro usuário
       throw new Error(msg);
     }
   }

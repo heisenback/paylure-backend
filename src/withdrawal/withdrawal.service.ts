@@ -21,10 +21,6 @@ export class WithdrawalService {
     private readonly systemSettings: SystemSettingsService,
   ) {}
 
-  /**
-   * 🎯 CALCULA TAXA DE SAQUE (DINÂMICA - Global ou Individual)
-   * Prioridade: Individual > Global
-   */
   private async calculateWithdrawalFee(
     userId: string,
     amountInCents: number,
@@ -34,7 +30,6 @@ export class WithdrawalService {
     feeInCents: number;
     netAmountInCents: number;
   }> {
-    // Busca configurações do usuário
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -44,7 +39,6 @@ export class WithdrawalService {
       },
     });
 
-    // ✅ VERIFICAÇÃO DE NULL
     if (!user) {
       throw new BadRequestException('Usuário não encontrado.');
     }
@@ -52,7 +46,6 @@ export class WithdrawalService {
     let feePercent: number;
     let feeFixed: number;
 
-    // Se usuário tem taxa individual, usa ela
     if (user.withdrawalFeePercent !== null && user.withdrawalFeeFixed !== null) {
       feePercent = user.withdrawalFeePercent;
       feeFixed = user.withdrawalFeeFixed;
@@ -60,7 +53,6 @@ export class WithdrawalService {
         `💼 Taxa INDIVIDUAL para ${user.name}: ${feePercent}% + R$ ${feeFixed}`,
       );
     } else {
-      // Senão, usa taxa global
       const globalFees = await this.systemSettings.getWithdrawalFees();
       feePercent = globalFees.percent;
       feeFixed = globalFees.fixed;
@@ -69,7 +61,6 @@ export class WithdrawalService {
       );
     }
 
-    // Calcula taxa em centavos
     const percentageFee = Math.round(amountInCents * (feePercent / 100));
     const fixedFeeInCents = Math.round(feeFixed * 100);
     const totalFee = percentageFee + fixedFeeInCents;
@@ -96,13 +87,11 @@ export class WithdrawalService {
 
     const requestedAmountInCents = dto.amount;
 
-    // 🎯 CALCULA TAXA DINÂMICA (Global ou Individual)
     const feeInfo = await this.calculateWithdrawalFee(
       userId,
       requestedAmountInCents,
     );
 
-    // Valida se o valor líquido é válido
     if (feeInfo.netAmountInCents <= 0) {
       throw new BadRequestException(
         `Valor de saque muito baixo. Taxa de R$ ${(feeInfo.feeInCents / 100).toFixed(2)} ` +
@@ -110,7 +99,6 @@ export class WithdrawalService {
       );
     }
 
-    // Valida se a KeyClub aceita esse valor (mínimo R$ 1,00)
     const netAmountInReais = Number(
       (feeInfo.netAmountInCents / 100).toFixed(2),
     );
@@ -129,7 +117,6 @@ export class WithdrawalService {
       throw new InternalServerErrorException('Usuário não encontrado.');
     }
 
-    // ✅ VERIFICA SE O USUÁRIO TEM SALDO SUFICIENTE
     if (userWithBalance.balance < requestedAmountInCents) {
       throw new BadRequestException(
         `Saldo insuficiente. Você tem R$ ${(userWithBalance.balance / 100).toFixed(2)}, ` +
@@ -141,7 +128,6 @@ export class WithdrawalService {
     let isKeyclubCalled = false;
 
     try {
-      // ✅ Debita valor solicitado e cria registro de saque
       await this.prisma.$transaction(async (tx) => {
         await tx.user.update({
           where: { id: userId },
@@ -177,19 +163,17 @@ export class WithdrawalService {
           `Withdrawal PENDING: #${withdrawalRecordId}`,
       );
 
-      // ✅ Chama KeyClub com o valor LÍQUIDO
       isKeyclubCalled = true;
 
       const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
-      const callbackUrl = `${process.env.BASE_URL || 'https://api.paylure.com.br'}/api/v1/keyclub/callback/${webhookToken}`;
 
+      // ✅ CORRIGIDO: pixKey e keyType ao invés de pix_key e key_type
       await this.keyclubService.createWithdrawal({
         amount: netAmountInReais,
         externalId: externalId,
-        pix_key: dto.pix_key,
-        key_type: keyTypeForKeyclub,
+        pixKey: dto.pix_key,
+        keyType: keyTypeForKeyclub,
         description: dto.description || 'Saque via Paylure',
-        clientCallbackUrl: callbackUrl,
       });
 
       this.logger.log(
@@ -211,7 +195,6 @@ export class WithdrawalService {
     } catch (e: any) {
       this.logger.error(`[Withdrawal] ❌ ERRO: ${e.message}`, e.stack);
 
-      // ✅ Se KeyClub falhou, reverte o saldo
       if (isKeyclubCalled && withdrawalRecordId) {
         const failureMessage = e.message.substring(0, 255);
         this.logger.warn(
@@ -258,9 +241,6 @@ export class WithdrawalService {
     }
   }
 
-  /**
-   * 🎯 PREVIEW DE SAQUE - Mostra quanto o usuário vai receber
-   */
   async previewWithdrawal(
     userId: string,
     amountInCents: number,
