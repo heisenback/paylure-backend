@@ -22,24 +22,18 @@ export class DepositService {
   async createDeposit(userId: string, dto: CreateDepositServiceDto) {
     this.logger.log(`[DepositService] ==========================================`);
     this.logger.log(`[DepositService] createDeposit chamado para userId=${userId}`);
-    this.logger.log(`[DepositService] Valor recebido: ${dto.amount} centavos`);
     
     // ✅ VALIDAÇÃO DO VALOR MÍNIMO
     if (!dto.amount || dto.amount < 100) { // Mínimo R$ 1,00
       throw new BadRequestException('Valor mínimo de depósito é R$ 1,00');
     }
     
-    // ✅ CONVERSÃO CORRETA: Centavos -> BRL
     const amountInBRL = dto.amount / 100;
     const finalExternalId = dto.externalId || crypto.randomUUID();
 
-    this.logger.log(
-      `[DepositService] Iniciando depósito de R$${amountInBRL.toFixed(2)} ` +
-      `| ID: ${finalExternalId}`
-    );
-
     try {
       // 1. Busca Usuário e Merchant
+      // Buscamos o merchant, mas não obrigamos o CNPJ dele ser o pagador se tiver CPF pessoal
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
         include: { merchant: true }
@@ -49,31 +43,33 @@ export class DepositService {
         throw new NotFoundException('Usuário não encontrado.');
       }
 
-      if (!user.merchant) {
-        throw new BadRequestException('Merchant não encontrado. Configure seus dados cadastrais primeiro.');
-      }
+      // Hack para acessar propriedades dinâmicas caso o TS reclame (cpf/document)
+      const userData = user as any;
 
-      const merchant = user.merchant;
-
-      // 2. Validação dos dados obrigatórios
-      if (!merchant.storeName || !merchant.cnpj || !user.email) {
-        this.logger.error(`[DepositService] ❌ Dados incompletos.`);
-        this.logger.error(`   Merchant: ${merchant.storeName}`);
-        this.logger.error(`   CNPJ: ${merchant.cnpj}`);
-        this.logger.error(`   Email: ${user.email}`);
-        throw new BadRequestException('Dados do merchant incompletos (CNPJ, Nome ou Email faltando).');
-      }
-
-      const cleanDocument = merchant.cnpj.replace(/\D/g, '');
-
-      // ✅ USA O NOME DO USUÁRIO (não da loja)
-      const payerName = user.name || merchant.storeName;
+      // 2. Lógica Inteligente de Documento (Smart Document Picker)
+      // Tenta: CNPJ do Merchant -> OU CPF do Usuário -> OU Documento genérico
+      const rawDocument = user.merchant?.cnpj || userData.cpf || userData.document || '';
+      const cleanDocument = rawDocument.replace(/\D/g, '');
       
-      this.logger.log(`[DepositService] 👤 Pagador: ${payerName}`);
-      this.logger.log(`[DepositService] 📧 Email: ${user.email}`);
-      this.logger.log(`[DepositService] 📄 Documento: ${cleanDocument}`);
+      const payerName = user.name || user.merchant?.storeName || 'Cliente Paylure';
 
-      // 3. ✅ CHAMA A KEYCLUB COM FORMATO CORRETO
+      this.logger.log(`[DepositService] 👤 Pagador Identificado: ${payerName}`);
+      this.logger.log(`[DepositService] 📄 Documento Bruto: ${rawDocument}`);
+      this.logger.log(`[DepositService] 📄 Documento Limpo: ${cleanDocument}`);
+
+      // 3. ✅ VALIDAÇÃO PREVENTIVA (Onde estava o erro)
+      if (!cleanDocument || cleanDocument.length < 11) {
+        this.logger.error(`[DepositService] ❌ Documento inválido ou muito curto: "${cleanDocument}"`);
+        throw new BadRequestException(
+          'CPF/CNPJ inválido no seu cadastro. Por favor, atualize seus dados (CPF ou CNPJ) no perfil.'
+        );
+      }
+
+      if (!user.email) {
+        throw new BadRequestException('Email é obrigatório para gerar o Pix.');
+      }
+
+      // 4. CHAMA A KEYCLUB
       const keyclubResult = await this.keyclub.createDeposit({
         amount: amountInBRL,
         externalId: finalExternalId,
@@ -82,28 +78,20 @@ export class DepositService {
         payerDocument: cleanDocument,
       });
 
-      this.logger.log('[DepositService] 🔥 Resposta da KeyClub:');
-      this.logger.log(JSON.stringify(keyclubResult, null, 2));
+      this.logger.log('[DepositService] 🔥 Resposta da KeyClub Recebida');
 
-      // 4. ✅ EXTRAI DADOS DA RESPOSTA (SEM qrCodeResponse)
+      // 5. Verifica resposta
       const transactionId = keyclubResult.transactionId;
       const qrCode = keyclubResult.qrcode;
 
-      if (!transactionId) {
-        this.logger.error('[DepositService] ❌ KeyClub não retornou transactionId.');
-        this.logger.error('[DepositService] Resposta completa:', JSON.stringify(keyclubResult, null, 2));
-        throw new BadRequestException('Falha ao obter transactionId da KeyClub.');
+      if (!transactionId || !qrCode) {
+        this.logger.error('[DepositService] ❌ Resposta incompleta da KeyClub.');
+        throw new BadRequestException('Erro ao gerar QR Code na adquirente.');
       }
 
-      if (!qrCode) {
-        this.logger.error('[DepositService] ❌ KeyClub não retornou QR Code.');
-        throw new BadRequestException('Falha ao obter QR Code da KeyClub.');
-      }
-
-      // 5. Gera Token do Webhook
+      // 6. Gera Token do Webhook e Salva
       const uniqueToken = crypto.randomBytes(20).toString('hex');
 
-      // 6. SALVA NO PRISMA
       this.logger.log(`[DepositService] 💾 Salvando no banco de dados...`);
       
       const newDeposit = await this.prisma.deposit.create({
@@ -120,12 +108,7 @@ export class DepositService {
         },
       });
       
-      this.logger.log(`[DepositService] ✅ SUCESSO TOTAL!`);
-      this.logger.log(`   🆔 Depósito ID: ${newDeposit.id}`);
-      this.logger.log(`   🎫 Transaction ID: ${transactionId}`);
-      this.logger.log(`   💰 Valor: R$ ${amountInBRL.toFixed(2)}`);
-      this.logger.log(`   📱 QR Code: ${qrCode.substring(0, 50)}...`);
-      this.logger.log(`==========================================`);
+      this.logger.log(`[DepositService] ✅ SUCESSO TOTAL! ID: ${newDeposit.id}`);
 
       return {
         message: 'Deposit created successfully.',
@@ -137,15 +120,15 @@ export class DepositService {
       
     } catch (err) {
       const error = err as Error;
-      const msg = error.message || 'Erro desconhecido';
-      this.logger.error(`[DepositService] ❌ ERRO FATAL: ${msg}`);
-      this.logger.error(error.stack);
+      this.logger.error(`[DepositService] ❌ ERRO: ${error.message}`);
       
+      // Repassa erros HTTP já conhecidos
       if (err instanceof BadRequestException || err instanceof NotFoundException) {
         throw err;
       }
       
-      throw new BadRequestException(`Erro ao processar depósito: ${msg}`);
+      // Trata erros genéricos
+      throw new BadRequestException(`Erro ao processar depósito: ${error.message}`);
     }
   }
 }
