@@ -115,12 +115,10 @@ export class AuthService {
     const isPasswordValid = await bcrypt.compare(dto.password, user.password);
     if (!isPasswordValid) throw new UnauthorizedException('E-mail ou senha inválidos.');
 
-    // 🔥 AUTO-FIX NO LOGIN: Se não tiver merchant, cria agora.
     if (!user.merchant) {
        user = await this.fixMissingMerchant(user.id, user.name);
     }
 
-    // 🎯 CORREÇÃO: Verificação de null antes de acessar propriedades
     if (!user) {
       throw new UnauthorizedException('Erro ao carregar dados do usuário.');
     }
@@ -142,31 +140,30 @@ export class AuthService {
   }
 
   async getUserWithBalance(userId: string) {
+    // 🔍 Alterado para buscar TUDO (include) para garantir que o 'balance' venha atualizado
+    // O 'select' manual as vezes causa cache ou esquece campos
     let user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: {
-        id: true, email: true, name: true, document: true, balance: true,
-        role: true, createdAt: true, updatedAt: true, apiKey: true,
-        merchant: { select: { id: true, storeName: true, cnpj: true } }
+      include: { 
+        merchant: true 
       },
     });
 
     if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    // 🔥 LOG DE DIAGNÓSTICO: Vamos ver quanto está vindo do banco
+    this.logger.log(`🔍 [GetUser] Usuário: ${user.email} | Saldo no Banco (Centavos): ${user.balance}`);
 
     // 🔥 AUTO-FIX NO DASHBOARD
     if (!user.merchant) {
       this.logger.warn(`⚠️ Usuário ${userId} acessou Dashboard sem Merchant. Corrigindo...`);
       const fixedUser = await this.fixMissingMerchant(userId, user.name);
       
-      // 🎯 CORREÇÃO: Verificação adicional de null
       if (fixedUser && fixedUser.merchant) {
+        // Recarrega o usuário corrigido
         user = {
-            ...user,
-            merchant: {
-                id: fixedUser.merchant.id,
-                storeName: fixedUser.merchant.storeName,
-                cnpj: fixedUser.merchant.cnpj
-            }
+            ...user, // Mantém dados base
+            merchant: fixedUser.merchant
         };
       }
     }
@@ -182,9 +179,12 @@ export class AuthService {
     const totalTrans = await this.prisma.deposit.count({ where: { userId: userId, status: 'CONFIRMED' } }) + 
                        await this.prisma.withdrawal.count({ where: { userId: userId, status: 'CONFIRMED' } });
 
+    // Remove dados sensíveis antes de retornar
+    const { password, apiSecret, ...safeUser } = user;
+
     return {
-      user: user,
-      balance: user.balance,
+      user: safeUser,        // O saldo está aqui dentro (user.balance)
+      balance: user.balance, // E também AQUI FORA explicitamente para o frontend achar fácil
       stats: {
         depositsToday: depositsToday._sum.netAmountInCents || 0,
         totalTransactions: totalTrans,
@@ -192,7 +192,6 @@ export class AuthService {
     };
   }
 
-  // 🎯 CORREÇÃO: Tipo de retorno explícito e verificação de null
   private async fixMissingMerchant(userId: string, userName: string) {
       try {
           const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);

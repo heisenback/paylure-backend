@@ -67,19 +67,17 @@ export class AuthController {
     }
   }
 
-  // ===================================
-  // 🚀 CORREÇÃO APLICADA AQUI
-  // ===================================
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
   async getProfile(@GetUser() user: User) {
-    this.logger.log(`👤 Perfil acessado: ${user.email}`);
+    this.logger.log(`👤 Perfil acessado: ${user.email} (ID: ${user.id})`);
     
     // 🎯 Busca o usuário, balance E OS STATS
     const fullProfileData = await this.authService.getUserWithBalance(user.id);
+
+    // 🔥 LOG DE DEPURAÇÃO: Confirma se o Controller está enviando o saldo certo
+    this.logger.log(`📤 Enviando perfil. Saldo: ${fullProfileData.balance}`);
     
-    // 🎯 Retorna no formato { success: true, data: { ... } }
-    //    que o novo frontend (page.tsx) espera.
     return { 
       success: true, 
       data: fullProfileData
