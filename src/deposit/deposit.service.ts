@@ -73,35 +73,21 @@ export class DepositService {
       this.logger.log(`[DepositService] 📧 Email: ${user.email}`);
       this.logger.log(`[DepositService] 📄 Documento: ${cleanDocument}`);
 
-      // 3. ✅ MONTA PAYLOAD NO FORMATO DA KEYCLUB
-      const callbackUrl = dto.callbackUrl || 
-        process.env.KEY_CLUB_CALLBACK_URL || 
-        `${process.env.BASE_URL}/api/webhooks/keyclub`;
-
-      const keyclubPayload = {
-        amount: amountInBRL, // Em BRL (ex: 10.00)
-        external_id: finalExternalId,
-        clientCallbackUrl: callbackUrl,
-        payer: {
-          name: payerName, // ✅ NOME DO USUÁRIO
-          email: user.email,
-          document: cleanDocument,
-        }
-      };
-
-      this.logger.log('[DepositService] 📦 Payload para KeyClub:');
-      this.logger.log(JSON.stringify(keyclubPayload, null, 2));
-
-      // 4. ✅ CHAMA A KEYCLUB
-      const keyclubResult = await this.keyclub.createDeposit(keyclubPayload);
+      // 3. ✅ CHAMA A KEYCLUB COM FORMATO CORRETO
+      const keyclubResult = await this.keyclub.createDeposit({
+        amount: amountInBRL,
+        externalId: finalExternalId,
+        payerName: payerName,
+        payerEmail: user.email,
+        payerDocument: cleanDocument,
+      });
 
       this.logger.log('[DepositService] 🔥 Resposta da KeyClub:');
       this.logger.log(JSON.stringify(keyclubResult, null, 2));
 
-      // 5. ✅ EXTRAI DADOS DA RESPOSTA
-      const qr = keyclubResult?.qrCodeResponse || keyclubResult;
-      const transactionId = qr?.transactionId;
-      const qrCode = qr?.qrcode;
+      // 4. ✅ EXTRAI DADOS DA RESPOSTA (SEM qrCodeResponse)
+      const transactionId = keyclubResult.transactionId;
+      const qrCode = keyclubResult.qrcode;
 
       if (!transactionId) {
         this.logger.error('[DepositService] ❌ KeyClub não retornou transactionId.');
@@ -114,10 +100,10 @@ export class DepositService {
         throw new BadRequestException('Falha ao obter QR Code da KeyClub.');
       }
 
-      // 6. Gera Token do Webhook
+      // 5. Gera Token do Webhook
       const uniqueToken = crypto.randomBytes(20).toString('hex');
 
-      // 7. SALVA NO PRISMA
+      // 6. SALVA NO PRISMA
       this.logger.log(`[DepositService] 💾 Salvando no banco de dados...`);
       
       const newDeposit = await this.prisma.deposit.create({
@@ -126,7 +112,7 @@ export class DepositService {
           amountInCents: dto.amount,
           netAmountInCents: dto.amount,
           status: 'PENDING',
-          payerName: payerName, // ✅ NOME DO USUÁRIO
+          payerName: payerName,
           payerEmail: user.email,
           payerDocument: cleanDocument,
           webhookToken: uniqueToken,
@@ -144,8 +130,8 @@ export class DepositService {
       return {
         message: 'Deposit created successfully.',
         transactionId: transactionId,
-        status: qr?.status || 'PENDING',
-        qrcode: qrCode, // ✅ RETORNA O QR CODE CORRETO
+        status: keyclubResult.status || 'PENDING',
+        qrcode: qrCode,
         amount: dto.amount,
       };
       
@@ -155,7 +141,6 @@ export class DepositService {
       this.logger.error(`[DepositService] ❌ ERRO FATAL: ${msg}`);
       this.logger.error(error.stack);
       
-      // ✅ LANÇA ERRO COM MENSAGEM CLARA
       if (err instanceof BadRequestException || err instanceof NotFoundException) {
         throw err;
       }

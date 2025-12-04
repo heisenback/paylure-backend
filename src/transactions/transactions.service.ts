@@ -95,13 +95,12 @@ export class TransactionsService {
       try {
         const keyTypeForKeyclub = dto.keyType === 'RANDOM' ? 'EVP' : dto.keyType;
         
-        // ✅ LINHA 104 CORRIGIDA: pixKey e keyType (não pix_key e key_type)
+        // ✅ CORRIGIDO: pixKeyType (não keyType)
         await this.keyclubService.createWithdrawal({
           amount: dto.amount,
           externalId: withdrawal.externalId,
           pixKey: dto.pixKey,
-          keyType: keyTypeForKeyclub,
-          description: dto.description || 'Saque Paylure',
+          pixKeyType: keyTypeForKeyclub,
         });
 
       } catch (error) {
@@ -231,7 +230,7 @@ export class TransactionsService {
     });
 
     try {
-      // ✅ LINHA 248 CORRIGIDA: payerName, payerEmail, payerDocument (não payer)
+      // ✅ CORRIGIDO: Formato correto da interface CreateDepositRequest
       const keyclubResponse = await this.keyclubService.createDeposit({
         amount: dto.amount,
         externalId: deposit.externalId,
@@ -240,9 +239,10 @@ export class TransactionsService {
         payerDocument: dto.payerDocument,
       });
       
+      // ✅ CORRIGIDO: qrcode (não pixCode)
       return {
         deposit,
-        pixCode: keyclubResponse.pixCode,
+        pixCode: keyclubResponse.qrcode,
       };
 
     } catch (error) {

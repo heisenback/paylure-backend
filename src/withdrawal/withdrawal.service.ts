@@ -57,7 +57,7 @@ export class WithdrawalService {
       feePercent = globalFees.percent;
       feeFixed = globalFees.fixed;
       this.logger.log(
-        `🌍 Taxa GLOBAL para ${user.name}: ${feePercent}% + R$ ${feeFixed}`,
+        `🌐 Taxa GLOBAL para ${user.name}: ${feePercent}% + R$ ${feeFixed}`,
       );
     }
 
@@ -167,13 +167,12 @@ export class WithdrawalService {
 
       const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
 
-      // ✅ CORRIGIDO: pixKey e keyType ao invés de pix_key e key_type
+      // ✅ CORRIGIDO: pixKeyType (não keyType)
       await this.keyclubService.createWithdrawal({
         amount: netAmountInReais,
         externalId: externalId,
         pixKey: dto.pix_key,
-        keyType: keyTypeForKeyclub,
-        description: dto.description || 'Saque via Paylure',
+        pixKeyType: keyTypeForKeyclub,
       });
 
       this.logger.log(
