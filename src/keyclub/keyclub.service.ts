@@ -177,13 +177,39 @@ export class KeyclubService implements OnModuleInit {
     };
   }
 
+  /**
+   * Helper para determinar a URL de Callback correta automaticamente
+   */
+  private getCallbackUrl(providedUrl?: string): string {
+    // 1. Se foi passado manualmente pelo controller, usa o manual
+    if (providedUrl) return providedUrl;
+
+    // 2. Se não, tenta pegar do ENV (Isso é o que faltava)
+    // Exemplo: https://api.paylure.com.br
+    const apiBase = process.env.API_BASE_URL; 
+    
+    if (apiBase) {
+        // Remove barra final se tiver e adiciona o caminho do webhook
+        const cleanBase = apiBase.replace(/\/+$/, '');
+        return `${cleanBase}/webhooks/keyclub`;
+    }
+
+    // 3. Se não tiver nada configurado, avisa no log (Erro de configuração)
+    this.logger.warn('⚠️ ATENÇÃO: Nenhuma URL de API configurada (API_BASE_URL). O Webhook NÃO VAI CHEGAR.');
+    return '';
+  }
+
   async createDeposit(input: CreateDepositInput) {
     if (!input.amount || input.amount < 1) throw new BadRequestException('Valor inválido (Mín R$ 1,00)');
+
+    // Gera a URL correta
+    const callbackUrl = this.getCallbackUrl(input.clientCallbackUrl);
+    this.logger.log(`🔗 [CreateDeposit] Callback URL definida: ${callbackUrl}`);
 
     const payload = {
       amount: Number(input.amount.toFixed(2)),
       external_id: input.externalId || `DEP-${Date.now()}`,
-      clientCallbackUrl: input.clientCallbackUrl,
+      clientCallbackUrl: callbackUrl, // Envia a URL calculada
       payer: {
         name: input.payer.name || 'Cliente',
         email: input.payer.email,
@@ -201,13 +227,16 @@ export class KeyclubService implements OnModuleInit {
   async createWithdrawal(input: CreateWithdrawalInput) {
     const amount = Number(input.amount);
     
+    // Gera a URL correta
+    const callbackUrl = this.getCallbackUrl(input.clientCallbackUrl);
+
     const payload = {
       amount: Number(amount.toFixed(2)),
       external_id: input.externalId,
       pix_key: input.pix_key,
       key_type: input.key_type,
       description: input.description,
-      clientCallbackUrl: input.clientCallbackUrl,
+      clientCallbackUrl: callbackUrl, // Envia a URL calculada
     };
 
     return this.withAuthRetry(async () => {
