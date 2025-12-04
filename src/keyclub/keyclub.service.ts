@@ -4,8 +4,20 @@ import axios from 'axios';
 @Injectable()
 export class KeyclubService {
   private readonly logger = new Logger(KeyclubService.name);
-  private readonly apiUrl = process.env.KEY_CLUB_API_URL;
+  
+  // ✅ CORRIGIDO: Usa KEY_CLUB_API_URL com fallback para KEY_CLUB_BASE_URL
+  private readonly apiUrl = process.env.KEY_CLUB_API_URL || process.env.KEY_CLUB_BASE_URL || 'https://api.the-key.club';
   private readonly apiKey = process.env.KEY_CLUB_API_KEY;
+
+  constructor() {
+    // ✅ Log de inicialização para debug
+    this.logger.log(`🔧 [Init] KeyClub API URL: ${this.apiUrl}`);
+    this.logger.log(`🔧 [Init] API Key configurada: ${this.apiKey ? 'Sim' : 'Não'}`);
+    
+    if (!this.apiKey) {
+      this.logger.error('❌ [Init] KEY_CLUB_API_KEY não configurada no .env!');
+    }
+  }
 
   /**
    * 🔥 CRIAR DEPÓSITO NA PAYLURE (KeyClub)
@@ -138,7 +150,7 @@ export class KeyclubService {
     }
 
     // ⚠️ Fallback - construir URL automaticamente
-    const baseUrl = process.env.API_BASE_URL || 'https://api.paylure.com.br';
+    const baseUrl = process.env.API_BASE_URL || process.env.BASE_URL || 'https://api.paylure.com.br';
     const cleanBase = baseUrl.replace(/\/+$/, ''); // Remove barras finais
     
     // ✅ CORRIGIDO: Retorna SEM /v1
