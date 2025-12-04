@@ -28,9 +28,16 @@ interface LoginResponse {
   };
 }
 
+interface CreateWithdrawalRequest {
+  amount: number;
+  externalId: string;
+  pixKey: string;
+  pixKeyType: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'EVP';
+}
+
 @Injectable()
-export class KeyClubService {
-  private readonly logger = new Logger(KeyClubService.name);
+export class KeyclubService {
+  private readonly logger = new Logger(KeyclubService.name);
   private readonly apiUrl: string;
   private readonly clientId: string;
   private readonly clientSecret: string;
@@ -223,7 +230,7 @@ export class KeyClubService {
       // Obtém token válido
       const token = await this.getToken();
 
-      // 🔥 ENDPOINT CORRIGIDO: /api/payments/deposit (NÃO /api/deposits/deposit!)
+      // 🔥 ENDPOINT CORRETO: /api/payments/deposit (NÃO /api/deposits/deposit!)
       const endpoint = `${this.apiUrl}/api/payments/deposit`;
       this.logger.log(`📡 Endpoint: ${endpoint}`);
 
@@ -318,6 +325,108 @@ export class KeyClubService {
     } catch (error: any) {
       this.logger.error('❌ [CreateDeposit] Erro na segunda tentativa:', error.response?.data);
       throw error;
+    }
+  }
+
+  /**
+   * 🔥 CRIA UM SAQUE PIX NA KEYCLUB
+   */
+  async createWithdrawal(data: CreateWithdrawalRequest) {
+    try {
+      const token = await this.getToken();
+      const callbackUrl = this.getCallbackUrl();
+
+      this.logger.log('🔥 [CreateWithdrawal] Enviando para KeyClub:');
+      this.logger.log(`   💵 Valor: R$ ${data.amount.toFixed(2)}`);
+      this.logger.log(`   🆔 ExternalId: ${data.externalId}`);
+      this.logger.log(`   🔗 Callback: ${callbackUrl}`);
+      this.logger.log(`   🔑 Chave PIX: ${data.pixKey} (Tipo: ${data.pixKeyType})`);
+
+      const payload = {
+        amount: data.amount,
+        external_id: data.externalId,
+        pix_key: data.pixKey,
+        pix_key_type: data.pixKeyType,
+        clientCallbackUrl: callbackUrl,
+      };
+
+      const endpoint = `${this.apiUrl}/api/payments/withdraw`;
+      this.logger.log(`📡 Endpoint: ${endpoint}`);
+
+      const response = await axios.post(
+        endpoint,
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }
+      );
+
+      this.logger.log('✅ [CreateWithdrawal] Saque criado com sucesso!');
+      this.logger.log(`   🆔 Transaction ID: ${response.data.transactionId}`);
+
+      return response.data;
+
+    } catch (error: any) {
+      if (error.response?.status === 401 && this.cachedToken) {
+        this.logger.warn('⚠️ Recebeu 401, renovando token e tentando novamente...');
+        this.cachedToken = null;
+        this.tokenExpiration = 0;
+        return this.createWithdrawal(data);
+      }
+
+      this.logger.error('❌ [CreateWithdrawal] Erro ao criar saque na KeyClub:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+      });
+
+      const errorMessage = error.response?.data?.message || error.message || 'Erro desconhecido';
+      throw new HttpException(
+        `Erro ao criar saque: ${errorMessage}`,
+        error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Consulta o status de uma transação
+   */
+  async checkTransactionStatus(transactionId: string) {
+    try {
+      const token = await this.getToken();
+
+      this.logger.log(`🔍 [CheckStatus] Consultando status da transação: ${transactionId}`);
+
+      const response = await axios.get(
+        `${this.apiUrl}/api/payments/status/${transactionId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          timeout: 10000,
+        }
+      );
+
+      this.logger.log(`✅ [CheckStatus] Status: ${response.data.status}`);
+      return response.data;
+
+    } catch (error: any) {
+      if (error.response?.status === 401 && this.cachedToken) {
+        this.logger.warn('⚠️ Recebeu 401, renovando token e tentando novamente...');
+        this.cachedToken = null;
+        this.tokenExpiration = 0;
+        return this.checkTransactionStatus(transactionId);
+      }
+
+      this.logger.error('❌ [CheckStatus] Erro ao consultar status:', error.message);
+      throw new HttpException(
+        error.response?.data?.message || 'Erro ao consultar status',
+        error.response?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 
