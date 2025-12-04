@@ -19,8 +19,11 @@ export class DepositService {
   ) {}
 
   async createDeposit(userId: string, dto: CreateDepositServiceDto) {
+    this.logger.log(`[DepositService] ==========================================`);
     this.logger.log(`[DepositService] createDeposit chamado para userId=${userId}`);
+    this.logger.log(`[DepositService] Valor recebido: ${dto.amount} centavos`);
     
+    // ✅ CONVERSÃO CORRETA: Centavos -> BRL
     const amountInBRL = dto.amount / 100;
     const finalExternalId = dto.externalId || crypto.randomUUID();
 
@@ -48,36 +51,68 @@ export class DepositService {
 
       // 2. Validação dos dados obrigatórios
       if (!merchant.storeName || !merchant.cnpj || !user.email) {
-        this.logger.error(`[DepositService] ❌ Dados incompletos. Merchant: ${merchant.storeName}, CNPJ: ${merchant.cnpj}, Email: ${user.email}`);
+        this.logger.error(`[DepositService] ❌ Dados incompletos.`);
+        this.logger.error(`   Merchant: ${merchant.storeName}`);
+        this.logger.error(`   CNPJ: ${merchant.cnpj}`);
+        this.logger.error(`   Email: ${user.email}`);
         throw new Error('Dados do merchant incompletos (CNPJ, Nome ou Email faltando).');
       }
 
       const cleanDocument = merchant.cnpj.replace(/\D/g, '');
 
-      this.logger.log(`[DepositService] 🚀 Enviando para Keyclub: Payer=${merchant.storeName}, Doc=${cleanDocument}`);
+      // ✅ USA O NOME DO USUÁRIO (não da loja)
+      const payerName = user.name || merchant.storeName;
+      
+      this.logger.log(`[DepositService] 👤 Pagador: ${payerName}`);
+      this.logger.log(`[DepositService] 📧 Email: ${user.email}`);
+      this.logger.log(`[DepositService] 📄 Documento: ${cleanDocument}`);
 
-      // 3. CHAMA A KEYCLUB - ✅ CORRIGIDO: Removido clientCallbackUrl e payer
-      const keyclubResult = await this.keyclub.createDeposit({
-        amount: amountInBRL, 
-        externalId: finalExternalId,
-        payerName: merchant.storeName,
-        payerEmail: user.email,
-        payerDocument: cleanDocument,
-      });
+      // 3. ✅ MONTA PAYLOAD NO FORMATO DA KEYCLUB
+      const callbackUrl = dto.callbackUrl || 
+        process.env.KEY_CLUB_CALLBACK_URL || 
+        `${process.env.BASE_URL}/api/webhooks/keyclub`;
 
+      const keyclubPayload = {
+        amount: amountInBRL, // Em BRL (ex: 10.00)
+        external_id: finalExternalId,
+        clientCallbackUrl: callbackUrl,
+        payer: {
+          name: payerName, // ✅ NOME DO USUÁRIO
+          email: user.email,
+          document: cleanDocument,
+        }
+      };
+
+      this.logger.log('[DepositService] 📦 Payload para KeyClub:');
+      this.logger.log(JSON.stringify(keyclubPayload, null, 2));
+
+      // 4. ✅ CHAMA A KEYCLUB
+      const keyclubResult = await this.keyclub.createDeposit(keyclubPayload);
+
+      this.logger.log('[DepositService] 📥 Resposta da KeyClub:');
+      this.logger.log(JSON.stringify(keyclubResult, null, 2));
+
+      // 5. ✅ EXTRAI DADOS DA RESPOSTA
       const qr = keyclubResult?.qrCodeResponse || keyclubResult;
       const transactionId = qr?.transactionId;
+      const qrCode = qr?.qrcode;
 
       if (!transactionId) {
         this.logger.error('[DepositService] ❌ KeyClub não retornou transactionId.');
+        this.logger.error('[DepositService] Resposta completa:', JSON.stringify(keyclubResult, null, 2));
         throw new Error('Falha ao obter transactionId da KeyClub.');
       }
 
-      // 4. Gera Token do Webhook
+      if (!qrCode) {
+        this.logger.error('[DepositService] ❌ KeyClub não retornou QR Code.');
+        throw new Error('Falha ao obter QR Code da KeyClub.');
+      }
+
+      // 6. Gera Token do Webhook
       const uniqueToken = crypto.randomBytes(20).toString('hex');
 
-      // 5. SALVA NO PRISMA
-      this.logger.log(`[DepositService] Salvando no DB...`);
+      // 7. SALVA NO PRISMA
+      this.logger.log(`[DepositService] 💾 Salvando no banco de dados...`);
       
       const newDeposit = await this.prisma.deposit.create({
         data: {
@@ -85,28 +120,36 @@ export class DepositService {
           amountInCents: dto.amount,
           netAmountInCents: dto.amount,
           status: 'PENDING',
-          payerName: merchant.storeName,
+          payerName: payerName, // ✅ NOME DO USUÁRIO
           payerEmail: user.email,
-          payerDocument: merchant.cnpj,
+          payerDocument: cleanDocument,
           webhookToken: uniqueToken,
           user: { connect: { id: userId } },
         },
       });
       
-      this.logger.log(`[DepositService] ✅ Sucesso! Depósito salvo: ${newDeposit.id}`);
+      this.logger.log(`[DepositService] ✅ SUCESSO TOTAL!`);
+      this.logger.log(`   🆔 Depósito ID: ${newDeposit.id}`);
+      this.logger.log(`   🎫 Transaction ID: ${transactionId}`);
+      this.logger.log(`   💰 Valor: R$ ${amountInBRL.toFixed(2)}`);
+      this.logger.log(`   📱 QR Code: ${qrCode.substring(0, 50)}...`);
+      this.logger.log(`==========================================`);
 
       return {
         message: 'Deposit created successfully.',
         transactionId: transactionId,
         status: qr?.status || 'PENDING',
-        qrcode: qr?.qrcode,
+        qrcode: qrCode, // ✅ RETORNA O QR CODE CORRETO
         amount: dto.amount,
       };
       
     } catch (err) {
       const msg = (err as Error).message || 'Erro desconhecido';
-      this.logger.error(`[DepositService] ❌ ERRO: ${msg}`, (err as Error).stack);
-      throw new Error(msg);
+      this.logger.error(`[DepositService] ❌ ERRO FATAL: ${msg}`);
+      this.logger.error((err as Error).stack);
+      
+      // ✅ LANÇA ERRO COM MENSAGEM CLARA
+      throw new Error(`Erro ao processar depósito: ${msg}`);
     }
   }
 }
