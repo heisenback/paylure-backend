@@ -27,9 +27,12 @@ model User {
   apiKey           String       @unique 
   apiSecret        String       @unique 
 
-  // 🎯 TAXAS E SAQUES (Corrigido para o Admin Controller)
-  withdrawalFeePercent  Float?  @default(0.0) // Taxa personalizada %
-  withdrawalFeeFixed    Int?    @default(0)   // Taxa fixa em Centavos (Int é melhor para dinheiro)
+  // 🎯 TAXAS E SAQUES
+  withdrawalFeePercent  Float?    @default(0.0) // Taxa personalizada %
+  withdrawalFeeFixed    Int?      @default(0)   // Taxa fixa em Centavos
+  
+  // 👇 NOVO CAMPO: Saque Automático (False = Manual / True = Automático)
+  isAutoWithdrawal      Boolean   @default(false)
 
   // 🎯 2FA (Autenticação de Dois Fatores)
   twoFactorEnabled Boolean      @default(false)
@@ -123,6 +126,7 @@ model PushSubscription {
 model Merchant {
   id               String       @id @default(uuid())
   storeName        String
+  
   cnpj             String       @unique
   logoUrl          String?
   pixKey           String?
@@ -208,7 +212,6 @@ model MemberAccess {
   
   grantedBy        String       @default("PURCHASE") // 'MANUAL', 'PURCHASE'
   externalId       String?
-  
   expiresAt        DateTime?
   isActive         Boolean      @default(true)
   
@@ -284,10 +287,8 @@ model Deposit {
 
   merchant             Merchant?   @relation(fields: [merchantId], references: [id])
   merchantId           String?
-  
   paymentLink          PaymentLink? @relation(fields: [paymentLinkId], references: [id])
   paymentLinkId        String?
-  
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 }
@@ -424,7 +425,6 @@ model Transaction {
   referenceId      String?
   referenceType    String?
   metadata         Json?
-  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   

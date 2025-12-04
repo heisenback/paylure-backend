@@ -211,7 +211,7 @@ export class AdminController {
   }
 
   // ===================================
-  // 🎯 DELETE /api/v1/admin/users/:userId/withdrawal-fees
+  // 🎯 POST /api/v1/admin/users/:userId/withdrawal-fees/reset
   // Remove taxa individual (volta para taxa global)
   // ===================================
   @HttpCode(HttpStatus.OK)
@@ -231,5 +231,31 @@ export class AdminController {
       success: true,
       message: 'Taxa individual removida. Usuário voltou a usar taxa global.',
     };
+  }
+
+  // ===================================
+  // 🔄 MUDAR SAQUE AUTOMÁTICO/MANUAL (NOVO)
+  // ===================================
+  @Put('users/:userId/auto-withdrawal')
+  @HttpCode(HttpStatus.OK)
+  async toggleAutoWithdrawal(
+    @Param('userId') userId: string,
+    @Body() body: { enabled: boolean }
+  ) {
+    this.logger.log(`[ADMIN] Alterando saque auto user ${userId} para ${body.enabled}`);
+    return this.adminService.toggleAutoWithdrawal(userId, body.enabled);
+  }
+
+  // ===================================
+  // 💰 GERENCIAR SALDO (NOVO)
+  // ===================================
+  @Post('users/:userId/balance')
+  @HttpCode(HttpStatus.OK)
+  async manageBalance(
+    @Param('userId') userId: string,
+    @Body() body: { type: 'ADD' | 'REMOVE'; amountInCents: number; description?: string }
+  ) {
+    this.logger.log(`[ADMIN] Gerenciando saldo user ${userId}: ${body.type} ${body.amountInCents}`);
+    return this.adminService.manageUserBalance(userId, body.type, body.amountInCents, body.description);
   }
 }

@@ -1,5 +1,5 @@
 // src/admin/admin.service.ts
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -272,6 +272,8 @@ export class AdminService {
           name: true,
           balance: true,
           role: true,
+          document: true,
+          isAutoWithdrawal: true, // ✅ Campo Importante
           createdAt: true,
           _count: {
             select: {
@@ -347,5 +349,68 @@ export class AdminService {
         limit,
       },
     };
+  }
+
+  // ===================================
+  // 👇 NOVAS FUNÇÕES (SAQUE AUTO & SALDO)
+  // ===================================
+
+  /**
+   * Ativa ou Desativa Saque Automático
+   */
+  async toggleAutoWithdrawal(userId: string, enabled: boolean) {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { isAutoWithdrawal: enabled },
+      select: { id: true, email: true, isAutoWithdrawal: true }
+    });
+    this.logger.log(`⚙️ Saque automático para ${user.email} definido como: ${enabled}`);
+    return { success: true, user };
+  }
+
+  /**
+   * Adiciona ou Remove Saldo Manualmente
+   */
+  async manageUserBalance(
+    userId: string, 
+    type: 'ADD' | 'REMOVE', 
+    amount: number, 
+    description?: string
+  ) {
+    if (amount <= 0) throw new BadRequestException('Valor deve ser positivo');
+
+    return await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) throw new BadRequestException('Usuário não encontrado');
+
+      if (type === 'REMOVE' && user.balance < amount) {
+        throw new BadRequestException('Saldo insuficiente para remoção');
+      }
+
+      // Atualiza o saldo
+      const updatedUser = await tx.user.update({
+        where: { id: userId },
+        data: {
+          balance: type === 'ADD' ? { increment: amount } : { decrement: amount }
+        }
+      });
+
+      // Cria registro na tabela Transaction para aparecer no extrato
+      await tx.transaction.create({
+        data: {
+          userId,
+          type: type === 'ADD' ? 'DEPOSIT' : 'WITHDRAWAL', // Usa tipos compatíveis
+          amount: amount,
+          status: 'COMPLETED',
+          description: description || (type === 'ADD' ? 'Ajuste Admin (Crédito)' : 'Ajuste Admin (Débito)'),
+          referenceId: `ADMIN-ADJ-${Date.now()}`,
+          metadata: { type: 'ADMIN_ADJUSTMENT', adminAction: type }
+        }
+      });
+
+      this.logger.log(`💰 Saldo user ${user.email} ajustado: ${type} ${amount}. Novo: ${updatedUser.balance}`);
+
+      return { success: true, newBalance: updatedUser.balance };
+    });
   }
 }

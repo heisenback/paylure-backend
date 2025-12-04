@@ -128,6 +128,7 @@ export class WithdrawalService {
     let isKeyclubCalled = false;
 
     try {
+      // 1. Inicia Transação no Banco (Debita Saldo + Cria Registro)
       await this.prisma.$transaction(async (tx) => {
         await tx.user.update({
           where: { id: userId },
@@ -156,48 +157,67 @@ export class WithdrawalService {
       });
 
       this.logger.log(
-        `[Withdrawal] ✅ Saldo debitado. ` +
-          `Valor solicitado: R$ ${(requestedAmountInCents / 100).toFixed(2)} | ` +
-          `Taxa (${feeInfo.feePercent}% + R$ ${feeInfo.feeFixed}): R$ ${(feeInfo.feeInCents / 100).toFixed(2)} | ` +
-          `Enviando para KeyClub: R$ ${netAmountInReais.toFixed(2)} | ` +
-          `Withdrawal PENDING: #${withdrawalRecordId}`,
+        `[Withdrawal] ✅ Saldo debitado. Withdrawal PENDING: #${withdrawalRecordId}`,
       );
 
-      isKeyclubCalled = true;
+      // 2. Verifica se é Saque AUTOMÁTICO ou MANUAL
+      if (userWithBalance.isAutoWithdrawal) {
+        this.logger.log(`🚀 [Auto] Usuário ${userWithBalance.email} tem saque automático. Processando com KeyClub...`);
+        
+        isKeyclubCalled = true;
+        const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
 
-      const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
+        await this.keyclubService.createWithdrawal({
+          amount: netAmountInReais,
+          externalId: externalId,
+          pixKey: dto.pix_key,
+          pixKeyType: keyTypeForKeyclub,
+        });
 
-      // ✅ CORRIGIDO: pixKeyType (não keyType)
-      await this.keyclubService.createWithdrawal({
-        amount: netAmountInReais,
-        externalId: externalId,
-        pixKey: dto.pix_key,
-        pixKeyType: keyTypeForKeyclub,
-      });
+        this.logger.log(
+          `[Withdrawal] ✅ Saque automático enviado para KeyClub: ${externalId}`,
+        );
 
-      this.logger.log(
-        `[Withdrawal] ✅ Saque enviado para KeyClub: ${externalId}`,
-      );
+        return {
+          success: true,
+          message: 'Saque enviado para processamento.',
+          transactionId: externalId,
+          requestedAmount: requestedAmountInCents,
+          status: 'PROCESSING',
+          fee: feeInfo.feeInCents,
+          netAmount: feeInfo.netAmountInCents,
+          feeDetails: {
+            percent: feeInfo.feePercent,
+            fixed: feeInfo.feeFixed,
+          },
+        };
 
-      return {
-        success: true,
-        message: 'Saque solicitado com sucesso. Aguarde confirmação.',
-        transactionId: externalId,
-        requestedAmount: requestedAmountInCents,
-        fee: feeInfo.feeInCents,
-        netAmount: feeInfo.netAmountInCents,
-        feeDetails: {
-          percent: feeInfo.feePercent,
-          fixed: feeInfo.feeFixed,
-        },
-      };
+      } else {
+        // 3. Saque MANUAL (Cai aqui se isAutoWithdrawal = false)
+        this.logger.log(`👀 [Manual] Usuário ${userWithBalance.email} requer aprovação. Saque retido como PENDING.`);
+        
+        return {
+          success: true,
+          message: 'Saque solicitado. Aguardando aprovação do administrador.',
+          transactionId: externalId,
+          requestedAmount: requestedAmountInCents,
+          status: 'PENDING_APPROVAL',
+          fee: feeInfo.feeInCents,
+          netAmount: feeInfo.netAmountInCents,
+          feeDetails: {
+            percent: feeInfo.feePercent,
+            fixed: feeInfo.feeFixed,
+          },
+        };
+      }
+
     } catch (e: any) {
       this.logger.error(`[Withdrawal] ❌ ERRO: ${e.message}`, e.stack);
 
-      if (isKeyclubCalled && withdrawalRecordId) {
+      if (withdrawalRecordId) {
         const failureMessage = e.message.substring(0, 255);
         this.logger.warn(
-          `[Withdrawal] ⚠️ KeyClub falhou. Revertendo saldo do usuário ${userId}...`,
+          `[Withdrawal] ⚠️ Falha. Revertendo saldo do usuário ${userId}...`,
         );
 
         try {
