@@ -1,3 +1,4 @@
+// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { ConfigModule } from '@nestjs/config';
@@ -21,7 +22,7 @@ import { ReportModule } from './report/report.module';
 import { PublicApiModule } from './api/public-api.module';
 import { SocketModule } from './gateway/socket.module';
 import { PushNotificationModule } from './push-notification/push-notification.module';
-import { AdminModule } from './admin/admin.module'; // 🎯 ADICIONAR
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -48,7 +49,7 @@ import { AdminModule } from './admin/admin.module'; // 🎯 ADICIONAR
     PublicApiModule,
     SocketModule,
     PushNotificationModule,
-    AdminModule, // 🎯 ADICIONAR AQUI
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [],
