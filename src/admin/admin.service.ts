@@ -1,7 +1,7 @@
 // src/admin/admin.service.ts
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { KeyclubService } from '../keyclub/keyclub.service'; // 👈 Novo Import
+import { KeyclubService } from '../keyclub/keyclub.service';
 
 @Injectable()
 export class AdminService {
@@ -9,7 +9,7 @@ export class AdminService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly keyclubService: KeyclubService, // 👈 Injeção do KeyClub
+    private readonly keyclubService: KeyclubService,
   ) {}
 
   // ===================================
@@ -22,7 +22,6 @@ export class AdminService {
     thisWeekStart.setDate(today.getDate() - today.getDay());
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    // Consultas paralelas para performance
     const [
       totalUsers,
       totalDeposits,
@@ -293,7 +292,9 @@ export class AdminService {
     }
 
     const amountInReais = withdrawal.netAmount / 100; 
-    const keyTypeForKeyclub = withdrawal.keyType === 'RANDOM' ? 'EVP' : withdrawal.keyType;
+    
+    // 🔥 CORREÇÃO AQUI: "as any" para forçar o TypeScript a aceitar o tipo
+    const keyTypeForKeyclub = (withdrawal.keyType === 'RANDOM' ? 'EVP' : withdrawal.keyType) as any;
 
     try {
       this.logger.log(`💸 Enviando PIX de R$ ${amountInReais} para ${withdrawal.pixKey}`);
