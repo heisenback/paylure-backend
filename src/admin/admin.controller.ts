@@ -17,6 +17,7 @@ import { SystemSettingsService } from './system-settings.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { GetUser } from '../auth/decorators/get-user.decorator';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -30,7 +31,7 @@ export class AdminController {
   ) {}
 
   // ===================================
-  // 📊 GET /api/v1/admin/dashboard
+  // 📊 DASHBOARD
   // ===================================
   @Get('dashboard')
   async getDashboard() {
@@ -39,42 +40,26 @@ export class AdminController {
   }
 
   // ===================================
-  // 📈 GET /api/v1/admin/charts/deposits
+  // 📈 GRÁFICOS
   // ===================================
   @Get('charts/deposits')
   async getDepositsChart(@Query('days') days?: string) {
-    const daysNum = days ? parseInt(days, 10) : 7;
-    this.logger.log(`[ADMIN] Gráfico de depósitos (${daysNum} dias)`);
-    return this.adminService.getDepositsChart(daysNum);
+    return this.adminService.getDepositsChart(days ? parseInt(days, 10) : 7);
   }
 
-  // ===================================
-  // 📉 GET /api/v1/admin/charts/withdrawals
-  // ===================================
   @Get('charts/withdrawals')
   async getWithdrawalsChart(@Query('days') days?: string) {
-    const daysNum = days ? parseInt(days, 10) : 7;
-    this.logger.log(`[ADMIN] Gráfico de saques (${daysNum} dias)`);
-    return this.adminService.getWithdrawalsChart(daysNum);
+    return this.adminService.getWithdrawalsChart(days ? parseInt(days, 10) : 7);
   }
 
   // ===================================
-  // 👥 GET /api/v1/admin/users
+  // 👥 USUÁRIOS E TRANSAÇÕES
   // ===================================
   @Get('users')
-  async getUsers(
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    const pageNum = page ? parseInt(page, 10) : 1;
-    const limitNum = limit ? parseInt(limit, 10) : 50;
-    this.logger.log(`[ADMIN] Listando usuários (página ${pageNum})`);
-    return this.adminService.getAllUsers(pageNum, limitNum);
+  async getUsers(@Query('page') page?: string, @Query('limit') limit?: string) {
+    return this.adminService.getAllUsers(page ? parseInt(page, 10) : 1, limit ? parseInt(limit, 10) : 50);
   }
 
-  // ===================================
-  // 💰 GET /api/v1/admin/transactions
-  // ===================================
   @Get('transactions')
   async getTransactions(
     @Query('page') page?: string,
@@ -82,180 +67,80 @@ export class AdminController {
     @Query('type') type?: 'DEPOSIT' | 'WITHDRAWAL',
     @Query('status') status?: string,
   ) {
-    const pageNum = page ? parseInt(page, 10) : 1;
-    const limitNum = limit ? parseInt(limit, 10) : 50;
-    this.logger.log(`[ADMIN] Listando transações (página ${pageNum})`);
-    return this.adminService.getAllTransactions(pageNum, limitNum, type, status);
+    return this.adminService.getAllTransactions(page ? parseInt(page, 10) : 1, limit ? parseInt(limit, 10) : 50, type, status);
   }
 
   // ===================================
-  // 🎯 GET /api/v1/admin/withdrawal-fees
-  // Obtém taxas globais de saque
+  // 🎯 TAXAS
   // ===================================
   @Get('withdrawal-fees')
   async getWithdrawalFees() {
-    this.logger.log('[ADMIN] Obtendo taxas globais de saque');
     return await this.systemSettings.getWithdrawalFees();
   }
 
-  // ===================================
-  // 🎯 POST /api/v1/admin/withdrawal-fees
-  // Define taxas globais de saque
-  // ===================================
   @Post('withdrawal-fees')
   @HttpCode(HttpStatus.OK)
-  async setWithdrawalFees(
-    @Body() body: { percent: number; fixed: number },
-  ) {
-    this.logger.log(`[ADMIN] Atualizando taxas globais: ${body.percent}% + R$ ${body.fixed}`);
+  async setWithdrawalFees(@Body() body: { percent: number; fixed: number }) {
     await this.systemSettings.setWithdrawalFees(body.percent, body.fixed);
-    return {
-      success: true,
-      message: 'Taxas globais atualizadas com sucesso!',
-      percent: body.percent,
-      fixed: body.fixed,
-    };
+    return { success: true, message: 'Taxas globais atualizadas!', ...body };
   }
 
-  // ===================================
-  // 🎯 GET /api/v1/admin/users/:userId/withdrawal-fees
-  // Obtém taxa de saque de um usuário específico
-  // ===================================
   @Get('users/:userId/withdrawal-fees')
   async getUserWithdrawalFees(@Param('userId') userId: string) {
-    this.logger.log(`[ADMIN] Obtendo taxas do usuário: ${userId}`);
-    
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        withdrawalFeePercent: true,
-        withdrawalFeeFixed: true,
-      },
-    });
-
-    if (!user) {
-      return { error: 'Usuário não encontrado' };
-    }
-
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return { error: 'Usuário não encontrado' };
     const globalFees = await this.systemSettings.getWithdrawalFees();
-
     return {
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-      },
-      individual: {
-        percent: user.withdrawalFeePercent,
-        fixed: user.withdrawalFeeFixed,
-        isActive: user.withdrawalFeePercent !== null && user.withdrawalFeeFixed !== null,
-      },
+      user: { id: user.id, name: user.name, email: user.email },
+      individual: { percent: user.withdrawalFeePercent, fixed: user.withdrawalFeeFixed },
       global: globalFees,
-      current: user.withdrawalFeePercent !== null && user.withdrawalFeeFixed !== null
-        ? {
-            percent: user.withdrawalFeePercent,
-            fixed: user.withdrawalFeeFixed,
-            type: 'INDIVIDUAL',
-          }
-        : {
-            percent: globalFees.percent,
-            fixed: globalFees.fixed,
-            type: 'GLOBAL',
-          },
     };
   }
 
-  // ===================================
-  // 🎯 PUT /api/v1/admin/users/:userId/withdrawal-fees
-  // Define taxa individual de saque para um usuário
-  // ===================================
   @Put('users/:userId/withdrawal-fees')
   @HttpCode(HttpStatus.OK)
-  async setUserWithdrawalFees(
-    @Param('userId') userId: string,
-    @Body() body: { percent: number | null; fixed: number | null },
-  ) {
-    this.logger.log(`[ADMIN] Atualizando taxas do usuário ${userId}: ${body.percent}% + R$ ${body.fixed}`);
-
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        withdrawalFeePercent: body.percent,
-        withdrawalFeeFixed: body.fixed,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        withdrawalFeePercent: true,
-        withdrawalFeeFixed: true,
-      },
-    });
-
-    return {
-      success: true,
-      message: body.percent === null
-        ? 'Taxa individual removida. Usuário agora usa taxa global.'
-        : 'Taxa individual configurada com sucesso!',
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        withdrawalFeePercent: user.withdrawalFeePercent,
-        withdrawalFeeFixed: user.withdrawalFeeFixed,
-      },
-    };
+  async setUserWithdrawalFees(@Param('userId') userId: string, @Body() body: { percent: number | null; fixed: number | null }) {
+    await this.prisma.user.update({ where: { id: userId }, data: { withdrawalFeePercent: body.percent, withdrawalFeeFixed: body.fixed } });
+    return { success: true, message: 'Taxas atualizadas!' };
   }
 
-  // ===================================
-  // 🎯 POST /api/v1/admin/users/:userId/withdrawal-fees/reset
-  // Remove taxa individual (volta para taxa global)
-  // ===================================
-  @HttpCode(HttpStatus.OK)
   @Post('users/:userId/withdrawal-fees/reset')
+  @HttpCode(HttpStatus.OK)
   async resetUserWithdrawalFees(@Param('userId') userId: string) {
-    this.logger.log(`[ADMIN] Removendo taxa individual do usuário ${userId}`);
-
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        withdrawalFeePercent: null,
-        withdrawalFeeFixed: null,
-      },
-    });
-
-    return {
-      success: true,
-      message: 'Taxa individual removida. Usuário voltou a usar taxa global.',
-    };
+    await this.prisma.user.update({ where: { id: userId }, data: { withdrawalFeePercent: null, withdrawalFeeFixed: null } });
+    return { success: true, message: 'Taxa resetada para global.' };
   }
 
   // ===================================
-  // 🔄 MUDAR SAQUE AUTOMÁTICO/MANUAL (NOVO)
+  // 🔄 SAQUE AUTOMÁTICO E SALDO
   // ===================================
   @Put('users/:userId/auto-withdrawal')
   @HttpCode(HttpStatus.OK)
-  async toggleAutoWithdrawal(
-    @Param('userId') userId: string,
-    @Body() body: { enabled: boolean }
-  ) {
-    this.logger.log(`[ADMIN] Alterando saque auto user ${userId} para ${body.enabled}`);
+  async toggleAutoWithdrawal(@Param('userId') userId: string, @Body() body: { enabled: boolean }) {
     return this.adminService.toggleAutoWithdrawal(userId, body.enabled);
   }
 
-  // ===================================
-  // 💰 GERENCIAR SALDO (NOVO)
-  // ===================================
   @Post('users/:userId/balance')
   @HttpCode(HttpStatus.OK)
-  async manageBalance(
-    @Param('userId') userId: string,
-    @Body() body: { type: 'ADD' | 'REMOVE'; amountInCents: number; description?: string }
-  ) {
-    this.logger.log(`[ADMIN] Gerenciando saldo user ${userId}: ${body.type} ${body.amountInCents}`);
+  async manageBalance(@Param('userId') userId: string, @Body() body: { type: 'ADD' | 'REMOVE'; amountInCents: number; description?: string }) {
     return this.adminService.manageUserBalance(userId, body.type, body.amountInCents, body.description);
+  }
+
+  // ===================================
+  // ✅ APROVAR SAQUE (NOVO)
+  // ===================================
+  @Post('withdrawals/:id/approve')
+  @HttpCode(HttpStatus.OK)
+  async approveWithdrawal(@Param('id') id: string, @GetUser() admin: any) {
+    return this.adminService.approveWithdrawal(id, admin.id);
+  }
+
+  // ===================================
+  // ❌ REJEITAR SAQUE (NOVO)
+  // ===================================
+  @Post('withdrawals/:id/reject')
+  @HttpCode(HttpStatus.OK)
+  async rejectWithdrawal(@Param('id') id: string, @Body() body: { reason: string }, @GetUser() admin: any) {
+    return this.adminService.rejectWithdrawal(id, body.reason, admin.id);
   }
 }
