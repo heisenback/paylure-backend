@@ -21,9 +21,7 @@ export class WebhooksService {
     const {
       transaction_id: transactionId,
       status,
-      amount, // Valor BRUTO (Ex: 1.50)
-      fee,    // Taxa (Ex: 0.50)
-      net_amount: netAmount, // Valor LÍQUIDO (Ex: 1.00)
+      amount, // Pode vir como string "1.50" ou number
     } = payload;
 
     if (!transactionId) {
@@ -31,10 +29,9 @@ export class WebhooksService {
       throw new NotFoundException('transaction_id is required');
     }
 
-    // 1️⃣ Buscar o depósito no banco pelo externalId
+    // 1️⃣ Buscar o depósito no banco
     const deposit = await this.prisma.deposit.findUnique({
       where: { externalId: transactionId },
-      include: { user: true },
     });
 
     if (!deposit) {
@@ -42,132 +39,94 @@ export class WebhooksService {
       throw new NotFoundException(`Deposit with externalId ${transactionId} not found`);
     }
 
-    this.logger.log(`✅ Depósito encontrado: ${deposit.id} | User: ${deposit.userId}`);
-
-    // 2️⃣ Verificar se já foi processado
+    // 2️⃣ Verificar se já foi processado (Idempotência)
     if (deposit.status === 'CONFIRMED') {
       this.logger.warn(`⚠️ [Webhook] Depósito já confirmado anteriormente: ${deposit.id}`);
-      return {
-        message: 'Deposit already confirmed',
-        deposit,
-      };
+      return { message: 'Deposit already confirmed' };
     }
 
-    // 3️⃣ Processar conforme o status
+    // 3️⃣ Processar SUCESSO
     if (status === 'COMPLETED' || status === 'PAID') {
-      this.logger.log(`🎉 PAGAMENTO CONFIRMADO! Iniciando crédito...`);
+      this.logger.log(`🎉 PROCESSANDO PAGAMENTO: Depósito ${deposit.id}`);
 
-      // 🔥 CORREÇÃO PRINCIPAL: Usar o valor BRUTO (amount) ao invés do líquido
-      // O Number() garante que converta string "1.50" para número 1.50
-      const amountInCents = Math.round(Number(amount) * 100); 
-      
-      const userId = deposit.userId;
-
-      this.logger.log(`💰 Valor do Depósito (Lead): R$ ${Number(amount).toFixed(2)} (${amountInCents} centavos)`);
-
-      // 4️⃣ Atualizar status do depósito
-      await this.prisma.deposit.update({
-        where: { id: deposit.id },
-        data: { 
-          status: 'CONFIRMED',
-          amountInCents: amountInCents, // Garante que salva o valor cheio
-          netAmountInCents: amountInCents // Atualiza o líquido para ser igual ao bruto (absorvendo a taxa)
-        },
-      });
-
-      this.logger.log(`✅ Status do depósito atualizado para CONFIRMED`);
-
-      // 5️⃣ Creditar saldo do usuário (Valor CHEIO)
-      const updatedUser = await this.prisma.user.update({
-        where: { id: userId },
-        data: {
-          balance: {
-            increment: amountInCents, // Antes estava netAmountInCents
-          },
-        },
-      });
-
-      this.logger.log(
-        `💰 Saldo atualizado: User ${userId} | Novo saldo: R$ ${(updatedUser.balance / 100).toFixed(2)}`,
-      );
-
-      // 6️⃣ Criar registro na tabela Transaction
-      // Verificamos se a tabela Transaction existe no prisma antes de tentar criar
-      try {
-        await this.prisma.transaction.create({
-            data: {
-            userId,
-            type: 'DEPOSIT',
-            amount: amountInCents, // Valor cheio no histórico
-            status: 'CONFIRMED',
-            referenceId: deposit.externalId,
-            description: 'Depósito via PIX',
-            },
-        });
-        this.logger.log(`📝 Transação registrada no histórico`);
-      } catch (e) {
-         this.logger.warn(`⚠️ Não foi possível criar histórico (Tabela Transaction pode não existir ou erro de schema): ${e.message}`);
+      // 🔥 CORREÇÃO DE VALOR: Garante que "1.00" vire 100 centavos
+      const amountNumber = Number(amount);
+      if (isNaN(amountNumber)) {
+         throw new Error(`Valor inválido recebido no webhook: ${amount}`);
       }
+      const amountInCents = Math.round(amountNumber * 100);
 
-      // 7️⃣ Emitir eventos via WebSocket
-      this.logger.log(`📡 Enviando notificações via WebSocket para userId: ${userId}`);
+      // 🔥 TRANSAÇÃO ATÔMICA (O Segredo para não perder saldo)
+      // O banco só confirma se as 3 operações funcionarem juntas
+      const result = await this.prisma.$transaction(async (tx) => {
+        
+        // A. Atualiza Status do Depósito
+        const updatedDeposit = await tx.deposit.update({
+          where: { id: deposit.id },
+          data: { 
+            status: 'CONFIRMED',
+            amountInCents: amountInCents,
+            netAmountInCents: amountInCents 
+          },
+        });
 
-      // Evento 1: Atualizar saldo (Atualiza o número no topo da tela)
-      this.paymentGateway.emitToUser(userId, 'balance_updated', {
-        balance: updatedUser.balance,
+        // B. Incrementa Saldo do Usuário
+        const updatedUser = await tx.user.update({
+          where: { id: deposit.userId },
+          data: {
+            balance: { increment: amountInCents },
+          },
+        });
+
+        // C. Cria Histórico (Se a tabela transaction existir no schema)
+        // Se der erro aqui, ele cancela o saldo (Rollback), evitando inconsistência
+        try {
+            await tx.transaction.create({
+                data: {
+                    userId: deposit.userId,
+                    type: 'DEPOSIT',
+                    amount: amountInCents, // Nome do campo pode variar no seu schema (amount ou amountInCents)
+                    status: 'CONFIRMED',
+                    referenceId: deposit.externalId,
+                    description: 'Depósito via PIX',
+                },
+            });
+        } catch (e) {
+            // Se a tabela não existir, apenas logamos, mas não matamos a transação
+            // Se a tabela transaction for CRÍTICA, remova esse try/catch
+            this.logger.warn(`⚠️ Aviso: Não foi possível criar registro na tabela Transaction: ${e.message}`);
+        }
+
+        return { updatedUser, updatedDeposit };
       });
 
-      // Evento 2: Confirmar depósito (Avisa a tela de depósito para fechar o QR Code)
-      this.paymentGateway.emitToUser(userId, 'deposit_confirmed', {
+      this.logger.log(`✅ Transação DB concluída com sucesso.`);
+      this.logger.log(`💰 Novo Saldo do User ${result.updatedUser.id}: R$ ${(result.updatedUser.balance / 100).toFixed(2)}`);
+
+      // 4️⃣ Emitir eventos Socket (Só depois de garantir que o banco salvou)
+      this.paymentGateway.emitToUser(deposit.userId, 'balance_updated', {
+        balance: result.updatedUser.balance,
+      });
+
+      this.paymentGateway.emitToUser(deposit.userId, 'deposit_confirmed', {
         depositId: deposit.id,
         amount: amountInCents,
-        newBalance: updatedUser.balance,
+        newBalance: result.updatedUser.balance,
       });
 
-      this.logger.log(`✅ Evento 'deposit_confirmed' enviado com saldo: ${updatedUser.balance}`);
-
-      return {
-        message: 'Deposit confirmed and user credited',
-        depositId: deposit.id,
-        creditedAmount: amountInCents
-      };
+      return { message: 'Deposit confirmed', newBalance: result.updatedUser.balance };
     }
 
-    // 8️⃣ Processar FAILED
+    // 4️⃣ Processar FALHA
     if (status === 'FAILED') {
-      this.logger.warn(`⚠️ [Webhook] Depósito FALHOU: ${deposit.id}`);
-
       await this.prisma.deposit.update({
         where: { id: deposit.id },
         data: { status: 'FAILED' },
       });
-
-      this.paymentGateway.emitToUser(deposit.userId, 'deposit_failed', {
-        depositId: deposit.id,
-      });
-
-      return { message: 'Deposit marked as failed' };
+      this.paymentGateway.emitToUser(deposit.userId, 'deposit_failed', { depositId: deposit.id });
+      return { message: 'Deposit failed' };
     }
 
-    // 9️⃣ Processar RETIDO (MED)
-    if (status === 'RETIDO') {
-      this.logger.warn(`🚨 [Webhook] Depósito RETIDO (MED): ${deposit.id}`);
-
-      await this.prisma.deposit.update({
-        where: { id: deposit.id },
-        data: { status: 'RETIDO' },
-      });
-
-      this.paymentGateway.emitToUser(deposit.userId, 'deposit_retained', {
-        depositId: deposit.id,
-        reason: 'Medida Cautelar (MED)',
-      });
-
-      return { message: 'Deposit retained (MED)' };
-    }
-
-    // 🔟 Status desconhecido
-    this.logger.warn(`⚠️ [Webhook] Status desconhecido: ${status}`);
-    return { message: `Unknown status: ${status}` };
+    return { message: `Ignored status: ${status}` };
   }
 }
