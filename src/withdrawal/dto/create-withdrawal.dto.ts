@@ -1,4 +1,5 @@
-import { IsNotEmpty, IsNumber, IsString, Min, IsIn } from 'class-validator';
+// src/withdrawal/dto/create-withdrawal.dto.ts
+import { IsNotEmpty, IsNumber, IsString, Min, IsIn, IsOptional } from 'class-validator';
 
 export class CreateWithdrawalDto {
   @IsNumber()
@@ -17,6 +18,7 @@ export class CreateWithdrawalDto {
   })
   key_type: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'RANDOM';
 
+  @IsOptional() // 👈 Isso resolve o erro "description must be a string"
   @IsString()
   description?: string;
 }
