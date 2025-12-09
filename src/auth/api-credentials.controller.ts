@@ -2,7 +2,6 @@
 import {
   Controller,
   Post,
-  Get,
   UseGuards,
   HttpCode,
   HttpStatus,
@@ -20,32 +19,13 @@ export class ApiCredentialsController {
 
   constructor(private readonly apiCredentialsService: ApiCredentialsService) {
     this.logger.log('✅ ApiCredentialsController inicializado!');
-    this.logger.log('🔍 Rotas disponíveis:');
-    this.logger.log('   GET  /api/v1/auth/me');
     this.logger.log('   POST /api/v1/auth/regenerate-credentials');
     this.logger.log('   POST /api/v1/auth/send-credentials-email');
   }
 
-  /**
-   * GET /api/v1/auth/me
-   * Retorna dados do usuário incluindo client_id
-   */
-  @Get('me')
-  @HttpCode(HttpStatus.OK)
-  async getMe(@GetUser() user: User) {
-    this.logger.log(`📋 GET /auth/me - User: ${user.email}`);
-    
-    return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      client_id: user.apiKey,
-      client_secret: user.apiSecret ? 'configured' : null,
-      balance: user.balance,
-      createdAt: user.createdAt,
-    };
-  }
-
+  // ❌ REMOVIDO: @Get('me') 
+  // Motivo: Essa rota já existe no AuthController. Ter duas iguais causa conflito.
+  
   /**
    * POST /api/v1/auth/regenerate-credentials
    * Gera novas credenciais (INVALIDA as antigas)

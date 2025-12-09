@@ -76,11 +76,12 @@ export class AuthController {
     const fullProfileData = await this.authService.getUserWithBalance(user.id);
 
     // 🔥 LOG DE DEPURAÇÃO: Confirma se o Controller está enviando o saldo certo
-    this.logger.log(`📤 Enviando perfil. Saldo: ${fullProfileData.balance}`);
+    this.logger.log(`📤 Enviando perfil para o Frontend. Saldo: R$ ${fullProfileData.balance/100}`);
     
-    return { 
-      success: true, 
-      data: fullProfileData
-    };
+    // ✅ CORREÇÃO DEFINITIVA: 
+    // Retornamos 'fullProfileData' direto (sem { data: ... }).
+    // Isso faz o JSON ficar assim: { user: {...}, balance: 79300, stats: {...} }
+    // O Frontend vai conseguir ler "payload.user" e "payload.user.balance" perfeitamente.
+    return fullProfileData;
   }
 }
