@@ -28,11 +28,14 @@ interface LoginResponse {
   };
 }
 
+// ✅ CORREÇÃO 1: Adicionados os campos novos na interface
 interface CreateWithdrawalRequest {
   amount: number;
   externalId: string;
   pixKey: string;
   pixKeyType: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'EVP' | 'RANDOM';
+  clientCallbackUrl?: string; // Agora opcional/obrigatório conforme uso
+  description?: string;
 }
 
 @Injectable()
@@ -49,7 +52,6 @@ export class KeyclubService {
   private refreshSubscribers: Array<(token: string) => void> = [];
 
   constructor(private readonly configService: ConfigService) {
-    // Remove barra no final da URL para evitar duplicidade
     const baseUrl = this.configService.get<string>('KEY_CLUB_API_URL') || 'https://api.the-key.club';
     this.apiUrl = baseUrl.replace(/\/$/, '');
     
@@ -61,7 +63,6 @@ export class KeyclubService {
     this.logger.log(`📡 API URL: ${this.apiUrl}`);
   }
 
-  // ... (Lógica de Login e Token permanece igual) ...
   private decodeToken(token: string): { exp: number } | null {
     try {
       const parts = token.split('.');
@@ -79,7 +80,7 @@ export class KeyclubService {
 
   private async login(): Promise<string> {
     try {
-      this.logger.log('🔐 [Login] Fazendo login na KeyClub...');
+      // this.logger.log('🔐 [Login] Fazendo login na KeyClub...'); // Logs excessivos removidos
       const response = await axios.post<LoginResponse>(
         `${this.apiUrl}/api/auth/login`,
         { client_id: this.clientId, client_secret: this.clientSecret },
@@ -116,9 +117,6 @@ export class KeyclubService {
     return `${this.publicUrl}/api/v1/webhooks/keyclub`;
   }
 
-  /**
-   * ✅ CRIA UM DEPÓSITO (Gera QR Code)
-   */
   async createDeposit(data: CreateDepositRequest): Promise<CreateDepositResponse> {
     try {
       const token = await this.getToken();
@@ -158,32 +156,30 @@ export class KeyclubService {
   }
 
   /**
-   * ✅ REALIZA UM SAQUE (Envia PIX) - CORRIGIDO CONFORME SUA DOCUMENTAÇÃO
-   * Doc: POST /api/withdrawals/withdraw
+   * ✅ REALIZA UM SAQUE (Envia PIX)
    */
   async createWithdrawal(data: CreateWithdrawalRequest) {
     try {
       const token = await this.getToken();
       
-      // 🔧 CORREÇÃO 1: Endpoint correto da documentação
       const endpoint = `${this.apiUrl}/api/withdrawals/withdraw`;
 
-      // Ajuste de compatibilidade de tipos
       let keyType = data.pixKeyType;
       if (keyType === 'EVP') keyType = 'RANDOM';
 
-      // 🔧 CORREÇÃO 2: Payload com os nomes exatos da doc (key_type, pix_key)
+      // ✅ CORREÇÃO 2: Usa os dados passados (data.description e data.clientCallbackUrl)
+      // Se não vierem, usa o padrão.
       const payload = {
         amount: data.amount,
         external_id: data.externalId,
-        pix_key: data.pixKey,      // Doc pede: pix_key
-        key_type: keyType,         // Doc pede: key_type (NÃO pix_key_type)
-        description: 'Saque Plataforma Paylure',
-        clientCallbackUrl: this.getCallbackUrl(),
+        pix_key: data.pixKey,
+        key_type: keyType,
+        description: data.description || 'Saque Plataforma Paylure',
+        clientCallbackUrl: data.clientCallbackUrl || this.getCallbackUrl(),
       };
 
       this.logger.log(`🚀 Enviando saque para: ${endpoint}`);
-      this.logger.log(`📦 Payload: ${JSON.stringify(payload)}`);
+      // this.logger.log(`📦 Payload: ${JSON.stringify(payload)}`); 
 
       const response = await axios.post(endpoint, payload, {
         headers: {
@@ -195,11 +191,9 @@ export class KeyclubService {
 
       this.logger.log('✅ [KeyClub] Saque criado com sucesso!');
       
-      // A doc diz que retorna { message, withdrawal: {...} }
       return response.data.withdrawal || response.data;
 
     } catch (error: any) {
-      // Retry no 401 (Token expirado)
       if (error.response?.status === 401 && this.cachedToken) {
         this.logger.warn('⚠️ Token expirado, renovando...');
         this.cachedToken = null;
