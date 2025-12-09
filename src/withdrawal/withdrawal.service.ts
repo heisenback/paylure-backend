@@ -21,27 +21,25 @@ export class WithdrawalService {
     private readonly systemSettings: SystemSettingsService,
   ) {}
 
-  // 🔥 HELPER DE SEGURANÇA: Garante a formatação correta para o Banco
+  // 🔥 HELPER: Garante a formatação correta para o Banco
   private formatPixKey(key: string, type: string): string {
-    // Remove tudo que não é número para limpar
     const clean = key.replace(/\D/g, ''); 
 
-    // SE FOR CPF: Obriga a colocar pontos e traço (Ex: 119.803.259-60)
-    // Isso garante que o banco NÃO confunda com telefone celular
+    // CPF: Obriga pontos e traço (119.803.259-60)
     if (type === 'CPF') {
       if (clean.length === 11) {
          return clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
       }
     }
 
-    // SE FOR CNPJ: Obriga a formatação de CNPJ
+    // CNPJ: Obriga formatação
     if (type === 'CNPJ') {
       if (clean.length === 14) {
         return clean.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
       }
     }
 
-    // SE FOR TELEFONE: Manda limpo (só números)
+    // TELEFONE: Manda limpo (só números)
     if (type === 'PHONE' || type === 'TELEFONE') {
       return clean; 
     }
@@ -50,7 +48,7 @@ export class WithdrawalService {
     return key;
   }
 
-  // Lógica de Cálculo de Taxas (Individual vs Global)
+  // Lógica de Cálculo de Taxas
   private async calculateWithdrawalFee(
     userId: string,
     amountInCents: number,
@@ -60,7 +58,6 @@ export class WithdrawalService {
     feeInCents: number;
     netAmountInCents: number;
   }> {
-    // Busca configurações do usuário
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -77,21 +74,16 @@ export class WithdrawalService {
     let feePercent: number;
     let feeFixed: number;
 
-    // REGRA 1: Verifica se tem taxa diferenciada (Individual)
+    // Prioridade: Taxa Individual > Taxa Global
     if (user.withdrawalFeePercent !== null && user.withdrawalFeeFixed !== null) {
       feePercent = user.withdrawalFeePercent;
       feeFixed = user.withdrawalFeeFixed;
-      this.logger.log(
-        `💼 Taxa INDIVIDUAL usada para ${user.name}: ${feePercent}% + R$ ${feeFixed}`,
-      );
+      this.logger.log(`💼 Taxa INDIVIDUAL para ${user.name}: ${feePercent}% + R$ ${feeFixed}`);
     } else {
-      // REGRA 2: Se não tiver, usa a taxa padrão do site (Global)
       const globalFees = await this.systemSettings.getWithdrawalFees();
       feePercent = globalFees.percent;
       feeFixed = globalFees.fixed;
-      this.logger.log(
-        `🌐 Taxa GLOBAL usada para ${user.name}: ${feePercent}% + R$ ${feeFixed}`,
-      );
+      this.logger.log(`🌐 Taxa GLOBAL para ${user.name}: ${feePercent}% + R$ ${feeFixed}`);
     }
 
     const percentageFee = Math.round(amountInCents * (feePercent / 100));
@@ -101,8 +93,8 @@ export class WithdrawalService {
 
     this.logger.log(
       `💰 Cálculo: R$ ${(amountInCents / 100).toFixed(2)} - ` +
-        `(${feePercent}% = R$ ${(percentageFee / 100).toFixed(2)} + ` +
-        `R$ ${feeFixed} fixo) = R$ ${(netAmount / 100).toFixed(2)} líquido`,
+      `(${feePercent}% = R$ ${(percentageFee / 100).toFixed(2)} + ` +
+      `R$ ${feeFixed} fixo) = R$ ${(netAmount / 100).toFixed(2)} líquido`,
     );
 
     return {
@@ -120,59 +112,42 @@ export class WithdrawalService {
 
     const requestedAmountInCents = dto.amount;
 
-    // 1. Calcula as taxas
+    // 1. Cálculos de Taxa
     const feeInfo = await this.calculateWithdrawalFee(
       userId,
       requestedAmountInCents,
     );
 
     if (feeInfo.netAmountInCents <= 0) {
-      throw new BadRequestException(
-        `Valor de saque muito baixo. Taxa de R$ ${(feeInfo.feeInCents / 100).toFixed(2)} ` +
-          `excede o valor solicitado.`,
-      );
+      throw new BadRequestException(`Valor líquido inválido após taxas.`);
     }
 
-    const netAmountInReais = Number(
-      (feeInfo.netAmountInCents / 100).toFixed(2),
-    );
+    const netAmountInReais = Number((feeInfo.netAmountInCents / 100).toFixed(2));
     if (netAmountInReais < 1) {
-      throw new BadRequestException(
-        `Valor líquido (R$ ${netAmountInReais.toFixed(2)}) é menor que o mínimo aceito (R$ 1,00). ` +
-          `Taxa aplicada: R$ ${(feeInfo.feeInCents / 100).toFixed(2)}`,
-      );
+      throw new BadRequestException(`Valor mínimo para saque é R$ 1,00.`);
     }
 
     const userWithBalance = await this.prisma.user.findUnique({
       where: { id: userId },
     });
 
-    if (!userWithBalance) {
-      throw new InternalServerErrorException('Usuário não encontrado.');
-    }
-
+    if (!userWithBalance) throw new InternalServerErrorException('Usuário não encontrado.');
     if (userWithBalance.balance < requestedAmountInCents) {
-      throw new BadRequestException(
-        `Saldo insuficiente. Você tem R$ ${(userWithBalance.balance / 100).toFixed(2)}, ` +
-          `mas precisa de R$ ${(requestedAmountInCents / 100).toFixed(2)} para este saque.`,
-      );
+      throw new BadRequestException(`Saldo insuficiente.`);
     }
 
-    // REGRA 3: Verifica se o saque é automático
     const isAuto = !!userWithBalance.isAutoWithdrawal;
-    this.logger.log(`🔍 [Check Saque] User: ${userWithBalance.email} | Automático: ${isAuto}`);
+    this.logger.log(`🔍 [Check Saque] User: ${userWithBalance.email} | Auto: ${isAuto}`);
 
     let withdrawalRecordId: string | null = null;
 
     try {
-      // Inicia Transação no Banco (Debita Saldo + Cria Registro)
+      // 2. Inicia Transação no Banco (Debita Saldo + Cria Registro PENDING)
       await this.prisma.$transaction(async (tx) => {
         await tx.user.update({
           where: { id: userId },
           data: {
-            balance: {
-              decrement: requestedAmountInCents,
-            },
+            balance: { decrement: requestedAmountInCents },
           },
         });
 
@@ -193,54 +168,53 @@ export class WithdrawalService {
         withdrawalRecordId = withdrawal.id;
       });
 
-      this.logger.log(
-        `[Withdrawal] ✅ Saldo debitado. ID: #${withdrawalRecordId}`,
-      );
+      this.logger.log(`[Withdrawal] ✅ Saldo debitado. ID: #${withdrawalRecordId}`);
 
-      // SE FOR AUTOMÁTICO -> Envia para Keyclub
-      if (isAuto) {
+      // 3. Processamento Automático ou Manual
+      if (isAuto && withdrawalRecordId) {
         this.logger.log(`🚀 [Auto] Usuário tem saque automático. Processando...`);
         
         const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
-
-        // Configura URL de Callback para evitar erro 500
         const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br'; 
         const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
 
-        // 🔥 APLICA A FORMATAÇÃO SEGURA NA CHAVE
+        // Aplica formatação segura (CPF com pontos, Fone sem)
         const formattedKey = this.formatPixKey(dto.pix_key, dto.key_type);
-        this.logger.log(`🔑 Chave formatada enviada: "${formattedKey}" (Tipo Original: ${dto.key_type})`);
+        this.logger.log(`🔑 Chave formatada enviada: "${formattedKey}"`);
 
+        // Envia para Keyclub
         await this.keyclubService.createWithdrawal({
           amount: netAmountInReais,
           externalId: externalId,
-          pixKey: formattedKey, // Usa a chave formatada
+          pixKey: formattedKey,
           pixKeyType: keyTypeForKeyclub,
           clientCallbackUrl: callbackUrl, 
           description: dto.description || 'Saque Paylure'
         });
 
-        this.logger.log(
-          `[Withdrawal] ✅ Sucesso! Enviado para KeyClub.`,
-        );
+        // 🔥 CORREÇÃO DO PAGAMENTO DUPLO 🔥
+        // Atualiza IMEDIATAMENTE o status no banco para não aparecer como pendente no Admin
+        await this.prisma.withdrawal.update({
+          where: { id: withdrawalRecordId },
+          data: { status: 'PROCESSING' }
+        });
+
+        this.logger.log(`[Withdrawal] ✅ Saque auto enviado e status atualizado para PROCESSING.`);
 
         return {
           success: true,
-          message: 'Saque automático enviado para processamento.',
+          message: 'Saque enviado para processamento.',
           transactionId: externalId,
           requestedAmount: requestedAmountInCents,
           status: 'PROCESSING',
           fee: feeInfo.feeInCents,
           netAmount: feeInfo.netAmountInCents,
-          feeDetails: {
-            percent: feeInfo.feePercent,
-            fixed: feeInfo.feeFixed,
-          },
+          feeDetails: { percent: feeInfo.feePercent, fixed: feeInfo.feeFixed },
         };
 
       } else {
-        // SE FOR MANUAL -> Retém para aprovação
-        this.logger.log(`👀 [Manual] Saque retido para aprovação (Configuração do usuário é Manual).`);
+        // Saque Manual
+        this.logger.log(`👀 [Manual] Saque retido como PENDING.`);
         
         return {
           success: true,
@@ -250,58 +224,40 @@ export class WithdrawalService {
           status: 'PENDING_APPROVAL',
           fee: feeInfo.feeInCents,
           netAmount: feeInfo.netAmountInCents,
-          feeDetails: {
-            percent: feeInfo.feePercent,
-            fixed: feeInfo.feeFixed,
-          },
+          feeDetails: { percent: feeInfo.feePercent, fixed: feeInfo.feeFixed },
         };
       }
 
     } catch (e: any) {
       this.logger.error(`[Withdrawal] ❌ ERRO: ${e.message}`, e.stack);
 
-      // Se falhar, devolve o dinheiro
       if (withdrawalRecordId) {
         const failureMessage = e.message.substring(0, 255);
-        this.logger.warn(
-          `[Withdrawal] ⚠️ Falha. Revertendo saldo...`,
-        );
+        this.logger.warn(`[Withdrawal] ⚠️ Falha. Revertendo saldo...`);
 
         try {
           await this.prisma.$transaction([
             this.prisma.user.update({
               where: { id: userId },
-              data: {
-                balance: {
-                  increment: requestedAmountInCents,
-                },
-              },
+              data: { balance: { increment: requestedAmountInCents } },
             }),
             (this.prisma as any).withdrawal.update({
               where: { id: withdrawalRecordId },
-              data: {
-                status: 'FAILED',
-                failureReason: failureMessage,
-              },
+              data: { status: 'FAILED', failureReason: failureMessage },
             }),
           ]);
 
-          this.logger.log(`[Withdrawal] ✅ Saldo revertido.`);
-
-          throw new BadRequestException(
-            `Falha no processamento: ${failureMessage}`,
-          );
+          this.logger.log(`[Withdrawal] ✅ Saldo revertido com sucesso.`);
+          throw new BadRequestException(`Falha no processamento: ${failureMessage}`);
+          
         } catch (reversalError: any) {
           if (reversalError instanceof BadRequestException) throw reversalError;
-          throw new InternalServerErrorException(
-            'ERRO CRÍTICO: Falha no saque e falha na reversão. Contate o suporte.',
-          );
+          this.logger.error(`[Withdrawal] 🚨 ERRO CRÍTICO NA REVERSÃO! User: ${userId}`);
+          throw new InternalServerErrorException('ERRO CRÍTICO: Falha no saque e falha na reversão. Contate o suporte.');
         }
       }
 
-      throw new InternalServerErrorException(
-        e.message || 'Erro ao processar saque.',
-      );
+      throw new InternalServerErrorException(e.message || 'Erro ao processar saque.');
     }
   }
 
