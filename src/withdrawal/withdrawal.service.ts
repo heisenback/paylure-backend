@@ -165,13 +165,23 @@ export class WithdrawalService {
         this.logger.log(`🚀 [Auto] Usuário ${userWithBalance.email} tem saque automático. Processando com KeyClub...`);
         
         isKeyclubCalled = true;
+        // Se for RANDOM na DTO, mapeia para EVP (mas o front agora vai mandar CPF/CNPJ)
         const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
 
+        // IMPORTANTE: Definir URL de callback correta
+        // Se você tiver uma variável de ambiente para a URL da API, use process.env.API_URL
+        // Exemplo: https://api.paylure.com.br/api/v1/webhooks/keyclub
+        const apiUrl = process.env.API_URL || 'https://api.paylure.com.br'; 
+        const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
+
+        // CORREÇÃO DO ERRO 500: Adicionado clientCallbackUrl
         await this.keyclubService.createWithdrawal({
           amount: netAmountInReais,
           externalId: externalId,
           pixKey: dto.pix_key,
           pixKeyType: keyTypeForKeyclub,
+          clientCallbackUrl: callbackUrl, // 👈 CAMPO OBRIGATÓRIO NA DOCUMENTAÇÃO
+          description: dto.description || 'Saque Paylure'
         });
 
         this.logger.log(
@@ -214,6 +224,11 @@ export class WithdrawalService {
     } catch (e: any) {
       this.logger.error(`[Withdrawal] ❌ ERRO: ${e.message}`, e.stack);
 
+      // Tratamento específico para erro da Keyclub (axios error)
+      if (e.response && e.response.data) {
+         this.logger.error(`[Keyclub Error Data]: ${JSON.stringify(e.response.data)}`);
+      }
+
       if (withdrawalRecordId) {
         const failureMessage = e.message.substring(0, 255);
         this.logger.warn(
@@ -241,15 +256,19 @@ export class WithdrawalService {
 
           this.logger.log(`[Withdrawal] ✅ Saldo revertido com sucesso.`);
 
-          throw new InternalServerErrorException(
-            `Falha na solicitação de saque. Saldo estornado. Motivo: ${failureMessage}`,
+          // Não lançar erro 500 genérico se for erro de validação
+          throw new BadRequestException(
+            `Falha no processamento: ${failureMessage}`,
           );
         } catch (reversalError: any) {
+          // Se falhar na reversão, aí sim é erro crítico
+          if (reversalError instanceof BadRequestException) throw reversalError;
+          
           this.logger.error(
             `[Withdrawal] 🚨 ERRO CRÍTICO: Falha na reversão! User: ${userId}`,
           );
           throw new InternalServerErrorException(
-            'ERRO CRÍTICO: Falha no saque. Contate o suporte.',
+            'ERRO CRÍTICO: Falha no saque e falha na reversão. Contate o suporte imediatamente.',
           );
         }
       }
