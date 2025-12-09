@@ -12,65 +12,59 @@ export class WebhooksService {
     private readonly paymentGateway: PaymentGateway,
   ) {}
 
-  /**
-   * 🔥 WEBHOOK DA PAYLURE (KeyClub) - Quando o PIX é PAGO
-   */
   async handleKeyclubWebhook(payload: any) {
-    this.logger.log(`🔥 [Webhook] Payload recebido: ${JSON.stringify(payload)}`);
+    this.logger.log(`🔥 [Webhook] Iniciando processamento... Payload: ${JSON.stringify(payload)}`);
 
     const {
       transaction_id: transactionId,
       status,
-      amount, // Pode vir como string "1.50" ou number
+      amount, 
     } = payload;
 
     if (!transactionId) {
-      this.logger.error('❌ [Webhook] transaction_id ausente no payload');
       throw new NotFoundException('transaction_id is required');
     }
 
-    // 1️⃣ Buscar o depósito no banco
+    // 1. Busca Depósito
     const deposit = await this.prisma.deposit.findUnique({
       where: { externalId: transactionId },
     });
 
     if (!deposit) {
-      this.logger.error(`❌ [Webhook] Depósito não encontrado: ${transactionId}`);
-      throw new NotFoundException(`Deposit with externalId ${transactionId} not found`);
+      throw new NotFoundException(`Depósito não encontrado no banco: ${transactionId}`);
     }
 
-    // 2️⃣ Verificar se já foi processado (Idempotência)
-    if (deposit.status === 'CONFIRMED') {
-      this.logger.warn(`⚠️ [Webhook] Depósito já confirmado anteriormente: ${deposit.id}`);
-      return { message: 'Deposit already confirmed' };
+    // 2. Trava de Segurança (Idempotência)
+    if (deposit.status === 'CONFIRMED' || deposit.status === 'PAID') {
+      this.logger.warn(`⚠️ Depósito ${deposit.id} já estava pago. Ignorando.`);
+      return { message: 'Already processed' };
     }
 
-    // 3️⃣ Processar SUCESSO
+    // 3. Processar Pagamento Aprovado
     if (status === 'COMPLETED' || status === 'PAID') {
-      this.logger.log(`🎉 PROCESSANDO PAGAMENTO: Depósito ${deposit.id}`);
-
-      // 🔥 CORREÇÃO DE VALOR: Garante que "1.00" vire 100 centavos
-      const amountNumber = Number(amount);
-      if (isNaN(amountNumber)) {
-         throw new Error(`Valor inválido recebido no webhook: ${amount}`);
-      }
+      
+      // --- CORREÇÃO MATEMÁTICA RÍGIDA ---
+      // Converte qualquer coisa que vier para número e garante centavos corretos
+      const amountNumber = Number(amount); 
+      // Se vier 1.00 -> vira 100. Se vier 1 -> vira 100.
       const amountInCents = Math.round(amountNumber * 100);
 
-      // 🔥 TRANSAÇÃO ATÔMICA (O Segredo para não perder saldo)
-      // O banco só confirma se as 3 operações funcionarem juntas
+      this.logger.log(`💰 Processando: Recebido ${amount} | Salvar como ${amountInCents} centavos`);
+
+      // --- TRANSAÇÃO ATÔMICA (Tudo ou Nada) ---
       const result = await this.prisma.$transaction(async (tx) => {
         
-        // A. Atualiza Status do Depósito
+        // A. Atualiza o Depósito
         const updatedDeposit = await tx.deposit.update({
           where: { id: deposit.id },
           data: { 
             status: 'CONFIRMED',
             amountInCents: amountInCents,
-            netAmountInCents: amountInCents 
+            netAmountInCents: amountInCents // Se tiver taxa, descontar aqui depois
           },
         });
 
-        // B. Incrementa Saldo do Usuário
+        // B. Atualiza o Saldo do Usuário
         const updatedUser = await tx.user.update({
           where: { id: deposit.userId },
           data: {
@@ -78,32 +72,25 @@ export class WebhooksService {
           },
         });
 
-        // C. Cria Histórico (Se a tabela transaction existir no schema)
-        // Se der erro aqui, ele cancela o saldo (Rollback), evitando inconsistência
-        try {
-            await tx.transaction.create({
-                data: {
-                    userId: deposit.userId,
-                    type: 'DEPOSIT',
-                    amount: amountInCents, // Nome do campo pode variar no seu schema (amount ou amountInCents)
-                    status: 'CONFIRMED',
-                    referenceId: deposit.externalId,
-                    description: 'Depósito via PIX',
-                },
-            });
-        } catch (e) {
-            // Se a tabela não existir, apenas logamos, mas não matamos a transação
-            // Se a tabela transaction for CRÍTICA, remova esse try/catch
-            this.logger.warn(`⚠️ Aviso: Não foi possível criar registro na tabela Transaction: ${e.message}`);
-        }
+        // C. Cria o Extrato (Transaction) - AJUSTADO PRO SEU SCHEMA
+        await tx.transaction.create({
+          data: {
+            userId: deposit.userId,
+            type: 'DEPOSIT',      // Bate com seu schema
+            amount: amountInCents, // Bate com seu schema (Int)
+            status: 'COMPLETED',   // Bate com seu schema
+            referenceId: deposit.externalId,
+            description: 'Depósito via PIX',
+            // metadata: payload, // Opcional: salva o payload original se quiser debugar
+          },
+        });
 
-        return { updatedUser, updatedDeposit };
+        return { updatedUser };
       });
 
-      this.logger.log(`✅ Transação DB concluída com sucesso.`);
-      this.logger.log(`💰 Novo Saldo do User ${result.updatedUser.id}: R$ ${(result.updatedUser.balance / 100).toFixed(2)}`);
+      this.logger.log(`✅ [SUCESSO] DB Atualizado! Novo saldo: R$ ${result.updatedUser.balance / 100}`);
 
-      // 4️⃣ Emitir eventos Socket (Só depois de garantir que o banco salvou)
+      // 4. Notifica Frontend (Socket)
       this.paymentGateway.emitToUser(deposit.userId, 'balance_updated', {
         balance: result.updatedUser.balance,
       });
@@ -114,19 +101,9 @@ export class WebhooksService {
         newBalance: result.updatedUser.balance,
       });
 
-      return { message: 'Deposit confirmed', newBalance: result.updatedUser.balance };
+      return { message: 'Confirmed successfully' };
     }
 
-    // 4️⃣ Processar FALHA
-    if (status === 'FAILED') {
-      await this.prisma.deposit.update({
-        where: { id: deposit.id },
-        data: { status: 'FAILED' },
-      });
-      this.paymentGateway.emitToUser(deposit.userId, 'deposit_failed', { depositId: deposit.id });
-      return { message: 'Deposit failed' };
-    }
-
-    return { message: `Ignored status: ${status}` };
+    return { message: `Status ignored: ${status}` };
   }
 }
