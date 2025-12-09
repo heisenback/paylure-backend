@@ -2,6 +2,7 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { KeyclubService } from '../keyclub/keyclub.service';
+import { v4 as uuidv4 } from 'uuid'; // 👈 ADICIONADO PARA GERAR ID NOVO
 
 @Injectable()
 export class AdminService {
@@ -275,7 +276,7 @@ export class AdminService {
   }
 
   // ===================================
-  // ✅ APROVAR SAQUE MANUAL (NOVO)
+  // ✅ APROVAR SAQUE MANUAL (CORRIGIDO)
   // ===================================
   async approveWithdrawal(withdrawalId: string, adminId: string) {
     this.logger.log(`[ADMIN] Aprovando saque ${withdrawalId} (Admin: ${adminId})`);
@@ -290,26 +291,42 @@ export class AdminService {
     if (withdrawal.status !== 'PENDING' && withdrawal.status !== 'PENDING_APPROVAL') {
       throw new BadRequestException(`Saque não está pendente. Status atual: ${withdrawal.status}`);
     }
+    
+    // Log para debug
+    this.logger.log(`🔍 User isAutoWithdrawal: ${withdrawal.user.isAutoWithdrawal}`);
 
     const amountInReais = withdrawal.netAmount / 100; 
     
-    // 🔥 CORREÇÃO AQUI: "as any" para forçar o TypeScript a aceitar o tipo
+    // Ajuste de tipo para evitar erro de TS
     const keyTypeForKeyclub = (withdrawal.keyType === 'RANDOM' ? 'EVP' : withdrawal.keyType) as any;
 
+    // 🔥 GERA UM NOVO EXTERNAL ID para evitar erro de "Duplicate" ou "Exists" na Keyclub
+    const newExternalId = uuidv4();
+
+    // Configura URL de Callback
+    const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br';
+    const webhookToken = withdrawal.webhookToken || uuidv4(); // Usa existente ou cria novo
+    const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
+
     try {
-      this.logger.log(`💸 Enviando PIX de R$ ${amountInReais} para ${withdrawal.pixKey}`);
+      this.logger.log(`💸 Enviando PIX de R$ ${amountInReais} para ${withdrawal.pixKey} (Novo ID: ${newExternalId})`);
       
       await this.keyclubService.createWithdrawal({
         amount: amountInReais,
-        externalId: withdrawal.externalId,
+        externalId: newExternalId, // Usa o NOVO ID
         pixKey: withdrawal.pixKey,
         pixKeyType: keyTypeForKeyclub,
+        clientCallbackUrl: callbackUrl, // Envia a URL obrigatória
+        description: `Aprovado Manualmente (Ref Orig: ${withdrawal.externalId})`
       });
 
+      // Atualiza o banco com o novo ID e status
       const updated = await this.prisma.withdrawal.update({
         where: { id: withdrawalId },
         data: {
-          status: 'COMPLETED',
+          status: 'COMPLETED', // Ou 'PROCESSING' se quiser esperar o webhook
+          externalId: newExternalId, // Atualiza para o ID que realmente foi aceito
+          webhookToken: webhookToken,
           description: withdrawal.description ? `${withdrawal.description} (Aprovado por Admin)` : 'Aprovado manualmente',
         }
       });
@@ -318,12 +335,17 @@ export class AdminService {
 
     } catch (error: any) {
       this.logger.error(`❌ Falha ao aprovar saque: ${error.message}`);
+      
+      if (error.response?.data) {
+        this.logger.error(`Detalhes Keyclub: ${JSON.stringify(error.response.data)}`);
+      }
+
       throw new BadRequestException(`Erro ao processar pagamento: ${error.message}`);
     }
   }
 
   // ===================================
-  // ❌ REJEITAR SAQUE MANUAL (NOVO)
+  // ❌ REJEITAR SAQUE MANUAL
   // ===================================
   async rejectWithdrawal(withdrawalId: string, reason: string, adminId: string) {
     this.logger.log(`[ADMIN] Rejeitando saque ${withdrawalId}. Motivo: ${reason}`);
