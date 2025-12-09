@@ -191,7 +191,7 @@ export class AdminService {
   }
 
   // ===================================
-  // 👥 LISTAR TODOS OS USUÁRIOS
+  // 👥 LISTAR TODOS OS USUÁRIOS (CORRIGIDO)
   // ===================================
   async getAllUsers(page: number = 1, limit: number = 50) {
     const skip = (page - 1) * limit;
@@ -201,8 +201,18 @@ export class AdminService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         select: {
-          id: true, email: true, name: true, balance: true, role: true, document: true,
-          isAutoWithdrawal: true, createdAt: true,
+          id: true, 
+          email: true, 
+          name: true, 
+          balance: true, 
+          role: true, 
+          document: true,
+          isAutoWithdrawal: true, 
+          createdAt: true,
+          // 🔥 CORREÇÃO: Adicionados campos de taxa para evitar erro no Frontend
+          withdrawalFeePercent: true,
+          withdrawalFeeFixed: true,
+          // -------------------------------------------------------------------
           _count: { select: { deposits: true, withdrawals: true } },
         },
       }),
@@ -314,13 +324,13 @@ export class AdminService {
     const amountInReais = withdrawal.netAmount / 100; 
     const keyTypeForKeyclub = (withdrawal.keyType === 'RANDOM' ? 'EVP' : withdrawal.keyType) as any;
     
-    // 🔥 GERA NOVO ID e TOKEN para evitar erro de duplicidade e garantir callback
+    // GERA NOVO ID e TOKEN para evitar erro de duplicidade
     const newExternalId = uuidv4();
     const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br';
     const webhookToken = withdrawal.webhookToken || uuidv4();
     const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
 
-    // 🔥 FORMATA CHAVE (CPF com pontos, Fone sem)
+    // FORMATA CHAVE (CPF com pontos, Fone sem)
     const formattedKey = this.formatPixKey(withdrawal.pixKey, withdrawal.keyType);
 
     try {
@@ -349,7 +359,6 @@ export class AdminService {
 
     } catch (error: any) {
       this.logger.error(`❌ Falha: ${error.message}`);
-      // Traduz erro da Keyclub
       if (error.message.includes('exists') || error.response?.data?.message?.includes('exists')) {
          throw new BadRequestException('Bloqueado: Este usuário já tem um saque PENDENTE na Keyclub. Aguarde ou cancele lá.');
       }
