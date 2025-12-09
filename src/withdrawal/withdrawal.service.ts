@@ -21,6 +21,33 @@ export class WithdrawalService {
     private readonly systemSettings: SystemSettingsService,
   ) {}
 
+  // 🔥 HELPER: Garante a formatação correta para o Banco
+  private formatPixKey(key: string, type: string): string {
+    const clean = key.replace(/\D/g, ''); 
+
+    // CPF: Obriga pontos e traço (119.803.259-60)
+    if (type === 'CPF') {
+      if (clean.length === 11) {
+         return clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+      }
+    }
+
+    // CNPJ: Obriga pontos, barra e traço
+    if (type === 'CNPJ') {
+      if (clean.length === 14) {
+        return clean.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+      }
+    }
+
+    // TELEFONE: Manda limpo (só números) para o banco reconhecer como celular
+    if (type === 'PHONE' || type === 'TELEFONE') {
+      return clean; 
+    }
+
+    // E-MAIL / ALEATÓRIA: Retorna como está
+    return key;
+  }
+
   private async calculateWithdrawalFee(
     userId: string,
     amountInCents: number,
@@ -124,6 +151,9 @@ export class WithdrawalService {
       );
     }
 
+    const isAuto = !!userWithBalance.isAutoWithdrawal;
+    this.logger.log(`🔍 [Withdrawal Check] User: ${userWithBalance.email} | Auto: ${isAuto}`);
+
     let withdrawalRecordId: string | null = null;
     let isKeyclubCalled = false;
 
@@ -161,26 +191,26 @@ export class WithdrawalService {
       );
 
       // 2. Verifica se é Saque AUTOMÁTICO ou MANUAL
-      if (userWithBalance.isAutoWithdrawal) {
+      if (isAuto) {
         this.logger.log(`🚀 [Auto] Usuário ${userWithBalance.email} tem saque automático. Processando com KeyClub...`);
         
         isKeyclubCalled = true;
-        // Se for RANDOM na DTO, mapeia para EVP (mas o front agora vai mandar CPF/CNPJ)
+        // Se for RANDOM na DTO, mapeia para EVP
         const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
 
-        // IMPORTANTE: Definir URL de callback correta
-        // Se você tiver uma variável de ambiente para a URL da API, use process.env.API_URL
-        // Exemplo: https://api.paylure.com.br/api/v1/webhooks/keyclub
-        const apiUrl = process.env.API_URL || 'https://api.paylure.com.br'; 
+        const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br'; 
         const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
 
-        // CORREÇÃO DO ERRO 500: Adicionado clientCallbackUrl
+        // 🔥 APLICA A FORMATAÇÃO SEGURA
+        const formattedKey = this.formatPixKey(dto.pix_key, dto.key_type);
+        this.logger.log(`🔑 Chave enviada para Keyclub: "${formattedKey}" (Tipo Original: ${dto.key_type})`);
+
         await this.keyclubService.createWithdrawal({
           amount: netAmountInReais,
           externalId: externalId,
-          pixKey: dto.pix_key,
+          pixKey: formattedKey,
           pixKeyType: keyTypeForKeyclub,
-          clientCallbackUrl: callbackUrl, // 👈 CAMPO OBRIGATÓRIO NA DOCUMENTAÇÃO
+          clientCallbackUrl: callbackUrl, 
           description: dto.description || 'Saque Paylure'
         });
 
@@ -203,7 +233,7 @@ export class WithdrawalService {
         };
 
       } else {
-        // 3. Saque MANUAL (Cai aqui se isAutoWithdrawal = false)
+        // 3. Saque MANUAL
         this.logger.log(`👀 [Manual] Usuário ${userWithBalance.email} requer aprovação. Saque retido como PENDING.`);
         
         return {
@@ -224,7 +254,6 @@ export class WithdrawalService {
     } catch (e: any) {
       this.logger.error(`[Withdrawal] ❌ ERRO: ${e.message}`, e.stack);
 
-      // Tratamento específico para erro da Keyclub (axios error)
       if (e.response && e.response.data) {
          this.logger.error(`[Keyclub Error Data]: ${JSON.stringify(e.response.data)}`);
       }
@@ -256,12 +285,10 @@ export class WithdrawalService {
 
           this.logger.log(`[Withdrawal] ✅ Saldo revertido com sucesso.`);
 
-          // Não lançar erro 500 genérico se for erro de validação
           throw new BadRequestException(
             `Falha no processamento: ${failureMessage}`,
           );
         } catch (reversalError: any) {
-          // Se falhar na reversão, aí sim é erro crítico
           if (reversalError instanceof BadRequestException) throw reversalError;
           
           this.logger.error(

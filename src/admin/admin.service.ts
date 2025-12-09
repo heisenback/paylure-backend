@@ -2,7 +2,7 @@
 import { Injectable, Logger, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { KeyclubService } from '../keyclub/keyclub.service';
-import { v4 as uuidv4 } from 'uuid'; // 👈 ADICIONADO PARA GERAR ID NOVO
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class AdminService {
@@ -12,6 +12,26 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly keyclubService: KeyclubService,
   ) {}
+
+  // 🔥 HELPER: Formatação de Chave Pix (igual ao WithdrawalService)
+  private formatPixKey(key: string, type: string): string {
+    const clean = key.replace(/\D/g, '');
+    
+    // CPF -> Formata
+    if (type === 'CPF' && clean.length === 11) {
+      return clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    }
+    // CNPJ -> Formata
+    if (type === 'CNPJ' && clean.length === 14) {
+      return clean.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+    }
+    // TELEFONE -> Manda Limpo
+    if (type === 'PHONE' || type === 'TELEFONE') {
+        return clean; 
+    }
+    
+    return key;
+  }
 
   // ===================================
   // 📊 DASHBOARD - ESTATÍSTICAS GERAIS
@@ -287,59 +307,51 @@ export class AdminService {
     });
 
     if (!withdrawal) throw new NotFoundException('Saque não encontrado.');
-
     if (withdrawal.status !== 'PENDING' && withdrawal.status !== 'PENDING_APPROVAL') {
-      throw new BadRequestException(`Saque não está pendente. Status atual: ${withdrawal.status}`);
+      throw new BadRequestException(`Status inválido: ${withdrawal.status}`);
     }
-    
-    // Log para debug
-    this.logger.log(`🔍 User isAutoWithdrawal: ${withdrawal.user.isAutoWithdrawal}`);
 
     const amountInReais = withdrawal.netAmount / 100; 
-    
-    // Ajuste de tipo para evitar erro de TS
     const keyTypeForKeyclub = (withdrawal.keyType === 'RANDOM' ? 'EVP' : withdrawal.keyType) as any;
-
-    // 🔥 GERA UM NOVO EXTERNAL ID para evitar erro de "Duplicate" ou "Exists" na Keyclub
+    
+    // GERA NOVO ID E TOKENS
     const newExternalId = uuidv4();
-
-    // Configura URL de Callback
     const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br';
-    const webhookToken = withdrawal.webhookToken || uuidv4(); // Usa existente ou cria novo
+    const webhookToken = withdrawal.webhookToken || uuidv4();
     const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
 
+    // 🔥 FORMATA CHAVE (CPF com pontos, Fone sem)
+    const formattedKey = this.formatPixKey(withdrawal.pixKey, withdrawal.keyType);
+
     try {
-      this.logger.log(`💸 Enviando PIX de R$ ${amountInReais} para ${withdrawal.pixKey} (Novo ID: ${newExternalId})`);
+      this.logger.log(`💸 Enviando R$ ${amountInReais} para ${formattedKey} (Tipo: ${withdrawal.keyType})`);
       
       await this.keyclubService.createWithdrawal({
         amount: amountInReais,
-        externalId: newExternalId, // Usa o NOVO ID
-        pixKey: withdrawal.pixKey,
+        externalId: newExternalId,
+        pixKey: formattedKey, 
         pixKeyType: keyTypeForKeyclub,
-        clientCallbackUrl: callbackUrl, // Envia a URL obrigatória
-        description: `Aprovado Manualmente (Ref Orig: ${withdrawal.externalId})`
+        clientCallbackUrl: callbackUrl,
+        description: `Aprovado Manualmente (Ref: ${withdrawal.id.split('-')[0]})`
       });
 
-      // Atualiza o banco com o novo ID e status
       const updated = await this.prisma.withdrawal.update({
         where: { id: withdrawalId },
         data: {
-          status: 'COMPLETED', // Ou 'PROCESSING' se quiser esperar o webhook
-          externalId: newExternalId, // Atualiza para o ID que realmente foi aceito
+          status: 'COMPLETED',
+          externalId: newExternalId,
           webhookToken: webhookToken,
-          description: withdrawal.description ? `${withdrawal.description} (Aprovado por Admin)` : 'Aprovado manualmente',
+          description: 'Aprovado manualmente',
         }
       });
 
-      return { success: true, message: 'Saque aprovado e enviado!', withdrawal: updated };
+      return { success: true, message: 'Saque enviado!', withdrawal: updated };
 
     } catch (error: any) {
-      this.logger.error(`❌ Falha ao aprovar saque: ${error.message}`);
-      
-      if (error.response?.data) {
-        this.logger.error(`Detalhes Keyclub: ${JSON.stringify(error.response.data)}`);
+      this.logger.error(`❌ Falha: ${error.message}`);
+      if (error.message.includes('exists') || error.response?.data?.message?.includes('exists')) {
+         throw new BadRequestException('Saque bloqueado: Já existe um pendente na Keyclub para este usuário.');
       }
-
       throw new BadRequestException(`Erro ao processar pagamento: ${error.message}`);
     }
   }
