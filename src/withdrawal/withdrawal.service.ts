@@ -21,33 +21,36 @@ export class WithdrawalService {
     private readonly systemSettings: SystemSettingsService,
   ) {}
 
-  // 🔥 HELPER: Garante a formatação correta para o Banco
+  // 🔥 HELPER DE SEGURANÇA: Garante a formatação correta para o Banco
   private formatPixKey(key: string, type: string): string {
+    // Remove tudo que não é número para limpar
     const clean = key.replace(/\D/g, ''); 
 
-    // CPF: Obriga pontos e traço (119.803.259-60)
+    // SE FOR CPF: Obriga a colocar pontos e traço (Ex: 119.803.259-60)
+    // Isso garante que o banco NÃO confunda com telefone celular
     if (type === 'CPF') {
       if (clean.length === 11) {
          return clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
       }
     }
 
-    // CNPJ: Obriga pontos, barra e traço
+    // SE FOR CNPJ: Obriga a formatação de CNPJ
     if (type === 'CNPJ') {
       if (clean.length === 14) {
         return clean.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
       }
     }
 
-    // TELEFONE: Manda limpo (só números) para o banco reconhecer como celular
+    // SE FOR TELEFONE: Manda limpo (só números)
     if (type === 'PHONE' || type === 'TELEFONE') {
       return clean; 
     }
 
-    // E-MAIL / ALEATÓRIA: Retorna como está
+    // E-MAIL ou CHAVE ALEATÓRIA: Retorna como está
     return key;
   }
 
+  // Lógica de Cálculo de Taxas (Individual vs Global)
   private async calculateWithdrawalFee(
     userId: string,
     amountInCents: number,
@@ -57,6 +60,7 @@ export class WithdrawalService {
     feeInCents: number;
     netAmountInCents: number;
   }> {
+    // Busca configurações do usuário
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -73,18 +77,20 @@ export class WithdrawalService {
     let feePercent: number;
     let feeFixed: number;
 
+    // REGRA 1: Verifica se tem taxa diferenciada (Individual)
     if (user.withdrawalFeePercent !== null && user.withdrawalFeeFixed !== null) {
       feePercent = user.withdrawalFeePercent;
       feeFixed = user.withdrawalFeeFixed;
       this.logger.log(
-        `💼 Taxa INDIVIDUAL para ${user.name}: ${feePercent}% + R$ ${feeFixed}`,
+        `💼 Taxa INDIVIDUAL usada para ${user.name}: ${feePercent}% + R$ ${feeFixed}`,
       );
     } else {
+      // REGRA 2: Se não tiver, usa a taxa padrão do site (Global)
       const globalFees = await this.systemSettings.getWithdrawalFees();
       feePercent = globalFees.percent;
       feeFixed = globalFees.fixed;
       this.logger.log(
-        `🌐 Taxa GLOBAL para ${user.name}: ${feePercent}% + R$ ${feeFixed}`,
+        `🌐 Taxa GLOBAL usada para ${user.name}: ${feePercent}% + R$ ${feeFixed}`,
       );
     }
 
@@ -114,6 +120,7 @@ export class WithdrawalService {
 
     const requestedAmountInCents = dto.amount;
 
+    // 1. Calcula as taxas
     const feeInfo = await this.calculateWithdrawalFee(
       userId,
       requestedAmountInCents,
@@ -151,14 +158,14 @@ export class WithdrawalService {
       );
     }
 
+    // REGRA 3: Verifica se o saque é automático
     const isAuto = !!userWithBalance.isAutoWithdrawal;
-    this.logger.log(`🔍 [Withdrawal Check] User: ${userWithBalance.email} | Auto: ${isAuto}`);
+    this.logger.log(`🔍 [Check Saque] User: ${userWithBalance.email} | Automático: ${isAuto}`);
 
     let withdrawalRecordId: string | null = null;
-    let isKeyclubCalled = false;
 
     try {
-      // 1. Inicia Transação no Banco (Debita Saldo + Cria Registro)
+      // Inicia Transação no Banco (Debita Saldo + Cria Registro)
       await this.prisma.$transaction(async (tx) => {
         await tx.user.update({
           where: { id: userId },
@@ -187,40 +194,39 @@ export class WithdrawalService {
       });
 
       this.logger.log(
-        `[Withdrawal] ✅ Saldo debitado. Withdrawal PENDING: #${withdrawalRecordId}`,
+        `[Withdrawal] ✅ Saldo debitado. ID: #${withdrawalRecordId}`,
       );
 
-      // 2. Verifica se é Saque AUTOMÁTICO ou MANUAL
+      // SE FOR AUTOMÁTICO -> Envia para Keyclub
       if (isAuto) {
-        this.logger.log(`🚀 [Auto] Usuário ${userWithBalance.email} tem saque automático. Processando com KeyClub...`);
+        this.logger.log(`🚀 [Auto] Usuário tem saque automático. Processando...`);
         
-        isKeyclubCalled = true;
-        // Se for RANDOM na DTO, mapeia para EVP
         const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
 
+        // Configura URL de Callback para evitar erro 500
         const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br'; 
         const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
 
-        // 🔥 APLICA A FORMATAÇÃO SEGURA
+        // 🔥 APLICA A FORMATAÇÃO SEGURA NA CHAVE
         const formattedKey = this.formatPixKey(dto.pix_key, dto.key_type);
-        this.logger.log(`🔑 Chave enviada para Keyclub: "${formattedKey}" (Tipo Original: ${dto.key_type})`);
+        this.logger.log(`🔑 Chave formatada enviada: "${formattedKey}" (Tipo Original: ${dto.key_type})`);
 
         await this.keyclubService.createWithdrawal({
           amount: netAmountInReais,
           externalId: externalId,
-          pixKey: formattedKey,
+          pixKey: formattedKey, // Usa a chave formatada
           pixKeyType: keyTypeForKeyclub,
           clientCallbackUrl: callbackUrl, 
           description: dto.description || 'Saque Paylure'
         });
 
         this.logger.log(
-          `[Withdrawal] ✅ Saque automático enviado para KeyClub: ${externalId}`,
+          `[Withdrawal] ✅ Sucesso! Enviado para KeyClub.`,
         );
 
         return {
           success: true,
-          message: 'Saque enviado para processamento.',
+          message: 'Saque automático enviado para processamento.',
           transactionId: externalId,
           requestedAmount: requestedAmountInCents,
           status: 'PROCESSING',
@@ -233,8 +239,8 @@ export class WithdrawalService {
         };
 
       } else {
-        // 3. Saque MANUAL
-        this.logger.log(`👀 [Manual] Usuário ${userWithBalance.email} requer aprovação. Saque retido como PENDING.`);
+        // SE FOR MANUAL -> Retém para aprovação
+        this.logger.log(`👀 [Manual] Saque retido para aprovação (Configuração do usuário é Manual).`);
         
         return {
           success: true,
@@ -254,14 +260,11 @@ export class WithdrawalService {
     } catch (e: any) {
       this.logger.error(`[Withdrawal] ❌ ERRO: ${e.message}`, e.stack);
 
-      if (e.response && e.response.data) {
-         this.logger.error(`[Keyclub Error Data]: ${JSON.stringify(e.response.data)}`);
-      }
-
+      // Se falhar, devolve o dinheiro
       if (withdrawalRecordId) {
         const failureMessage = e.message.substring(0, 255);
         this.logger.warn(
-          `[Withdrawal] ⚠️ Falha. Revertendo saldo do usuário ${userId}...`,
+          `[Withdrawal] ⚠️ Falha. Revertendo saldo...`,
         );
 
         try {
@@ -283,25 +286,21 @@ export class WithdrawalService {
             }),
           ]);
 
-          this.logger.log(`[Withdrawal] ✅ Saldo revertido com sucesso.`);
+          this.logger.log(`[Withdrawal] ✅ Saldo revertido.`);
 
           throw new BadRequestException(
             `Falha no processamento: ${failureMessage}`,
           );
         } catch (reversalError: any) {
           if (reversalError instanceof BadRequestException) throw reversalError;
-          
-          this.logger.error(
-            `[Withdrawal] 🚨 ERRO CRÍTICO: Falha na reversão! User: ${userId}`,
-          );
           throw new InternalServerErrorException(
-            'ERRO CRÍTICO: Falha no saque e falha na reversão. Contate o suporte imediatamente.',
+            'ERRO CRÍTICO: Falha no saque e falha na reversão. Contate o suporte.',
           );
         }
       }
 
       throw new InternalServerErrorException(
-        e.message || 'Erro ao processar saque. Tente novamente.',
+        e.message || 'Erro ao processar saque.',
       );
     }
   }

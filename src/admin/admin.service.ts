@@ -13,15 +13,15 @@ export class AdminService {
     private readonly keyclubService: KeyclubService,
   ) {}
 
-  // 🔥 HELPER: Formatação de Chave Pix (igual ao WithdrawalService)
+  // 🔥 HELPER: Formatação de Chave Pix (Igual ao WithdrawalService)
   private formatPixKey(key: string, type: string): string {
     const clean = key.replace(/\D/g, '');
     
-    // CPF -> Formata
+    // CPF -> Formata com pontos e traço
     if (type === 'CPF' && clean.length === 11) {
       return clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
     }
-    // CNPJ -> Formata
+    // CNPJ -> Formata com barras e traço
     if (type === 'CNPJ' && clean.length === 14) {
       return clean.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
     }
@@ -314,7 +314,7 @@ export class AdminService {
     const amountInReais = withdrawal.netAmount / 100; 
     const keyTypeForKeyclub = (withdrawal.keyType === 'RANDOM' ? 'EVP' : withdrawal.keyType) as any;
     
-    // GERA NOVO ID E TOKENS
+    // 🔥 GERA NOVO ID e TOKEN para evitar erro de duplicidade e garantir callback
     const newExternalId = uuidv4();
     const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br';
     const webhookToken = withdrawal.webhookToken || uuidv4();
@@ -324,7 +324,7 @@ export class AdminService {
     const formattedKey = this.formatPixKey(withdrawal.pixKey, withdrawal.keyType);
 
     try {
-      this.logger.log(`💸 Enviando R$ ${amountInReais} para ${formattedKey} (Tipo: ${withdrawal.keyType})`);
+      this.logger.log(`💸 Admin Enviando R$ ${amountInReais} para ${formattedKey} (Tipo: ${withdrawal.keyType})`);
       
       await this.keyclubService.createWithdrawal({
         amount: amountInReais,
@@ -349,8 +349,9 @@ export class AdminService {
 
     } catch (error: any) {
       this.logger.error(`❌ Falha: ${error.message}`);
+      // Traduz erro da Keyclub
       if (error.message.includes('exists') || error.response?.data?.message?.includes('exists')) {
-         throw new BadRequestException('Saque bloqueado: Já existe um pendente na Keyclub para este usuário.');
+         throw new BadRequestException('Bloqueado: Este usuário já tem um saque PENDENTE na Keyclub. Aguarde ou cancele lá.');
       }
       throw new BadRequestException(`Erro ao processar pagamento: ${error.message}`);
     }
