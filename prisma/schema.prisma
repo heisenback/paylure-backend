@@ -18,6 +18,7 @@ model User {
   password         String
   name             String
   document         String?
+  phone            String?      // ✅ CAMPO NOVO: Para salvar o WhatsApp
   role             String       @default("USER") // USER, SUPPORT, ADMIN
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
@@ -28,8 +29,8 @@ model User {
   apiSecret        String       @unique 
 
   // 🎯 TAXAS E SAQUES
-  withdrawalFeePercent  Float?    @default(0.0) // Taxa personalizada %
-  withdrawalFeeFixed    Int?      @default(0)   // Taxa fixa em Centavos
+  withdrawalFeePercent  Float?  @default(0.0) // Taxa personalizada %
+  withdrawalFeeFixed    Int?    @default(0)   // Taxa fixa em Centavos
   
   // 👇 NOVO CAMPO: Saque Automático (False = Manual / True = Automático)
   isAutoWithdrawal      Boolean   @default(false)
@@ -126,7 +127,6 @@ model PushSubscription {
 model Merchant {
   id               String       @id @default(uuid())
   storeName        String
-  
   cnpj             String       @unique
   logoUrl          String?
   pixKey           String?

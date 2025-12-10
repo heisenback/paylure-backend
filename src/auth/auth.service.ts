@@ -103,6 +103,7 @@ export class AuthService {
           email: dto.email,
           name: dto.name || 'Usuário Padrão',
           document: cpfLimpo,
+          // ✅ AGORA ESTÁ ATIVO: Salva o WhatsApp no banco!
           phone: dto.whatsapp ? dto.whatsapp.replace(/\D/g, '') : null, 
           password: hashedPassword,
           apiKey: apiKey,
