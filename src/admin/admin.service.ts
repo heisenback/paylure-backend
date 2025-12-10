@@ -93,7 +93,8 @@ export class AdminService {
   // 📈 GRÁFICOS
   // ===================================
   async getDepositsChart(days: number = 7) {
-    const data = [];
+    // CORREÇÃO: Definindo tipo explicito para evitar erro TS2345
+    const data: any[] = [];
     const now = new Date();
     for (let i = days - 1; i >= 0; i--) {
       const date = new Date(now);
@@ -114,7 +115,8 @@ export class AdminService {
   }
 
   async getWithdrawalsChart(days: number = 7) {
-    const data = [];
+    // CORREÇÃO: Definindo tipo explicito para evitar erro TS2345
+    const data: any[] = [];
     const now = new Date();
     for (let i = days - 1; i >= 0; i--) {
       const date = new Date(now);
@@ -147,10 +149,7 @@ export class AdminService {
         select: {
           id: true, email: true, name: true, balance: true, role: true, document: true,
           isAutoWithdrawal: true, createdAt: true,
-          // 👇 AQUI ESTAVA O PROBLEMA! ADICIONEI OS CAMPOS QUE FALTAVAM
-          withdrawalFeePercent: true, 
-          withdrawalFeeFixed: true, 
-          // 👆 FIM DA CORREÇÃO
+          withdrawalFeePercent: true, withdrawalFeeFixed: true, 
           _count: { select: { deposits: true, withdrawals: true } },
         },
       }),
@@ -268,15 +267,15 @@ export class AdminService {
   }
 
   // ===================================
-  // 🚩 FEATURE FLAGS (LÓGICA NOVA)
+  // 🚩 FEATURE FLAGS (CORRIGIDO)
   // ===================================
   async getFeatureFlags() {
     try {
-        // Tenta buscar na tabela systemSetting.
-        const setting = await this.prisma.systemSetting.findUnique({ where: { key: 'feature_flags' } });
+        // CORREÇÃO: Usando systemSettings (plural)
+        const setting = await this.prisma.systemSettings.findUnique({ where: { key: 'feature_flags' } });
         return setting ? JSON.parse(setting.value) : {};
     } catch (error) {
-        this.logger.warn('Erro ao ler feature flags (tabela pode não existir). Retornando padrão.');
+        this.logger.warn('Tabela systemSettings não encontrada ou erro ao ler flags. Usando padrão.');
         return {};
     }
   }
@@ -285,8 +284,8 @@ export class AdminService {
     const key = 'feature_flags';
     const value = JSON.stringify(flags);
     
-    // Salva ou Atualiza
-    return await this.prisma.systemSetting.upsert({
+    // CORREÇÃO: Usando systemSettings (plural)
+    return await this.prisma.systemSettings.upsert({
         where: { key },
         update: { value },
         create: { key, value }

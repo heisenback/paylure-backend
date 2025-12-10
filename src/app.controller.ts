@@ -18,9 +18,8 @@ export class AppController {
   @Get('feature-flags')
   async getPublicFeatureFlags() {
     try {
-        // Tenta buscar as configurações no banco (tabela SystemSetting)
-        // Se a tabela tiver outro nome no seu banco, altere aqui.
-        const setting = await this.prisma.systemSetting.findUnique({ where: { key: 'feature_flags' } });
+        // CORREÇÃO: Usando systemSettings (plural)
+        const setting = await this.prisma.systemSettings.findUnique({ where: { key: 'feature_flags' } });
         
         // Se encontrar, devolve o JSON. Se não, devolve objeto vazio.
         const flags = setting ? JSON.parse(setting.value) : {};
