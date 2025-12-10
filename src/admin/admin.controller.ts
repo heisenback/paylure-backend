@@ -35,7 +35,6 @@ export class AdminController {
   // ===================================
   @Get('dashboard')
   async getDashboard() {
-    this.logger.log('[ADMIN] Dashboard acessado');
     return this.adminService.getDashboardStats();
   }
 
@@ -53,7 +52,7 @@ export class AdminController {
   }
 
   // ===================================
-  // 👥 USUÁRIOS E TRANSAÇÕES
+  // 👥 USUÁRIOS
   // ===================================
   @Get('users')
   async getUsers(@Query('page') page?: string, @Query('limit') limit?: string) {
@@ -127,7 +126,7 @@ export class AdminController {
   }
 
   // ===================================
-  // ✅ APROVAR SAQUE (NOVO)
+  // ✅ APROVAR/REJEITAR SAQUE
   // ===================================
   @Post('withdrawals/:id/approve')
   @HttpCode(HttpStatus.OK)
@@ -135,12 +134,25 @@ export class AdminController {
     return this.adminService.approveWithdrawal(id, admin.id);
   }
 
-  // ===================================
-  // ❌ REJEITAR SAQUE (NOVO)
-  // ===================================
   @Post('withdrawals/:id/reject')
   @HttpCode(HttpStatus.OK)
   async rejectWithdrawal(@Param('id') id: string, @Body() body: { reason: string }, @GetUser() admin: any) {
     return this.adminService.rejectWithdrawal(id, body.reason, admin.id);
+  }
+
+  // ===================================
+  // 🚩 FEATURE FLAGS (ROTA DO ADMIN)
+  // ===================================
+  @Get('feature-flags')
+  async getFeatureFlags() {
+    const flags = await this.adminService.getFeatureFlags();
+    return { flags };
+  }
+
+  @Post('feature-flags')
+  @HttpCode(HttpStatus.OK)
+  async updateFeatureFlags(@Body() body: { flags: any }) {
+    await this.adminService.updateFeatureFlags(body.flags);
+    return { success: true, message: 'Menu atualizado com sucesso!' };
   }
 }

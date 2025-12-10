@@ -13,28 +13,23 @@ export class AdminService {
     private readonly keyclubService: KeyclubService,
   ) {}
 
-  // 🔥 HELPER: Formatação de Chave Pix (Igual ao WithdrawalService)
+  // 🔥 HELPER: Formatação de Chave Pix
   private formatPixKey(key: string, type: string): string {
     const clean = key.replace(/\D/g, '');
-    
-    // CPF -> Formata com pontos e traço
     if (type === 'CPF' && clean.length === 11) {
       return clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
     }
-    // CNPJ -> Formata com barras e traço
     if (type === 'CNPJ' && clean.length === 14) {
       return clean.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
     }
-    // TELEFONE -> Manda Limpo
     if (type === 'PHONE' || type === 'TELEFONE') {
         return clean; 
     }
-    
     return key;
   }
 
   // ===================================
-  // 📊 DASHBOARD - ESTATÍSTICAS GERAIS
+  // 📊 DASHBOARD - ESTATÍSTICAS
   // ===================================
   async getDashboardStats() {
     const now = new Date();
@@ -57,54 +52,16 @@ export class AdminService {
       pendingWithdrawals,
     ] = await Promise.all([
       this.prisma.user.count(),
-      this.prisma.deposit.aggregate({
-        where: { status: 'CONFIRMED' },
-        _sum: { netAmountInCents: true },
-        _count: true,
-      }),
-      this.prisma.withdrawal.aggregate({
-        where: { status: 'COMPLETED' },
-        _sum: { amount: true },
-        _count: true,
-      }),
-      this.prisma.deposit.aggregate({
-        where: { status: 'CONFIRMED', createdAt: { gte: today } },
-        _sum: { netAmountInCents: true },
-        _count: true,
-      }),
-      this.prisma.withdrawal.aggregate({
-        where: { status: 'COMPLETED', createdAt: { gte: today } },
-        _sum: { amount: true },
-        _count: true,
-      }),
-      this.prisma.deposit.aggregate({
-        where: { status: 'CONFIRMED', createdAt: { gte: thisWeekStart } },
-        _sum: { netAmountInCents: true },
-        _count: true,
-      }),
-      this.prisma.withdrawal.aggregate({
-        where: { status: 'COMPLETED', createdAt: { gte: thisWeekStart } },
-        _sum: { amount: true },
-        _count: true,
-      }),
-      this.prisma.deposit.aggregate({
-        where: { status: 'CONFIRMED', createdAt: { gte: thisMonthStart } },
-        _sum: { netAmountInCents: true },
-        _count: true,
-      }),
-      this.prisma.withdrawal.aggregate({
-        where: { status: 'COMPLETED', createdAt: { gte: thisMonthStart } },
-        _sum: { amount: true },
-        _count: true,
-      }),
-      this.prisma.user.aggregate({
-        _sum: { balance: true },
-      }),
-      this.prisma.withdrawal.aggregate({
-        where: { status: 'PENDING' },
-        _sum: { amount: true },
-        _count: true,
-      }),
+      this.prisma.deposit.aggregate({ where: { status: 'CONFIRMED' }, _sum: { netAmountInCents: true }, _count: true }),
+      this.prisma.withdrawal.aggregate({ where: { status: 'COMPLETED' }, _sum: { amount: true }, _count: true }),
+      this.prisma.deposit.aggregate({ where: { status: 'CONFIRMED', createdAt: { gte: today } }, _sum: { netAmountInCents: true }, _count: true }),
+      this.prisma.withdrawal.aggregate({ where: { status: 'COMPLETED', createdAt: { gte: today } }, _sum: { amount: true }, _count: true }),
+      this.prisma.deposit.aggregate({ where: { status: 'CONFIRMED', createdAt: { gte: thisWeekStart } }, _sum: { netAmountInCents: true }, _count: true }),
+      this.prisma.withdrawal.aggregate({ where: { status: 'COMPLETED', createdAt: { gte: thisWeekStart } }, _sum: { amount: true }, _count: true }),
+      this.prisma.deposit.aggregate({ where: { status: 'CONFIRMED', createdAt: { gte: thisMonthStart } }, _sum: { netAmountInCents: true }, _count: true }),
+      this.prisma.withdrawal.aggregate({ where: { status: 'COMPLETED', createdAt: { gte: thisMonthStart } }, _sum: { amount: true }, _count: true }),
+      this.prisma.user.aggregate({ _sum: { balance: true } }),
+      this.prisma.withdrawal.aggregate({ where: { status: 'PENDING' }, _sum: { amount: true }, _count: true }),
     ]);
 
     const totalFeesCollected = await this.prisma.withdrawal.aggregate({
@@ -133,12 +90,11 @@ export class AdminService {
   }
 
   // ===================================
-  // 📈 GRÁFICO - DEPÓSITOS
+  // 📈 GRÁFICOS
   // ===================================
-  async getDepositsChart(days: number = 7): Promise<Array<{ date: string; amount: number; count: number }>> {
-    const data: Array<{ date: string; amount: number; count: number }> = [];
+  async getDepositsChart(days: number = 7) {
+    const data = [];
     const now = new Date();
-
     for (let i = days - 1; i >= 0; i--) {
       const date = new Date(now);
       date.setDate(date.getDate() - i);
@@ -152,22 +108,14 @@ export class AdminService {
         _count: true,
       });
 
-      data.push({
-        date: date.toISOString().split('T')[0],
-        amount: result._sum.netAmountInCents || 0,
-        count: result._count,
-      });
+      data.push({ date: date.toISOString().split('T')[0], amount: result._sum.netAmountInCents || 0, count: result._count });
     }
     return data;
   }
 
-  // ===================================
-  // 📉 GRÁFICO - SAQUES
-  // ===================================
-  async getWithdrawalsChart(days: number = 7): Promise<Array<{ date: string; amount: number; count: number }>> {
-    const data: Array<{ date: string; amount: number; count: number }> = [];
+  async getWithdrawalsChart(days: number = 7) {
+    const data = [];
     const now = new Date();
-
     for (let i = days - 1; i >= 0; i--) {
       const date = new Date(now);
       date.setDate(date.getDate() - i);
@@ -181,17 +129,13 @@ export class AdminService {
         _count: true,
       });
 
-      data.push({
-        date: date.toISOString().split('T')[0],
-        amount: result._sum.amount || 0,
-        count: result._count,
-      });
+      data.push({ date: date.toISOString().split('T')[0], amount: result._sum.amount || 0, count: result._count });
     }
     return data;
   }
 
   // ===================================
-  // 👥 LISTAR TODOS OS USUÁRIOS (CORRIGIDO)
+  // 👥 LISTAR USUÁRIOS
   // ===================================
   async getAllUsers(page: number = 1, limit: number = 50) {
     const skip = (page - 1) * limit;
@@ -201,24 +145,17 @@ export class AdminService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         select: {
-          id: true, 
-          email: true, 
-          name: true, 
-          balance: true, 
-          role: true, 
-          document: true,
-          isAutoWithdrawal: true, 
-          createdAt: true,
-          // 🔥 CORREÇÃO: Adicionados campos de taxa para evitar erro no Frontend
-          withdrawalFeePercent: true,
-          withdrawalFeeFixed: true,
-          // -------------------------------------------------------------------
+          id: true, email: true, name: true, balance: true, role: true, document: true,
+          isAutoWithdrawal: true, createdAt: true,
+          // 👇 AQUI ESTAVA O PROBLEMA! ADICIONEI OS CAMPOS QUE FALTAVAM
+          withdrawalFeePercent: true, 
+          withdrawalFeeFixed: true, 
+          // 👆 FIM DA CORREÇÃO
           _count: { select: { deposits: true, withdrawals: true } },
         },
       }),
       this.prisma.user.count(),
     ]);
-
     return { users, pagination: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
@@ -227,61 +164,43 @@ export class AdminService {
   // ===================================
   async getAllTransactions(page: number = 1, limit: number = 50, type?: 'DEPOSIT' | 'WITHDRAWAL', status?: string) {
     const skip = (page - 1) * limit;
-
     const deposits: any[] = (!type || type === 'DEPOSIT')
       ? await this.prisma.deposit.findMany({
-          skip: type === 'DEPOSIT' ? skip : 0,
-          take: type === 'DEPOSIT' ? limit : 10,
-          where: status ? { status } : undefined,
-          orderBy: { createdAt: 'desc' },
+          skip: type === 'DEPOSIT' ? skip : 0, take: type === 'DEPOSIT' ? limit : 10,
+          where: status ? { status } : undefined, orderBy: { createdAt: 'desc' },
           include: { user: { select: { email: true, name: true } } },
-        })
-      : [];
+        }) : [];
 
     const withdrawals: any[] = (!type || type === 'WITHDRAWAL')
       ? await this.prisma.withdrawal.findMany({
-          skip: type === 'WITHDRAWAL' ? skip : 0,
-          take: type === 'WITHDRAWAL' ? limit : 10,
-          where: status ? { status } : undefined,
-          orderBy: { createdAt: 'desc' },
+          skip: type === 'WITHDRAWAL' ? skip : 0, take: type === 'WITHDRAWAL' ? limit : 10,
+          where: status ? { status } : undefined, orderBy: { createdAt: 'desc' },
           include: { user: { select: { email: true, name: true } } },
-        })
-      : [];
+        }) : [];
 
-    const transactions = [
-      ...deposits.map((d: any) => ({ ...d, type: 'DEPOSIT' })),
-      ...withdrawals.map((w: any) => ({ ...w, type: 'WITHDRAWAL' })),
-    ].sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime());
+    const transactions = [...deposits.map(d => ({ ...d, type: 'DEPOSIT' })), ...withdrawals.map(w => ({ ...w, type: 'WITHDRAWAL' }))]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
     return { transactions: transactions.slice(0, limit), pagination: { page, limit } };
   }
 
   // ===================================
-  // 🔄 MUDAR SAQUE AUTOMÁTICO
+  // 🔄 SAQUE AUTOMÁTICO & SALDO
   // ===================================
   async toggleAutoWithdrawal(userId: string, enabled: boolean) {
     const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { isAutoWithdrawal: enabled },
+      where: { id: userId }, data: { isAutoWithdrawal: enabled },
       select: { id: true, email: true, isAutoWithdrawal: true }
     });
-    this.logger.log(`⚙️ Saque automático para ${user.email} definido como: ${enabled}`);
     return { success: true, user };
   }
 
-  // ===================================
-  // 💰 GERENCIAR SALDO MANUALMENTE
-  // ===================================
   async manageUserBalance(userId: string, type: 'ADD' | 'REMOVE', amount: number, description?: string) {
     if (amount <= 0) throw new BadRequestException('Valor deve ser positivo');
-
     return await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (!user) throw new BadRequestException('Usuário não encontrado');
-
-      if (type === 'REMOVE' && user.balance < amount) {
-        throw new BadRequestException('Saldo insuficiente para remoção');
-      }
+      if (type === 'REMOVE' && user.balance < amount) throw new BadRequestException('Saldo insuficiente');
 
       const updatedUser = await tx.user.update({
         where: { id: userId },
@@ -290,120 +209,87 @@ export class AdminService {
 
       await tx.transaction.create({
         data: {
-          userId,
-          type: type === 'ADD' ? 'DEPOSIT' : 'WITHDRAWAL',
-          amount: amount,
-          status: 'COMPLETED',
-          description: description || (type === 'ADD' ? 'Ajuste Admin (Crédito)' : 'Ajuste Admin (Débito)'),
-          referenceId: `ADMIN-ADJ-${Date.now()}`,
-          metadata: { type: 'ADMIN_ADJUSTMENT', adminAction: type }
+          userId, type: type === 'ADD' ? 'DEPOSIT' : 'WITHDRAWAL', amount, status: 'COMPLETED',
+          description: description || `Ajuste Admin (${type})`,
+          referenceId: `ADMIN-ADJ-${Date.now()}`, metadata: { type: 'ADMIN_ADJUSTMENT', adminAction: type }
         }
       });
-
-      this.logger.log(`💰 Saldo user ${user.email} ajustado: ${type} ${amount}. Novo: ${updatedUser.balance}`);
       return { success: true, newBalance: updatedUser.balance };
     });
   }
 
   // ===================================
-  // ✅ APROVAR SAQUE MANUAL (CORRIGIDO)
+  // ✅ APROVAR/REJEITAR SAQUE
   // ===================================
   async approveWithdrawal(withdrawalId: string, adminId: string) {
-    this.logger.log(`[ADMIN] Aprovando saque ${withdrawalId} (Admin: ${adminId})`);
-
-    const withdrawal = await this.prisma.withdrawal.findUnique({
-      where: { id: withdrawalId },
-      include: { user: true }
-    });
-
+    const withdrawal = await this.prisma.withdrawal.findUnique({ where: { id: withdrawalId } });
     if (!withdrawal) throw new NotFoundException('Saque não encontrado.');
-    if (withdrawal.status !== 'PENDING' && withdrawal.status !== 'PENDING_APPROVAL') {
-      throw new BadRequestException(`Status inválido: ${withdrawal.status}`);
-    }
+    if (withdrawal.status !== 'PENDING' && withdrawal.status !== 'PENDING_APPROVAL') throw new BadRequestException('Status inválido');
 
-    const amountInReais = withdrawal.netAmount / 100; 
-    const keyTypeForKeyclub = (withdrawal.keyType === 'RANDOM' ? 'EVP' : withdrawal.keyType) as any;
-    
-    // GERA NOVO ID e TOKEN para evitar erro de duplicidade
+    const amountInReais = withdrawal.netAmount / 100;
     const newExternalId = uuidv4();
-    const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br';
-    const webhookToken = withdrawal.webhookToken || uuidv4();
-    const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
-
-    // FORMATA CHAVE (CPF com pontos, Fone sem)
     const formattedKey = this.formatPixKey(withdrawal.pixKey, withdrawal.keyType);
+    const callbackUrl = `${process.env.API_URL || 'https://api.paylure.com.br'}/api/v1/webhooks/keyclub/${withdrawal.webhookToken || uuidv4()}`;
 
     try {
-      this.logger.log(`💸 Admin Enviando R$ ${amountInReais} para ${formattedKey} (Tipo: ${withdrawal.keyType})`);
-      
       await this.keyclubService.createWithdrawal({
-        amount: amountInReais,
-        externalId: newExternalId,
-        pixKey: formattedKey, 
-        pixKeyType: keyTypeForKeyclub,
-        clientCallbackUrl: callbackUrl,
-        description: `Aprovado Manualmente (Ref: ${withdrawal.id.split('-')[0]})`
+        amount: amountInReais, externalId: newExternalId, pixKey: formattedKey,
+        pixKeyType: (withdrawal.keyType === 'RANDOM' ? 'EVP' : withdrawal.keyType) as any,
+        clientCallbackUrl: callbackUrl, description: `Aprovado Manualmente`
       });
 
-      const updated = await this.prisma.withdrawal.update({
-        where: { id: withdrawalId },
-        data: {
-          status: 'COMPLETED',
-          externalId: newExternalId,
-          webhookToken: webhookToken,
-          description: 'Aprovado manualmente',
-        }
-      });
-
-      return { success: true, message: 'Saque enviado!', withdrawal: updated };
-
+      return { success: true, message: 'Saque enviado!', withdrawal: await this.prisma.withdrawal.update({
+        where: { id: withdrawalId }, data: { status: 'COMPLETED', externalId: newExternalId, description: 'Aprovado manualmente' }
+      })};
     } catch (error: any) {
       this.logger.error(`❌ Falha: ${error.message}`);
-      if (error.message.includes('exists') || error.response?.data?.message?.includes('exists')) {
-         throw new BadRequestException('Bloqueado: Este usuário já tem um saque PENDENTE na Keyclub. Aguarde ou cancele lá.');
-      }
-      throw new BadRequestException(`Erro ao processar pagamento: ${error.message}`);
+      throw new BadRequestException(`Erro ao processar: ${error.message}`);
     }
   }
 
-  // ===================================
-  // ❌ REJEITAR SAQUE MANUAL
-  // ===================================
   async rejectWithdrawal(withdrawalId: string, reason: string, adminId: string) {
-    this.logger.log(`[ADMIN] Rejeitando saque ${withdrawalId}. Motivo: ${reason}`);
-
     return await this.prisma.$transaction(async (tx) => {
       const withdrawal = await tx.withdrawal.findUnique({ where: { id: withdrawalId } });
+      if (!withdrawal || (withdrawal.status !== 'PENDING' && withdrawal.status !== 'PENDING_APPROVAL')) throw new BadRequestException('Saque inválido para rejeição');
 
-      if (!withdrawal) throw new NotFoundException('Saque não encontrado.');
-
-      if (withdrawal.status !== 'PENDING' && withdrawal.status !== 'PENDING_APPROVAL') {
-        throw new BadRequestException(`Impossível rejeitar. Status atual: ${withdrawal.status}`);
-      }
-
-      await tx.user.update({
-        where: { id: withdrawal.userId },
-        data: { balance: { increment: withdrawal.amount } }
-      });
-
+      await tx.user.update({ where: { id: withdrawal.userId }, data: { balance: { increment: withdrawal.amount } } });
       const updated = await tx.withdrawal.update({
-        where: { id: withdrawalId },
-        data: { status: 'REJECTED', failureReason: reason || 'Rejeitado pelo administrador' }
+        where: { id: withdrawalId }, data: { status: 'REJECTED', failureReason: reason }
       });
 
       await tx.transaction.create({
         data: {
-          userId: withdrawal.userId,
-          type: 'DEPOSIT',
-          amount: withdrawal.amount,
-          status: 'COMPLETED',
-          description: `Estorno de saque #${withdrawal.id.slice(0,8)}`,
-          referenceId: withdrawal.externalId,
-          metadata: { reason, adminAction: 'REJECT' }
+          userId: withdrawal.userId, type: 'DEPOSIT', amount: withdrawal.amount, status: 'COMPLETED',
+          description: `Estorno de saque rejeitado`, referenceId: withdrawal.externalId, metadata: { reason, adminAction: 'REJECT' }
         }
       });
+      return { success: true, message: 'Saque rejeitado.', withdrawal: updated };
+    });
+  }
 
-      return { success: true, message: 'Saque rejeitado e saldo estornado.', withdrawal: updated };
+  // ===================================
+  // 🚩 FEATURE FLAGS (LÓGICA NOVA)
+  // ===================================
+  async getFeatureFlags() {
+    try {
+        // Tenta buscar na tabela systemSetting.
+        const setting = await this.prisma.systemSetting.findUnique({ where: { key: 'feature_flags' } });
+        return setting ? JSON.parse(setting.value) : {};
+    } catch (error) {
+        this.logger.warn('Erro ao ler feature flags (tabela pode não existir). Retornando padrão.');
+        return {};
+    }
+  }
+
+  async updateFeatureFlags(flags: any) {
+    const key = 'feature_flags';
+    const value = JSON.stringify(flags);
+    
+    // Salva ou Atualiza
+    return await this.prisma.systemSetting.upsert({
+        where: { key },
+        update: { value },
+        create: { key, value }
     });
   }
 }
