@@ -75,13 +75,21 @@ export class AuthController {
     // 🎯 Busca o usuário, balance E OS STATS
     const fullProfileData = await this.authService.getUserWithBalance(user.id);
 
-    // 🔥 LOG DE DEPURAÇÃO: Confirma se o Controller está enviando o saldo certo
+    // 🔥 LOG DE DEPURAÇÃO
     this.logger.log(`📤 Enviando perfil para o Frontend. Saldo: R$ ${fullProfileData.balance/100}`);
     
-    // ✅ CORREÇÃO DEFINITIVA: 
-    // Retornamos 'fullProfileData' direto (sem { data: ... }).
-    // Isso faz o JSON ficar assim: { user: {...}, balance: 79300, stats: {...} }
-    // O Frontend vai conseguir ler "payload.user" e "payload.user.balance" perfeitamente.
     return fullProfileData;
+  }
+
+  // 👇 NOVA ROTA: Alterar Senha
+  @Post('change-password')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @GetUser() user: User, 
+    @Body() body: { current: string; new: string }
+  ) {
+    this.logger.log(`🔐 Tentativa de alteração de senha: ${user.email}`);
+    return this.authService.changePassword(user.id, body.current, body.new);
   }
 }

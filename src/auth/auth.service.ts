@@ -60,7 +60,6 @@ export class AuthService {
   async register(dto: RegisterAuthDto) {
     this.logger.log(`📄 Iniciando registro para: ${dto.email}`);
 
-    // 1. Validação Obrigatória de CPF (Lógica Real)
     if (!dto.document) {
         throw new BadRequestException('O CPF é obrigatório.');
     }
@@ -69,7 +68,6 @@ export class AuthService {
         throw new BadRequestException('CPF inválido. Verifique os números digitados.');
     }
     
-    // 2. Verifica E-mail duplicado
     const emailExists = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -77,7 +75,6 @@ export class AuthService {
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
-    // 3. Verifica CPF duplicado
     const docFormatted = cpfLimpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
     const cpfExists = await this.prisma.user.findFirst({
       where: {
@@ -106,7 +103,6 @@ export class AuthService {
           email: dto.email,
           name: dto.name || 'Usuário Padrão',
           document: cpfLimpo,
-          // 👇 Salvando o WhatsApp no campo 'phone' do banco
           phone: dto.whatsapp ? dto.whatsapp.replace(/\D/g, '') : null, 
           password: hashedPassword,
           apiKey: apiKey,
@@ -176,8 +172,6 @@ export class AuthService {
 
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
-    this.logger.log(`🔍 [GetUser] Usuário: ${user.email} | Saldo: ${user.balance}`);
-
     if (!user.merchant) {
       const fixedUser = await this.fixMissingMerchant(userId, user.name);
       if (fixedUser && fixedUser.merchant) {
@@ -206,6 +200,31 @@ export class AuthService {
         totalTransactions: totalTrans,
       },
     };
+  }
+
+  // 👇 NOVA FUNÇÃO: Lógica para trocar a senha
+  async changePassword(userId: string, currentPass: string, newPass: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    // Verifica se a senha atual está correta
+    const isMatch = await bcrypt.compare(currentPass, user.password);
+    if (!isMatch) {
+      throw new BadRequestException('A senha atual está incorreta.');
+    }
+
+    // Criptografa a nova senha
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPass, salt);
+
+    // Salva no banco
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword },
+    });
+
+    this.logger.log(`🔐 Senha alterada com sucesso para o usuário ${user.email}`);
+    return { success: true, message: 'Senha alterada com sucesso!' };
   }
 
   private async fixMissingMerchant(userId: string, userName: string) {
