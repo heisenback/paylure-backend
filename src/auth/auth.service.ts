@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
   Logger,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { RegisterAuthDto } from './dto/register-auth.dto';
@@ -35,10 +36,40 @@ export class AuthService {
     this.logger.log('🔧 AuthService inicializado');
   }
 
+  // ✅ HELPER: Validação Matemática de CPF
+  private isValidCPF(cpf: string): boolean {
+    const strCPF = cpf.replace(/[^\d]+/g, '');
+    if (strCPF === '' || strCPF.length !== 11 || /^(\d)\1{10}$/.test(strCPF)) return false;
+
+    let soma = 0;
+    let resto;
+    for (let i = 1; i <= 9; i++) soma += parseInt(strCPF.substring(i - 1, i)) * (11 - i);
+    resto = (soma * 10) % 11;
+    if ((resto === 10) || (resto === 11)) resto = 0;
+    if (resto !== parseInt(strCPF.substring(9, 10))) return false;
+
+    soma = 0;
+    for (let i = 1; i <= 10; i++) soma += parseInt(strCPF.substring(i - 1, i)) * (12 - i);
+    resto = (soma * 10) % 11;
+    if ((resto === 10) || (resto === 11)) resto = 0;
+    if (resto !== parseInt(strCPF.substring(10, 11))) return false;
+    
+    return true;
+  }
+
   async register(dto: RegisterAuthDto) {
     this.logger.log(`📄 Iniciando registro para: ${dto.email}`);
+
+    // 1. Validação Obrigatória de CPF (Lógica Real)
+    if (!dto.document) {
+        throw new BadRequestException('O CPF é obrigatório.');
+    }
+    const cpfLimpo = dto.document.replace(/\D/g, '');
+    if (!this.isValidCPF(cpfLimpo)) {
+        throw new BadRequestException('CPF inválido. Verifique os números digitados.');
+    }
     
-    // 1. Verifica E-mail duplicado
+    // 2. Verifica E-mail duplicado
     const emailExists = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -46,23 +77,19 @@ export class AuthService {
       throw new ConflictException('Este e-mail já está em uso.');
     }
 
-    // 2. Verifica CPF duplicado (Blindado)
-    if (dto.document) {
-      const docClean = dto.document.replace(/\D/g, '');
-      const docFormatted = docClean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
-
-      const cpfExists = await this.prisma.user.findFirst({
-        where: {
-          OR: [
-            { document: docClean },
-            { document: docFormatted }
-          ]
-        },
-      });
-      
-      if (cpfExists) {
-        throw new ConflictException('Este CPF já está cadastrado em outra conta.');
-      }
+    // 3. Verifica CPF duplicado
+    const docFormatted = cpfLimpo.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    const cpfExists = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { document: cpfLimpo },
+          { document: docFormatted }
+        ]
+      },
+    });
+    
+    if (cpfExists) {
+      throw new ConflictException('Este CPF já está cadastrado em outra conta.');
     }
 
     const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
@@ -78,7 +105,9 @@ export class AuthService {
         data: {
           email: dto.email,
           name: dto.name || 'Usuário Padrão',
-          document: dto.document ? dto.document.replace(/\D/g, '') : null,
+          document: cpfLimpo,
+          // 👇 Salvando o WhatsApp no campo 'phone' do banco
+          phone: dto.whatsapp ? dto.whatsapp.replace(/\D/g, '') : null, 
           password: hashedPassword,
           apiKey: apiKey,
           apiSecret: hashedApiSecret,
@@ -140,31 +169,19 @@ export class AuthService {
   }
 
   async getUserWithBalance(userId: string) {
-    // 🔍 Alterado para buscar TUDO (include) para garantir que o 'balance' venha atualizado
-    // O 'select' manual as vezes causa cache ou esquece campos
     let user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { 
-        merchant: true 
-      },
+      include: { merchant: true },
     });
 
     if (!user) throw new NotFoundException('Usuário não encontrado');
 
-    // 🔥 LOG DE DIAGNÓSTICO: Vamos ver quanto está vindo do banco
-    this.logger.log(`🔍 [GetUser] Usuário: ${user.email} | Saldo no Banco (Centavos): ${user.balance}`);
+    this.logger.log(`🔍 [GetUser] Usuário: ${user.email} | Saldo: ${user.balance}`);
 
-    // 🔥 AUTO-FIX NO DASHBOARD
     if (!user.merchant) {
-      this.logger.warn(`⚠️ Usuário ${userId} acessou Dashboard sem Merchant. Corrigindo...`);
       const fixedUser = await this.fixMissingMerchant(userId, user.name);
-      
       if (fixedUser && fixedUser.merchant) {
-        // Recarrega o usuário corrigido
-        user = {
-            ...user, // Mantém dados base
-            merchant: fixedUser.merchant
-        };
+        user = { ...user, merchant: fixedUser.merchant };
       }
     }
 
@@ -179,12 +196,11 @@ export class AuthService {
     const totalTrans = await this.prisma.deposit.count({ where: { userId: userId, status: 'CONFIRMED' } }) + 
                        await this.prisma.withdrawal.count({ where: { userId: userId, status: 'CONFIRMED' } });
 
-    // Remove dados sensíveis antes de retornar
     const { password, apiSecret, ...safeUser } = user;
 
     return {
-      user: safeUser,        // O saldo está aqui dentro (user.balance)
-      balance: user.balance, // E também AQUI FORA explicitamente para o frontend achar fácil
+      user: safeUser,
+      balance: user.balance,
       stats: {
         depositsToday: depositsToday._sum.netAmountInCents || 0,
         totalTransactions: totalTrans,

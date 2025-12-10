@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class RegisterAuthDto {
   @IsEmail()
@@ -9,16 +9,20 @@ export class RegisterAuthDto {
   password: string;
 
   @IsString()
-  @IsOptional()
-  name?: string;
+  @IsNotEmpty({ message: 'O nome é obrigatório' })
+  name: string;
 
   @IsString()
-  @IsOptional()
-  username?: string; // ✅ ADICIONADO - Nome de usuário do frontend
+  @IsNotEmpty({ message: 'O nome de usuário é obrigatório' })
+  username: string;
 
   @IsString()
-  @IsOptional()
-  document?: string; // ✅ ADICIONADO - CPF/CNPJ do usuário
+  @IsNotEmpty({ message: 'O CPF é obrigatório' })
+  document: string; // 🔒 AGORA É OBRIGATÓRIO
+
+  @IsString()
+  @IsNotEmpty({ message: 'O WhatsApp é obrigatório' })
+  whatsapp: string; // 🔒 NOVO CAMPO OBRIGATÓRIO
 
   @IsString()
   @IsOptional()
