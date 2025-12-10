@@ -18,7 +18,7 @@ model User {
   password         String
   name             String
   document         String?
-  phone            String?      // ✅ CAMPO NOVO: Para salvar o WhatsApp
+  phone            String?      // ✅ CAMPO NOVO: WhatsApp
   role             String       @default("USER") // USER, SUPPORT, ADMIN
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
