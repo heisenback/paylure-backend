@@ -3,18 +3,20 @@ import {
   Controller, 
   Post, 
   Get, 
+  Delete, // <--- NOVO
+  Param,  // <--- NOVO
   Body, 
   UseGuards, 
   HttpStatus, 
   HttpCode, 
   Logger, 
-  ForbiddenException 
+  ForbiddenException,
+  NotFoundException // <--- NOVO
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { GetUser } from 'src/auth/decorators/get-user.decorator';
-import type { User } from '@prisma/client';
 
 @Controller('products')
 @UseGuards(AuthGuard('jwt'))
@@ -27,13 +29,10 @@ export class ProductController {
   @HttpCode(HttpStatus.CREATED)
   async create(
     @Body() dto: CreateProductDto,
-    @GetUser() user: any, // 🔥 Mudei para any temporariamente para debug
+    @GetUser() user: any, 
   ) {
-    // 🕵️‍♂️ LOG DE DETETIVE: Vamos ver o que tem dentro desse usuário
-    this.logger.warn(`🔍 DEBUG USER: ${JSON.stringify(user)}`);
-
     if (!user.merchant?.id) {
-      this.logger.error(`❌ BLOQUEIO: Usuário ${user.email} sem merchant. Dados recebidos: ${JSON.stringify(user.merchant)}`);
+      this.logger.error(`❌ BLOQUEIO: Usuário ${user.email} sem merchant.`);
       throw new ForbiddenException('Erro de Perfil: Produtor não identificado. Faça login novamente.');
     }
 
@@ -57,8 +56,6 @@ export class ProductController {
   @HttpCode(HttpStatus.OK)
   async findAll(@GetUser() user: any) {
     if (!user.merchant?.id) {
-        // Debug também na listagem
-        this.logger.warn(`🔍 DEBUG LISTAGEM: Usuário sem merchant detectado.`);
         throw new ForbiddenException('Usuário não tem um Merchant ID associado.');
     }
 
@@ -76,5 +73,20 @@ export class ProductController {
         updatedAt: p.updatedAt,
       })),
     };
+  }
+
+  // --- NOVA ROTA DE DELETE ---
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT) // Retorna 204 (Sucesso sem conteúdo)
+  async remove(
+    @Param('id') id: string,
+    @GetUser() user: any
+  ) {
+      if (!user.merchant?.id) {
+          throw new ForbiddenException('Acesso negado: Merchant ID não encontrado.');
+      }
+
+      // Chama o serviço passando o ID do produto E o ID do merchant para garantir que ninguém apague produto dos outros
+      await this.productService.remove(id, user.merchant.id);
   }
 }
