@@ -10,7 +10,7 @@ datasource db {
 }
 
 // ===================================
-// 1. MODELO USER (O Dono da Conta)
+// 1. MODELO USER
 // ===================================
 model User {
   id               String       @id @default(uuid())
@@ -18,8 +18,8 @@ model User {
   password         String
   name             String
   document         String?
-  phone            String?      // ✅ CAMPO NOVO: WhatsApp
-  role             String       @default("USER") // USER, SUPPORT, ADMIN
+  phone            String?
+  role             String       @default("USER")
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
@@ -28,19 +28,14 @@ model User {
   apiKey           String       @unique 
   apiSecret        String       @unique 
 
-  // 🎯 TAXAS E SAQUES
-  withdrawalFeePercent  Float?  @default(0.0) // Taxa personalizada %
-  withdrawalFeeFixed    Int?    @default(0)   // Taxa fixa em Centavos
-  
-  // 👇 NOVO CAMPO: Saque Automático (False = Manual / True = Automático)
-  isAutoWithdrawal      Boolean   @default(false)
+  withdrawalFeePercent  Float?  @default(0.0)
+  withdrawalFeeFixed    Int?    @default(0)
+  isAutoWithdrawal      Boolean @default(false)
 
-  // 🎯 2FA (Autenticação de Dois Fatores)
   twoFactorEnabled Boolean      @default(false)
-  twoFactorMethod  String?      @default("APP") // 'EMAIL' ou 'APP'
-  twoFactorSecret  String?      // Para Google Authenticator
+  twoFactorMethod  String?      @default("APP")
+  twoFactorSecret  String?
   
-  // Relações
   merchant         Merchant?
   deposits         Deposit[]
   withdrawals      Withdrawal[]
@@ -52,7 +47,7 @@ model User {
 }
 
 // ===================================
-// 🎯 SYSTEM SETTINGS (Configurações Globais)
+// 🎯 SYSTEM SETTINGS
 // ===================================
 model SystemSettings {
   id        String   @id @default(uuid())
@@ -71,11 +66,9 @@ model PasswordReset {
   id               String       @id @default(uuid())
   userId           String
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
   token            String       @unique
   expiresAt        DateTime
   used             Boolean      @default(false)
-  
   createdAt        DateTime     @default(now())
   
   @@index([userId])
@@ -83,17 +76,15 @@ model PasswordReset {
 }
 
 // ===================================
-// 🎯 TWO FACTOR CODE (Para 2FA por Email)
+// 🎯 TWO FACTOR CODE
 // ===================================
 model TwoFactorCode {
   id               String       @id @default(uuid())
   userId           String
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  code             String       // Código de 6 dígitos
+  code             String       
   expiresAt        DateTime
   used             Boolean      @default(false)
-  
   createdAt        DateTime     @default(now())
   
   @@index([userId])
@@ -101,20 +92,17 @@ model TwoFactorCode {
 }
 
 // ===================================
-// 🔔 MODELO PUSH SUBSCRIPTION
+// 🔔 PUSH SUBSCRIPTION
 // ===================================
 model PushSubscription {
   id               String       @id @default(uuid())
   userId           String
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
   endpoint         String       @unique
   p256dh           String
   auth             String
-  
   deviceInfo       String?
   isActive         Boolean      @default(true)
-  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
@@ -122,7 +110,7 @@ model PushSubscription {
 }
 
 // ===================================
-// 2. MODELO MERCHANT (A Loja / O Seller)
+// 2. MODELO MERCHANT
 // ===================================
 model Merchant {
   id               String       @id @default(uuid())
@@ -145,23 +133,20 @@ model Merchant {
 }
 
 // ===================================
-// 🎯 MEMBER AREA (Área de Membros)
+// 🎯 MEMBER AREA
 // ===================================
 model MemberArea {
   id               String       @id @default(uuid())
   merchantId       String
   merchant         Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  
   name             String       
   slug             String       @unique 
   description      String?
   coverImageUrl    String?      
   logoUrl          String?
   isActive         Boolean      @default(true)
-  
   primaryColor     String       @default("#9333ea")
   secondaryColor   String       @default("#06b6d4")
-  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
@@ -179,18 +164,15 @@ model MemberContent {
   id               String       @id @default(uuid())
   memberAreaId     String
   memberArea       MemberArea   @relation(fields: [memberAreaId], references: [id], onDelete: Cascade)
-  
   title            String
   description      String?
-  type             String       // 'VIDEO', 'PDF', 'AUDIO', 'TEXT'
+  type             String       
   contentUrl       String?
   thumbnailUrl     String?
   textBody         String?      @db.Text
-  
   order            Int          @default(0)
-  duration         Int?         // Segundos
+  duration         Int?
   isPublic         Boolean      @default(false) 
-  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
@@ -203,18 +185,14 @@ model MemberContent {
 // ===================================
 model MemberAccess {
   id               String       @id @default(uuid())
-  
   userId           String
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
   memberAreaId     String
   memberArea       MemberArea   @relation(fields: [memberAreaId], references: [id], onDelete: Cascade)
-  
-  grantedBy        String       @default("PURCHASE") // 'MANUAL', 'PURCHASE'
+  grantedBy        String       @default("PURCHASE") 
   externalId       String?
   expiresAt        DateTime?
   isActive         Boolean      @default(true)
-  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
@@ -223,7 +201,7 @@ model MemberAccess {
 }
 
 // ===================================
-// 3. MODELO PRODUCT
+// 3. MODELO PRODUCT (ATUALIZADO)
 // ===================================
 model Product {
   id               String       @id @default(uuid())
@@ -231,6 +209,9 @@ model Product {
   description      String?
   priceInCents     Int
   isAvailable      Boolean      @default(true)
+  
+  // ✅ NOVO CAMPO: Configuração do Checkout
+  checkoutConfig   Json?        
   
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
@@ -240,6 +221,9 @@ model Product {
 
   paymentLinks     PaymentLink[]
   marketplaceProduct MarketplaceProduct?
+  
+  // ✅ Relação com as vendas deste produto
+  transactions     Transaction[]
 }
 
 // ===================================
@@ -276,7 +260,6 @@ model Deposit {
   sellerFeeInCents     Int         @default(0)
   netAmountInCents     Int
   status               String      @default("PENDING")
-  
   payerName            String
   payerEmail           String
   payerDocument        String
@@ -301,9 +284,9 @@ model Withdrawal {
   userId           String
   user             User         @relation(fields: [userId], references: [id])
   
-  amount           Int          // Valor SOLICITADO
-  netAmount        Int          @default(0) // Valor LÍQUIDO
-  feeAmount        Int          @default(0) // Taxa cobrada
+  amount           Int          
+  netAmount        Int          @default(0) 
+  feeAmount        Int          @default(0) 
   
   status           String       @default("PENDING")
   pixKey           String    
@@ -311,7 +294,6 @@ model Withdrawal {
   description      String?
   externalId       String       @unique
   webhookToken     String?      @unique
-  
   failureReason    String?
   
   createdAt        DateTime     @default(now())
@@ -380,12 +362,9 @@ model SubscriptionPlan {
   interval         String
   priceInCents     Int
   trialPeriodDays  Int          @default(0)
-  
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
-
   subscriptions    Subscription[]
-
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
@@ -404,7 +383,6 @@ model Subscription {
   gatewaySubscriptionId String?
   plan             SubscriptionPlan @relation(fields: [planId], references: [id])
   planId           String
-
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 }
@@ -414,17 +392,36 @@ model Subscription {
 // ===================================
 model Transaction {
   id               String       @id @default(uuid())
+  
+  // Usuário Dono da Venda (Seller)
   userId           String
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  type             String       // 'DEPOSIT', 'WITHDRAWAL', 'FEE'
+  // ✅ NOVO: Produto Vendido (Opcional, pois pode ser saque)
+  productId        String?
+  product          Product?     @relation(fields: [productId], references: [id])
+
+  type             String       // 'SALE', 'DEPOSIT', 'WITHDRAWAL', 'FEE'
   amount           Int          // Valor em centavos
   description      String?
-  status           String       @default("COMPLETED")
+  status           String       @default("PENDING") // PENDING, PAID, FAILED
   
+  // ✅ NOVOS CAMPOS: Dados do Cliente (Lead) - Para aparecer no histórico
+  customerName     String?
+  customerEmail    String?
+  customerDoc      String?
+  customerPhone    String?
+
+  // ✅ NOVOS CAMPOS: Dados Técnicos Pagamento
+  paymentMethod    String?      // PIX
+  pixQrCode        String?      @db.Text
+  pixCopyPaste     String?      @db.Text
+  externalId       String?      // ID na Keyclub
+
   referenceId      String?
   referenceType    String?
   metadata         Json?
+  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
