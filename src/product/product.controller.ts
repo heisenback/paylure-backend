@@ -3,15 +3,15 @@ import {
   Controller, 
   Post, 
   Get, 
-  Delete, // <--- NOVO
-  Param,  // <--- NOVO
+  Delete,
+  Param, 
   Body, 
   UseGuards, 
   HttpStatus, 
   HttpCode, 
   Logger, 
   ForbiddenException,
-  NotFoundException // <--- NOVO
+  NotFoundException
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -45,7 +45,8 @@ export class ProductController {
         id: product.id,
         title: product.name,
         description: product.description,
-        amount: product.priceInCents / 100,
+        // CORREÇÃO: Enviamos o valor bruto (inteiro)
+        amount: product.priceInCents, 
         isAvailable: product.isAvailable,
         createdAt: product.createdAt,
       },
@@ -67,7 +68,8 @@ export class ProductController {
         id: p.id,
         title: p.name,
         description: p.description,
-        amount: p.priceInCents / 100,
+        // CORREÇÃO: Enviamos o valor bruto (inteiro). O Frontend que lute para dividir.
+        amount: p.priceInCents, 
         isAvailable: p.isAvailable,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
@@ -75,9 +77,8 @@ export class ProductController {
     };
   }
 
-  // --- NOVA ROTA DE DELETE ---
   @Delete(':id')
-  @HttpCode(HttpStatus.NO_CONTENT) // Retorna 204 (Sucesso sem conteúdo)
+  @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
     @Param('id') id: string,
     @GetUser() user: any
@@ -85,8 +86,6 @@ export class ProductController {
       if (!user.merchant?.id) {
           throw new ForbiddenException('Acesso negado: Merchant ID não encontrado.');
       }
-
-      // Chama o serviço passando o ID do produto E o ID do merchant para garantir que ninguém apague produto dos outros
       await this.productService.remove(id, user.merchant.id);
   }
 }
