@@ -17,21 +17,22 @@ export class CheckoutService {
   async processCheckout(dto: CreatePaymentDto) {
     this.logger.log(`[Checkout] Iniciando processamento para Produto ID: ${dto.productId}`);
 
-    // 1. Busca Produto e Seller
+    // 1. Busca Produto, Merchant e o User vinculado
     const product = await this.prisma.product.findUnique({
       where: { id: dto.productId },
-      include: { merchant: true }
+      include: { merchant: { include: { user: true } } }
     });
 
     if (!product) throw new NotFoundException('Produto não encontrado.');
-    if (!product.merchant) throw new BadRequestException('Produto sem vendedor configurado.');
+    if (!product.merchant || !product.merchant.user) throw new BadRequestException('Vendedor sem conta de usuário vinculada.');
 
-    // 2. ✅ CORREÇÃO DO VALOR: Inicia com o preço base
+    const sellerUser = product.merchant.user; // User (Seller)
+
+    // 2. CORREÇÃO DE VALOR: Inicia com o preço base do produto e soma SÓ os bumps
     let totalAmountInCents = Number(product.priceInCents); 
     
-    // Agora SOMA APENAS os Order Bumps (o produto base já está contado)
     if (dto.items && dto.items.length > 0) {
-       // Filtra todos os itens que NÃO são o produto principal (evita duplicidade do preço)
+       // Soma apenas os Bumps, ignorando o produto principal (para evitar o dobro)
        const bumpsTotal = dto.items
             .filter(item => item.id !== product.id)
             .reduce((acc, item) => acc + item.price, 0);
@@ -41,18 +42,24 @@ export class CheckoutService {
 
     if (totalAmountInCents < 100) throw new BadRequestException('Valor total da compra inválido (mínimo R$ 1,00).');
 
-    // 3. Fallback do Documento (CPF/CNPJ)
+    // 3. 🛡️ REGRA DEFINITIVA DO DOCUMENTO
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
-
-    if (!finalDocument || finalDocument.length < 11) {
-        this.logger.warn(`[Checkout] Sem CPF do cliente. Usando CNPJ/Documento do Seller.`);
-        // ✅ Seu schema tem 'cnpj' no Merchant
-        if (product.merchant.cnpj) {
-            finalDocument = product.merchant.cnpj.replace(/\D/g, '');
+    const isCustomerDocumentValid = finalDocument && (finalDocument.length === 11 || finalDocument.length === 14); // CPF/CNPJ
+    
+    if (!isCustomerDocumentValid) {
+        this.logger.warn(`[Checkout] Cliente não forneceu documento válido. Usando documento do Seller.`);
+        
+        // 🥇 Tenta CPF do User (Seller)
+        if (sellerUser.document) {
+            finalDocument = sellerUser.document.replace(/\D/g, '');
         } 
+        // 🥈 Tenta CNPJ do Merchant (Se não for PF)
+        else if (product.merchant.cnpj) {
+            finalDocument = product.merchant.cnpj.replace(/\D/g, '');
+        }
     }
 
-    if (!finalDocument) throw new BadRequestException('CPF/CNPJ para o PIX não encontrado.');
+    if (!finalDocument) throw new BadRequestException('Documento obrigatório para gerar PIX não encontrado.');
 
     // 4. Integração Keyclub
     const externalId = `chk_${crypto.randomUUID()}`;
@@ -61,8 +68,9 @@ export class CheckoutService {
     let keyclubResult;
 
     try {
-        this.logger.log(`[Checkout] Gerando PIX na Keyclub. Valor: R$ ${amountInBRL} | Doc: ${finalDocument}`);
+        this.logger.log(`[Checkout] Gerando PIX na Keyclub. Valor: R$ ${amountInBRL} | Doc FINAL: ${finalDocument}`);
 
+        // O DepositService deve ter uma estrutura similar a CreateDepositRequest
         keyclubResult = await this.keyclub.createDeposit({
             amount: amountInBRL,
             externalId: externalId,
@@ -72,30 +80,27 @@ export class CheckoutService {
             payerPhone: dto.customer.phone
         });
 
-        // 5. ✅ CORREÇÃO DO SALVAMENTO: Usamos os nomes exatos do seu schema.prisma
+        // 5. ✅ CORREÇÃO DO SALVAMENTO (Alinhado com schema.prisma)
         await this.prisma.transaction.create({
             data: {
                 id: externalId,
                 amount: totalAmountInCents,
                 status: 'PENDING',
-                type: 'SALE', // Usando SALE
+                type: 'SALE', // Usando 'SALE'
                 paymentMethod: 'PIX',
                 description: `Venda: ${product.name}`,
                 
-                // ✅ RELACIONAMENTOS (user do merchant)
-                userId: product.merchant.userId, // [cite: 53]
-                productId: product.id,           // [cite: 54]
+                // RELACIONAMENTOS
+                userId: sellerUser.id, // O User dono da conta
+                productId: product.id,           
                 
-                // ✅ DADOS DO CLIENTE (Nomes corrigidos: customerDoc)
-                customerName: dto.customer.name,       // 
-                customerEmail: dto.customer.email,     // 
-                customerDoc: finalDocument,            // ✅ CORRIGIDO: Era 'customerDocument', agora é 'customerDoc' 
-                customerPhone: dto.customer.phone,     // 
+                // DADOS DO CLIENTE (Nomes do Schema)
+                customerName: dto.customer.name,       
+                customerEmail: dto.customer.email,     
+                customerDoc: finalDocument,            
+                customerPhone: dto.customer.phone,     
 
-                // ✅ DADOS DA KEYCLUB
-                externalId: keyclubResult.transactionId, // [cite: 61]
-                
-                // Usando o campo de texto para o QR Code (para ser mais flexível)
+                externalId: keyclubResult.transactionId, // ID da Keyclub
                 pixQrCode: keyclubResult.qrcode,
                 pixCopyPaste: keyclubResult.qrcode,
             }
@@ -118,7 +123,7 @@ export class CheckoutService {
         
         // Retorna o Pix gerado se a Keyclub respondeu OK (mesmo se o DB falhar)
         if(keyclubResult) { 
-            this.logger.warn(`[Checkout] Salvamento no DB falhou, mas PIX foi gerado na Keyclub. Retornando PIX para não perder a venda.`);
+            this.logger.warn(`[Checkout] Salvamento no DB falhou, mas PIX foi gerado na Keyclub. Retornando PIX.`);
             return {
                  success: true,
                  pix: {
@@ -129,7 +134,6 @@ export class CheckoutService {
             };
         }
         
-        // Se o erro foi antes ou a Keyclub falhou
         throw new BadRequestException('Falha ao gerar o PIX. Tente novamente.');
     }
   }
