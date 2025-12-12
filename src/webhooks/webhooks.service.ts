@@ -27,7 +27,8 @@ export class WebhooksService {
     }
 
     // 2. Busca Depósito no Banco (Com PaymentLink para saber se é venda)
-    const deposit = await this.prisma.deposit.findUnique({
+    // MUDANÇA: Usamos 'let' para poder reatribuir se falhar a primeira busca
+    let deposit = await this.prisma.deposit.findUnique({
       where: { externalId: String(transactionId) },
       include: { 
         paymentLink: { include: { product: true } }, 
@@ -46,7 +47,14 @@ export class WebhooksService {
         this.logger.error(`❌ [Webhook] Transação não encontrada: ${transactionId}`);
         throw new NotFoundException(`Transação não encontrada: ${transactionId}`);
       }
-      Object.assign(deposit, depositByInternal);
+      
+      // MUDANÇA: Reatribuição direta em vez de Object.assign
+      deposit = depositByInternal;
+    }
+
+    // TypeScript Guard: Garante que deposit não é null daqui para baixo
+    if (!deposit) {
+        throw new NotFoundException('Erro crítico: Depósito inválido.');
     }
 
     // 3. Trava de Segurança (Idempotência)
@@ -71,7 +79,6 @@ export class WebhooksService {
 
       // =================================================================================
       // ⚠️ REGRA DE NEGÓCIO: TAXA ZERO NA ENTRADA 
-      // O cliente recebe 100% do valor da venda no saldo. A taxa será cobrada no saque.
       // =================================================================================
       const feeInCents = 0; 
       const netAmount = amountInCents; // Valor Líquido = Valor Bruto
@@ -82,19 +89,20 @@ export class WebhooksService {
       const result = await this.prisma.$transaction(async (tx) => {
         
         // A. Atualiza o Depósito/Venda
+        // O TypeScript sabe que deposit.id existe por causa do Guard acima
         await tx.deposit.update({
-          where: { id: deposit.id },
+          where: { id: deposit!.id }, 
           data: { 
             status: 'CONFIRMED',
             amountInCents: amountInCents,
-            feeInCents: feeInCents, // 0
-            netAmountInCents: netAmount // Valor Cheio
+            feeInCents: feeInCents, 
+            netAmountInCents: netAmount 
           },
         });
 
-        // B. Atualiza o Saldo do Usuário (SOMA TUDO)
+        // B. Atualiza o Saldo do Usuário
         const updatedUser = await tx.user.update({
-          where: { id: deposit.userId },
+          where: { id: deposit!.userId },
           data: {
             balance: { increment: netAmount },
           },
@@ -103,17 +111,17 @@ export class WebhooksService {
         // C. Cria o Registro no Extrato
         await tx.transaction.create({
           data: {
-            userId: deposit.userId,
-            productId: deposit.paymentLink?.productId,
+            userId: deposit!.userId,
+            productId: deposit!.paymentLink?.productId,
             type: operationType,      
             amount: netAmount, 
             status: 'COMPLETED',   
-            referenceId: deposit.externalId,
+            referenceId: deposit!.externalId,
             description: description,
             paymentMethod: 'PIX',
-            customerName: deposit.payerName,
-            customerEmail: deposit.payerEmail,
-            customerDoc: deposit.payerDocument,
+            customerName: deposit!.payerName,
+            customerEmail: deposit!.payerEmail,
+            customerDoc: deposit!.payerDocument,
             metadata: payload as any,
           },
         });
