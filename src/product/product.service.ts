@@ -2,7 +2,7 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductDto } from './dto/update-product.dto'; // <--- Import Novo
+import { UpdateProductDto } from './dto/update-product.dto';
 import { Product } from '@prisma/client';
 
 @Injectable()
@@ -11,6 +11,7 @@ export class ProductService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // --- CREATE (Mantido igual) ---
   async create(dto: CreateProductDto, merchantId: string): Promise<Product> {
     const priceInCents = Math.round(dto.price * 100);
 
@@ -23,7 +24,7 @@ export class ProductService {
       },
     });
 
-    this.logger.log(`Produto '${newProduct.name}' criado com sucesso por Merchant ${merchantId}`);
+    this.logger.log(`Produto '${newProduct.name}' criado: R$ ${dto.price}`);
     return newProduct;
   }
 
@@ -35,68 +36,45 @@ export class ProductService {
   }
 
   async findById(productId: string): Promise<Product | null> {
-    return this.prisma.product.findUnique({
-      where: { id: productId },
-    });
+    return this.prisma.product.findUnique({ where: { id: productId } });
   }
 
-  // --- FUNÇÃO DE REMOÇÃO ---
   async remove(productId: string, merchantId: string): Promise<void> {
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-    });
+    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException('Produto não encontrado.');
+    if (product.merchantId !== merchantId) throw new ForbiddenException('Sem permissão.');
 
-    if (!product) {
-      throw new NotFoundException('Produto não encontrado.');
-    }
-
-    if (product.merchantId !== merchantId) {
-      this.logger.warn(`Tentativa de exclusão ilegal: Merchant ${merchantId} tentou apagar produto ${productId}.`);
-      throw new ForbiddenException('Você não tem permissão para excluir este produto.');
-    }
-
-    await this.prisma.product.delete({
-      where: { id: productId },
-    });
-
-    this.logger.log(`Produto ${productId} excluído com sucesso por Merchant ${merchantId}`);
+    await this.prisma.product.delete({ where: { id: productId } });
   }
 
-  // --- NOVA FUNÇÃO DE UPDATE (SALVAR CHECKOUT) ---
+  // --- UPDATE PADRONIZADO ---
   async update(id: string, merchantId: string, dto: UpdateProductDto) {
-    // 1. Busca e Verifica Dono
     const product = await this.prisma.product.findUnique({ where: { id } });
 
-    if (!product) {
-        throw new NotFoundException('Produto não encontrado');
-    }
+    if (!product) throw new NotFoundException('Produto não encontrado');
+    if (product.merchantId !== merchantId) throw new ForbiddenException('Sem permissão');
 
-    if (product.merchantId !== merchantId) {
-        throw new ForbiddenException('Sem permissão para editar este produto');
-    }
-
-    // 2. Prepara os dados
+    // Clona o DTO para manipular os dados
     const data: any = { ...dto };
     
-    // Converte preço se vier
+    // ✅ LÓGICA ÚNICA: Se vier 'price' (Reais), converte para Centavos
     if (dto.price !== undefined) {
         data.priceInCents = Math.round(dto.price * 100);
-        delete data.price; // Remove o campo original do DTO
+        delete data.price; // Remove 'price' pois não existe na tabela do banco
     }
 
-    // Mapeia title para name (se vier do front como title)
+    // Mapeia title para name (compatibilidade com frontend)
     if (dto.title) {
         data.name = dto.title;
         delete data.title;
     }
 
-    // 3. Atualiza no Banco
     const updated = await this.prisma.product.update({
         where: { id },
         data: data,
     });
     
-    this.logger.log(`Produto ${id} atualizado com sucesso (Config Checkout Salva).`);
+    this.logger.log(`Produto ${id} atualizado. Novo preço: R$ ${(updated.priceInCents / 100).toFixed(2)}`);
     return updated;
   }
 }
