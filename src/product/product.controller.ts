@@ -4,29 +4,61 @@ import {
   Post, 
   Get, 
   Delete,
-  Patch, // <--- Import Novo
+  Patch, 
   Param, 
   Body, 
   UseGuards, 
   HttpStatus, 
   HttpCode, 
   Logger, 
-  ForbiddenException
+  ForbiddenException,
+  NotFoundException 
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductDto } from './dto/update-product.dto'; // <--- Import Novo
+import { UpdateProductDto } from './dto/update-product.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { GetUser } from 'src/auth/decorators/get-user.decorator';
 
 @Controller('products')
-@UseGuards(AuthGuard('jwt'))
+// 🔓 O bloqueio geral foi removido daqui para permitir a rota pública
 export class ProductController {
   private readonly logger = new Logger(ProductController.name);
 
   constructor(private readonly productService: ProductService) {}
 
+  // ==================================================================
+  // ✅ ROTA PÚBLICA (NOVA)
+  // O checkout usa essa rota para carregar dados sem login
+  // ==================================================================
+  @Get('public/:id')
+  async findOnePublic(@Param('id') id: string) {
+    const product = await this.productService.findById(id);
+    
+    if (!product) {
+        throw new NotFoundException('Produto não encontrado ou indisponível.');
+    }
+    
+    // Retorna apenas o necessário para o checkout (Segurança)
+    return {
+      success: true,
+      data: {
+        id: product.id,
+        title: product.name,
+        description: product.description,
+        amount: product.priceInCents,
+        checkoutConfig: product.checkoutConfig 
+      }
+    };
+  }
+
+  // ==================================================================
+  // 🔒 ROTAS PROTEGIDAS (DASHBOARD)
+  // Exigem login para funcionar
+  // ==================================================================
+
   @Post()
+  @UseGuards(AuthGuard('jwt')) // 🔒 Protegido
   @HttpCode(HttpStatus.CREATED)
   async create(
     @Body() dto: CreateProductDto,
@@ -54,6 +86,7 @@ export class ProductController {
   }
 
   @Get()
+  @UseGuards(AuthGuard('jwt')) // 🔒 Protegido
   @HttpCode(HttpStatus.OK)
   async findAll(@GetUser() user: any) {
     if (!user.merchant?.id) {
@@ -72,14 +105,13 @@ export class ProductController {
         isAvailable: p.isAvailable,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
-        // Retornamos a config se existir
         checkoutConfig: p.checkoutConfig
       })),
     };
   }
 
-  // --- ROTA DE ATUALIZAÇÃO (SALVAR CHECKOUT) ---
   @Patch(':id')
+  @UseGuards(AuthGuard('jwt')) // 🔒 Protegido
   @HttpCode(HttpStatus.OK)
   async update(
     @Param('id') id: string,
@@ -90,7 +122,6 @@ export class ProductController {
           throw new ForbiddenException('Acesso negado: Merchant ID não encontrado.');
       }
 
-      // Chama o serviço de update passando o ID, o merchant (segurança) e os dados
       const updatedProduct = await this.productService.update(id, user.merchant.id, dto);
 
       return {
@@ -101,6 +132,7 @@ export class ProductController {
   }
 
   @Delete(':id')
+  @UseGuards(AuthGuard('jwt')) // 🔒 Protegido
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
     @Param('id') id: string,
