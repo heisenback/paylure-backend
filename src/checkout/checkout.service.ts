@@ -17,48 +17,40 @@ export class CheckoutService {
   async processCheckout(dto: CreatePaymentDto) {
     this.logger.log(`[Checkout] Iniciando processamento para Produto ID: ${dto.productId}`);
 
-    // 1. Busca Produto e Vendedor
     const product = await this.prisma.product.findUnique({
       where: { id: dto.productId },
       include: { merchant: { include: { user: true } } }
     });
 
     if (!product) throw new NotFoundException('Produto não encontrado.');
-    if (!product.merchant?.user) throw new BadRequestException('Vendedor inválido (sem usuário vinculado).');
+    if (!product.merchant?.user) throw new BadRequestException('Vendedor inválido.');
 
     const sellerUser = product.merchant.user;
 
-    // 2. Calcula Valor Total (Produto Base + Order Bumps)
+    // Calcula Valor
     let totalAmountInCents = Number(product.priceInCents); 
-    
     if (dto.items && dto.items.length > 0) {
        const bumpsTotal = dto.items
             .filter(item => item.id !== product.id)
             .reduce((acc, item) => acc + item.price, 0);
-            
        totalAmountInCents += bumpsTotal;
     }
 
-    if (totalAmountInCents < 100) throw new BadRequestException('Valor total inválido (mínimo R$ 1,00).');
+    if (totalAmountInCents < 100) throw new BadRequestException('Valor mínimo R$ 1,00.');
 
-    // 3. Validação de Documento (Prioridade: Cliente > Seller > CNPJ)
+    // Documento
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
-    
     if (!finalDocument || finalDocument.length < 11) {
-        // Fallback para documento do vendedor se for um teste ou falha
         finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '';
     }
+    if (!finalDocument) throw new BadRequestException('CPF/CNPJ obrigatório.');
 
-    if (!finalDocument) throw new BadRequestException('Documento (CPF/CNPJ) obrigatório para gerar o PIX.');
-
-    // 4. Integração Keyclub
+    // Integração Keyclub
     const externalId = `chk_${crypto.randomUUID()}`;
     const amountInBRL = totalAmountInCents / 100;
     let keyclubResult;
 
     try {
-        this.logger.log(`[Checkout] Gerando PIX na Keyclub. Valor: R$ ${amountInBRL}`);
-
         keyclubResult = await this.keyclub.createDeposit({
             amount: amountInBRL,
             externalId: externalId,
@@ -68,46 +60,38 @@ export class CheckoutService {
             payerPhone: dto.customer.phone
         });
 
-        // =====================================================================
-        // 5. SALVAMENTO CRÍTICO (Isso faltava para aparecer no Dashboard)
-        // =====================================================================
-        
-        // A. Cria DEPÓSITO (Para o Webhook encontrar depois)
+        // A. Cria DEPÓSITO (Para Webhook)
         await this.prisma.deposit.create({
             data: {
-                id: externalId, // ID interno igual ao enviado
-                externalId: keyclubResult.transactionId, // ID da Keyclub
+                id: externalId,
+                externalId: keyclubResult.transactionId,
                 amountInCents: totalAmountInCents,
-                netAmountInCents: totalAmountInCents, 
+                netAmountInCents: totalAmountInCents,
                 status: 'PENDING',
                 payerName: dto.customer.name,
                 payerEmail: dto.customer.email,
                 payerDocument: finalDocument,
                 webhookToken: crypto.randomBytes(16).toString('hex'),
-                userId: sellerUser.id, // Vincula ao Vendedor
+                userId: sellerUser.id,
                 merchantId: product.merchant.id,
             }
         });
 
-        // B. Cria TRANSAÇÃO (Para aparecer no Extrato como VENDA PENDENTE)
+        // B. Cria TRANSAÇÃO (Para Extrato e Minhas Vendas)
         await this.prisma.transaction.create({
             data: {
                 id: externalId,
                 amount: totalAmountInCents,
                 status: 'PENDING',
-                type: 'SALE', // ✅ TIPO CORRETO
+                type: 'SALE', // Importante para aparecer em Minhas Vendas
                 paymentMethod: 'PIX',
                 description: `Venda: ${product.name}`,
-                
                 userId: sellerUser.id,
-                productId: product.id, // ✅ Link com Produto (Vital para métricas)
-                
-                // Dados do Lead/Cliente
+                productId: product.id,
                 customerName: dto.customer.name,       
                 customerEmail: dto.customer.email,     
                 customerDoc: finalDocument,            
                 customerPhone: dto.customer.phone,     
-
                 externalId: keyclubResult.transactionId,
                 referenceId: keyclubResult.transactionId,
                 pixQrCode: keyclubResult.qrcode,
@@ -115,21 +99,17 @@ export class CheckoutService {
             }
         });
 
-        this.logger.log(`[Checkout] Transação salva com sucesso! ID: ${externalId}`);
-
         return {
             success: true,
             pix: {
                 qrCode: keyclubResult.qrcode,
                 copyPaste: keyclubResult.qrcode,
-                transactionId: keyclubResult.transactionId
+                transactionId: keyclubResult.transactionId // Retorna o ID da Keyclub
             }
         };
 
     } catch (error: any) {
         this.logger.error(`[Checkout] Erro: ${error.message}`);
-        
-        // Fallback: Se o banco falhar mas o PIX gerou, retorna o PIX pro cliente não travar
         if(keyclubResult) { 
              return {
                  success: true,
@@ -142,5 +122,35 @@ export class CheckoutService {
         }
         throw new BadRequestException('Erro ao processar pagamento.');
     }
+  }
+
+  // ✅ MÉTODO DE CONSULTA DE STATUS
+  async checkTransactionStatus(id: string) {
+    // Tenta achar na Transação (Prioridade)
+    const tx = await this.prisma.transaction.findFirst({
+        where: { 
+            OR: [
+                { externalId: id },
+                { referenceId: id },
+                { id: id }
+            ]
+        },
+        select: { status: true }
+    });
+
+    if (tx) return { status: tx.status };
+
+    // Fallback: Depósito
+    const dep = await this.prisma.deposit.findFirst({
+        where: { 
+            OR: [
+                { externalId: id },
+                { id: id }
+            ]
+        },
+        select: { status: true }
+    });
+
+    return { status: dep?.status || 'PENDING' };
   }
 }
