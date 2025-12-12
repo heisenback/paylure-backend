@@ -23,6 +23,8 @@ import { PublicApiModule } from './api/public-api.module';
 import { SocketModule } from './gateway/socket.module';
 import { PushNotificationModule } from './push-notification/push-notification.module';
 import { AdminModule } from './admin/admin.module';
+// ✅ NOVO MÓDULO IMPORTADO
+import { CheckoutModule } from './checkout/checkout.module';
 
 @Module({
   imports: [
@@ -50,6 +52,7 @@ import { AdminModule } from './admin/admin.module';
     SocketModule,
     PushNotificationModule,
     AdminModule,
+    CheckoutModule, // ✅ ADICIONADO NA LISTA DE IMPORTS
   ],
   controllers: [AppController],
   providers: [],
