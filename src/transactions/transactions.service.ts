@@ -4,31 +4,13 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { KeyclubService } from 'src/keyclub/keyclub.service';
 import { v4 as uuidv4 } from 'uuid';
 import { QuickPixDto } from './dto/quick-pix.dto';
-import { Deposit, Prisma, Withdrawal } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 export type WithdrawalDto = {
   amount: number;
   pixKey: string;
   keyType: 'CPF' | 'CNPJ' | 'EMAIL' | 'PHONE' | 'RANDOM';
   description?: string;
-};
-
-export type UnifiedTransaction = {
-    id: string;
-    type: 'DEPOSIT' | 'WITHDRAWAL';
-    amountInCents: number;
-    status: string;
-    createdAt: Date;
-};
-
-export type HistoryResponseData = {
-  transactions: UnifiedTransaction[];
-  pagination: {
-    currentPage: number;
-    totalPages: number;
-    totalItems: number;
-    limit: number;
-  };
 };
 
 export type HistoryOptions = {
@@ -46,191 +28,177 @@ export class TransactionsService {
     private readonly keyclubService: KeyclubService,
   ) {}
 
-  async findDepositById(depositId: string, userId: string) {
-      return this.prisma.deposit.findFirst({
-          where: {
-              id: depositId,
-              userId: userId, 
-          },
-      });
+  // ===========================================================================
+  // 1. HISTÓRICO UNIFICADO (A CORREÇÃO PRINCIPAL)
+  // Agora lê da tabela 'Transaction', onde as vendas (SALE) estão salvas corretamente.
+  // ===========================================================================
+  async getHistory(userId: string, options: HistoryOptions) {
+    const { page, limit, status } = options;
+    const skip = (page - 1) * limit;
+
+    this.logger.log(`📋 Buscando histórico unificado para User: ${userId} (Status: ${status})`);
+    
+    // Filtros dinâmicos
+    const where: Prisma.TransactionWhereInput = { userId };
+
+    if (status !== 'ALL') {
+        if (status === 'PENDING') where.status = 'PENDING';
+        else if (status === 'CONFIRMED') where.status = { in: ['COMPLETED', 'CONFIRMED', 'PAID'] };
+        else if (status === 'FAILED') where.status = { in: ['FAILED', 'REJECTED'] };
+        // Se quiser filtrar só vendas no futuro:
+        // if (status === 'SALES') where.type = 'SALE';
+    }
+
+    // Busca total para paginação
+    const totalItems = await this.prisma.transaction.count({ where });
+
+    // Busca dados com detalhes
+    const transactions = await this.prisma.transaction.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+      select: {
+          id: true,
+          type: true,           // SALE, DEPOSIT, WITHDRAWAL
+          amount: true,         // Valor em centavos
+          status: true,
+          description: true,    // "Venda: Pau de Cavalo"
+          createdAt: true,
+          customerName: true,   // Nome do cliente
+          customerEmail: true,  // Email do cliente
+          product: {            // Dados do produto (se houver)
+              select: { name: true }
+          }
+      }
+    });
+
+    // Mapeia para o formato que o Front espera
+    const mappedTransactions = transactions.map(t => ({
+        id: t.id,
+        type: t.type,
+        amountInCents: t.amount, // O front usa amountInCents
+        status: t.status,
+        createdAt: t.createdAt,
+        description: t.description || t.product?.name || (t.type === 'SALE' ? 'Venda de Produto' : 'Transação'),
+        customerName: t.customerName,
+        customerEmail: t.customerEmail
+    }));
+    
+    return {
+      transactions: mappedTransactions,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalItems / limit),
+        totalItems,
+        limit,
+      },
+    };
   }
 
+  // ===========================================================================
+  // 2. CRIAR SAQUE (Atualizado para gravar na Transaction também)
+  // ===========================================================================
   async createWithdrawal(userId: string, dto: WithdrawalDto) {
     const amountInCents = Math.round(dto.amount * 100);
 
     return this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.findUnique({
-        where: { id: userId },
-      });
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) throw new NotFoundException('Usuário não encontrado.');
+      if (user.balance < amountInCents) throw new BadRequestException('Saldo insuficiente.');
 
-      if (!user) {
-        throw new NotFoundException('Usuário não encontrado.');
-      }
-      
-      if (user.balance < amountInCents) {
-        throw new BadRequestException('Saldo insuficiente para o saque.');
-      }
+      const externalId = uuidv4();
 
+      // A. Cria Registro de Saque Específico
       const withdrawal = await tx.withdrawal.create({
         data: {
-          userId: userId,
+          userId,
           amount: amountInCents,
           status: 'PENDING',
           pixKey: dto.pixKey,
           keyType: dto.keyType,
           description: dto.description,
-          externalId: uuidv4(),
+          externalId,
         },
       });
 
+      // B. Debita Saldo
       await tx.user.update({
         where: { id: userId },
-        data: {
-          balance: {
-            decrement: amountInCents,
-          },
-        },
+        data: { balance: { decrement: amountInCents } },
       });
 
+      // C. ✅ CRIA REGISTRO NO EXTRATO UNIFICADO (Para aparecer no histórico)
+      await tx.transaction.create({
+          data: {
+              userId,
+              type: 'WITHDRAWAL',
+              amount: amountInCents,
+              status: 'PENDING',
+              description: dto.description || 'Solicitação de Saque',
+              referenceId: withdrawal.id,
+              externalId: externalId,
+              paymentMethod: 'PIX'
+          }
+      });
+
+      // D. Chama Gateway
       try {
         const keyTypeForKeyclub = dto.keyType === 'RANDOM' ? 'EVP' : dto.keyType;
-        
-        // ✅ CORRIGIDO: pixKeyType (não keyType)
         await this.keyclubService.createWithdrawal({
           amount: dto.amount,
           externalId: withdrawal.externalId,
           pixKey: dto.pixKey,
           pixKeyType: keyTypeForKeyclub,
         });
-
       } catch (error) {
-        this.logger.error(`Falha no KeyClub para Saque ${withdrawal.id}. Estornando saldo.`, error);
-
-        await tx.user.update({
-          where: { id: userId },
-          data: {
-            balance: {
-              increment: amountInCents,
-            },
-          },
-        });
-        
-        await tx.withdrawal.update({
-            where: { id: withdrawal.id },
-            data: {
-                status: 'FAILED',
-                failureReason: 'Falha na comunicação inicial com o KeyClub.',
-            },
-        });
-
-        throw new BadRequestException('Erro ao processar o saque: Falha de comunicação com o sistema de pagamentos.');
+        this.logger.error(`Falha KeyClub Saque ${withdrawal.id}`, error);
+        throw new BadRequestException('Erro ao processar saque no gateway.');
       }
 
       return withdrawal;
     });
   }
 
-  async getHistory(userId: string, options: HistoryOptions): Promise<HistoryResponseData> {
-    const { page, limit, status } = options;
-    const skip = (page - 1) * limit;
-
-    this.logger.log(`📋 Buscando histórico para userId: ${userId} (Página: ${page}, Filtro: ${status})`);
-    
-    let depositWhere: Prisma.DepositWhereInput = { userId };
-    let withdrawalWhere: Prisma.WithdrawalWhereInput = { userId };
-
-    if (status === 'PENDING') {
-      depositWhere.status = 'PENDING';
-      withdrawalWhere.status = 'PENDING';
-    } else if (status === 'CONFIRMED') {
-      depositWhere.status = 'CONFIRMED';
-      withdrawalWhere.status = 'COMPLETED';
-    } else if (status === 'FAILED') {
-      depositWhere.status = 'FAILED';
-      withdrawalWhere.status = 'FAILED';
-    } else if (status === 'ALL') {
-      depositWhere.status = { in: ['PENDING', 'CONFIRMED', 'FAILED'] };
-      withdrawalWhere.status = { in: ['PENDING', 'COMPLETED', 'FAILED'] };
-    }
-
-    const deposits = await this.prisma.deposit.findMany({
-      where: depositWhere,
-      select: {
-        id: true,
-        amountInCents: true,
-        status: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    const withdrawals = await this.prisma.withdrawal.findMany({
-      where: withdrawalWhere,
-      select: {
-        id: true,
-        amount: true,
-        status: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    const history: UnifiedTransaction[] = [
-      ...deposits.map(d => ({
-        id: d.id,
-        type: 'DEPOSIT' as const,
-        amountInCents: d.amountInCents,
-        status: d.status,
-        createdAt: d.createdAt,
-      })),
-      ...withdrawals.map(w => ({
-        id: w.id,
-        type: 'WITHDRAWAL' as const,
-        amountInCents: w.amount,
-        status: w.status,
-        createdAt: w.createdAt,
-      })),
-    ].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-    
-    const totalItems = history.length;
-    const totalPages = Math.ceil(totalItems / limit);
-    const transactions = history.slice(skip, skip + limit);
-    
-    this.logger.log(`✅ Histórico encontrado: ${transactions.length} de ${totalItems} transações`);
-    
-    return {
-      transactions,
-      pagination: {
-        currentPage: page,
-        totalPages: totalPages,
-        totalItems: totalItems,
-        limit: limit,
-      },
-    };
-  }
-
+  // ===========================================================================
+  // 3. PIX RÁPIDO (Atualizado para gravar na Transaction também)
+  // ===========================================================================
   async createQuickPix(userId: string, merchantId: string, dto: QuickPixDto) {
     const amountInCents = Math.round(dto.amount * 100);
+    const externalId = uuidv4();
 
+    // A. Cria Depósito (Para Webhook achar)
     const deposit = await this.prisma.deposit.create({
       data: {
-        amountInCents: amountInCents,
-        feeInCents: 0,
-        sellerFeeInCents: 0,
+        amountInCents,
         netAmountInCents: amountInCents,
         status: 'PENDING',
-        userId: userId,
-        merchantId: merchantId,
+        userId,
+        merchantId,
         payerName: dto.payerName,
         payerEmail: dto.payerEmail,
         payerDocument: dto.payerDocument,
-        externalId: uuidv4(),
+        externalId, // ID que vai pra Keyclub
         webhookToken: uuidv4(),
       },
     });
 
+    // B. ✅ CRIA REGISTRO NO EXTRATO (Para aparecer no Dashboard como Depósito)
+    await this.prisma.transaction.create({
+        data: {
+            userId,
+            type: 'DEPOSIT',
+            amount: amountInCents,
+            status: 'PENDING',
+            description: 'Depósito Rápido via Dashboard',
+            referenceId: deposit.id,
+            externalId: externalId,
+            paymentMethod: 'PIX',
+            customerName: dto.payerName
+        }
+    });
+
     try {
-      // ✅ CORRIGIDO: Formato correto da interface CreateDepositRequest
       const keyclubResponse = await this.keyclubService.createDeposit({
         amount: dto.amount,
         externalId: deposit.externalId,
@@ -239,21 +207,15 @@ export class TransactionsService {
         payerDocument: dto.payerDocument,
       });
       
-      // ✅ CORRIGIDO: qrcode (não pixCode)
       return {
         deposit,
         pixCode: keyclubResponse.qrcode,
       };
 
     } catch (error) {
-        this.logger.error(`Falha ao gerar PIX no KeyClub para o depósito ${deposit.id}.`, error);
-
-        await this.prisma.deposit.update({
-            where: { id: deposit.id },
-            data: { status: 'FAILED' },
-        });
-        
-        throw new BadRequestException('Erro ao gerar o PIX: Falha de comunicação com o sistema de pagamentos.');
+        this.logger.error(`Erro KeyClub QuickPix`, error);
+        await this.prisma.deposit.update({ where: { id: deposit.id }, data: { status: 'FAILED' } });
+        throw new BadRequestException('Erro ao gerar PIX.');
     }
   }
 }
