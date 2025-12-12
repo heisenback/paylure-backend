@@ -13,93 +13,139 @@ export class WebhooksService {
   ) {}
 
   async handleKeyclubWebhook(payload: any) {
-    this.logger.log(`🔥 [Webhook] Iniciando processamento... Payload: ${JSON.stringify(payload)}`);
+    this.logger.log(`🔥 [Webhook] Payload Recebido: ${JSON.stringify(payload)}`);
 
-    const {
-      transaction_id: transactionId,
-      status,
-      amount, 
-    } = payload;
+    // 1. Extração Inteligente de Dados
+    const transactionId = payload.transaction_id || payload.id || payload.transactionId || payload.external_id;
+    const rawStatus = payload.status || payload.payment_status || '';
+    const rawAmount = payload.amount || payload.value || 0;
+    const status = String(rawStatus).toUpperCase();
 
     if (!transactionId) {
+      this.logger.error('❌ [Webhook] transaction_id não encontrado no payload.');
       throw new NotFoundException('transaction_id is required');
     }
 
-    // 1. Busca Depósito
+    // 2. Busca Depósito no Banco (Com PaymentLink para saber se é venda)
     const deposit = await this.prisma.deposit.findUnique({
-      where: { externalId: transactionId },
+      where: { externalId: String(transactionId) },
+      include: { 
+        paymentLink: { include: { product: true } }, 
+        merchant: true 
+      }
     });
 
     if (!deposit) {
-      throw new NotFoundException(`Depósito não encontrado no banco: ${transactionId}`);
+      // Fallback: Tenta buscar pelo ID interno
+      const depositByInternal = await this.prisma.deposit.findFirst({
+        where: { id: String(transactionId) },
+        include: { paymentLink: { include: { product: true } }, merchant: true }
+      });
+
+      if (!depositByInternal) {
+        this.logger.error(`❌ [Webhook] Transação não encontrada: ${transactionId}`);
+        throw new NotFoundException(`Transação não encontrada: ${transactionId}`);
+      }
+      Object.assign(deposit, depositByInternal);
     }
 
-    // 2. Trava de Segurança (Idempotência)
+    // 3. Trava de Segurança (Idempotência)
     if (deposit.status === 'CONFIRMED' || deposit.status === 'PAID') {
-      this.logger.warn(`⚠️ Depósito ${deposit.id} já estava pago. Ignorando.`);
+      this.logger.warn(`⚠️ [Webhook] Transação ${deposit.id} já processada.`);
       return { message: 'Already processed' };
     }
 
-    // 3. Processar Pagamento Aprovado
-    if (status === 'COMPLETED' || status === 'PAID') {
-      
-      // --- CORREÇÃO MATEMÁTICA RÍGIDA ---
-      // Converte qualquer coisa que vier para número e garante centavos corretos
-      const amountNumber = Number(amount); 
-      // Se vier 1.00 -> vira 100. Se vier 1 -> vira 100.
+    // 4. Verifica Aprovação
+    const approvedStatuses = ['PAID', 'COMPLETED', 'APPROVED', 'SUCCEEDED', 'CONFIRMED'];
+    
+    if (approvedStatuses.includes(status)) {
+      const amountNumber = Number(rawAmount); 
       const amountInCents = Math.round(amountNumber * 100);
 
-      this.logger.log(`💰 Processando: Recebido ${amount} | Salvar como ${amountInCents} centavos`);
+      // === DECISÃO: É VENDA DE PRODUTO OU DEPÓSITO EM CARTEIRA? ===
+      const isProductSale = !!deposit.paymentLinkId;
+      const operationType = isProductSale ? 'SALE' : 'DEPOSIT';
+      const description = isProductSale 
+          ? `Venda: ${deposit.paymentLink?.product?.name || 'Produto'}`
+          : 'Depósito via PIX';
 
-      // --- TRANSAÇÃO ATÔMICA (Tudo ou Nada) ---
+      // =================================================================================
+      // ⚠️ REGRA DE NEGÓCIO: TAXA ZERO NA ENTRADA 
+      // O cliente recebe 100% do valor da venda no saldo. A taxa será cobrada no saque.
+      // =================================================================================
+      const feeInCents = 0; 
+      const netAmount = amountInCents; // Valor Líquido = Valor Bruto
+
+      this.logger.log(`💰 [Webhook] Processando ${operationType}: Valor Integral R$ ${amountInCents/100} (Taxa será no saque)`);
+
+      // --- TRANSAÇÃO ATÔMICA ---
       const result = await this.prisma.$transaction(async (tx) => {
         
-        // A. Atualiza o Depósito
-        const updatedDeposit = await tx.deposit.update({
+        // A. Atualiza o Depósito/Venda
+        await tx.deposit.update({
           where: { id: deposit.id },
           data: { 
             status: 'CONFIRMED',
             amountInCents: amountInCents,
-            netAmountInCents: amountInCents // Se tiver taxa, descontar aqui depois
+            feeInCents: feeInCents, // 0
+            netAmountInCents: netAmount // Valor Cheio
           },
         });
 
-        // B. Atualiza o Saldo do Usuário
+        // B. Atualiza o Saldo do Usuário (SOMA TUDO)
         const updatedUser = await tx.user.update({
           where: { id: deposit.userId },
           data: {
-            balance: { increment: amountInCents },
+            balance: { increment: netAmount },
           },
         });
 
-        // C. Cria o Extrato (Transaction) - AJUSTADO PRO SEU SCHEMA
+        // C. Cria o Registro no Extrato
         await tx.transaction.create({
           data: {
             userId: deposit.userId,
-            type: 'DEPOSIT',      // Bate com seu schema
-            amount: amountInCents, // Bate com seu schema (Int)
-            status: 'COMPLETED',   // Bate com seu schema
+            productId: deposit.paymentLink?.productId,
+            type: operationType,      
+            amount: netAmount, 
+            status: 'COMPLETED',   
             referenceId: deposit.externalId,
-            description: 'Depósito via PIX',
-            // metadata: payload, // Opcional: salva o payload original se quiser debugar
+            description: description,
+            paymentMethod: 'PIX',
+            customerName: deposit.payerName,
+            customerEmail: deposit.payerEmail,
+            customerDoc: deposit.payerDocument,
+            metadata: payload as any,
           },
         });
 
         return { updatedUser };
       });
 
-      this.logger.log(`✅ [SUCESSO] DB Atualizado! Novo saldo: R$ ${result.updatedUser.balance / 100}`);
+      this.logger.log(`✅ [SUCESSO] ${operationType} confirmada! Saldo total liberado.`);
 
-      // 4. Notifica Frontend (Socket)
-      this.paymentGateway.emitToUser(deposit.userId, 'balance_updated', {
-        balance: result.updatedUser.balance,
-      });
+      // 5. Notifica Frontend via Socket
+      try {
+        if (this.paymentGateway) {
+            this.paymentGateway.emitToUser(deposit.userId, 'balance_updated', {
+                balance: result.updatedUser.balance,
+            });
 
-      this.paymentGateway.emitToUser(deposit.userId, 'deposit_confirmed', {
-        depositId: deposit.id,
-        amount: amountInCents,
-        newBalance: result.updatedUser.balance,
-      });
+            if (isProductSale) {
+                this.paymentGateway.emitToUser(deposit.userId, 'sale_approved', {
+                    productName: deposit.paymentLink?.product?.name,
+                    amount: netAmount
+                });
+            } else {
+                this.paymentGateway.emitToUser(deposit.userId, 'deposit_confirmed', {
+                    depositId: deposit.id,
+                    amount: amountInCents,
+                    newBalance: result.updatedUser.balance,
+                });
+            }
+        }
+      } catch (err) {
+          this.logger.warn(`⚠️ Erro socket: ${err}`);
+      }
 
       return { message: 'Confirmed successfully' };
     }
