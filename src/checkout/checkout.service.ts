@@ -11,12 +11,11 @@ export class CheckoutService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly keyclub: KeyclubService,
+    private readonly keyclubService: KeyclubService, // Mudei para keyclubService para padronizar
   ) {}
 
   async processCheckout(dto: CreatePaymentDto) {
-    this.logger.log(`[Checkout] Iniciando processamento para Produto ID: ${dto.productId}`);
-
+    // 1. Busca Produto
     const product = await this.prisma.product.findUnique({
       where: { id: dto.productId },
       include: { merchant: { include: { user: true } } }
@@ -27,7 +26,7 @@ export class CheckoutService {
 
     const sellerUser = product.merchant.user;
 
-    // Calcula Valor
+    // 2. Calcula Valor
     let totalAmountInCents = Number(product.priceInCents); 
     if (dto.items && dto.items.length > 0) {
        const bumpsTotal = dto.items
@@ -38,20 +37,20 @@ export class CheckoutService {
 
     if (totalAmountInCents < 100) throw new BadRequestException('Valor mínimo R$ 1,00.');
 
-    // Documento
+    // 3. Documento
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
     if (!finalDocument || finalDocument.length < 11) {
         finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '';
     }
     if (!finalDocument) throw new BadRequestException('CPF/CNPJ obrigatório.');
 
-    // Integração Keyclub
+    // 4. Integração Keyclub
     const externalId = `chk_${crypto.randomUUID()}`;
     const amountInBRL = totalAmountInCents / 100;
     let keyclubResult;
 
     try {
-        keyclubResult = await this.keyclub.createDeposit({
+        keyclubResult = await this.keyclubService.createDeposit({
             amount: amountInBRL,
             externalId: externalId,
             payerName: dto.customer.name,
@@ -60,7 +59,9 @@ export class CheckoutService {
             payerPhone: dto.customer.phone
         });
 
-        // A. Cria DEPÓSITO (Para Webhook)
+        // 5. Salva Depósito e Transação
+        
+        // A. Depósito (Webhook)
         await this.prisma.deposit.create({
             data: {
                 id: externalId,
@@ -77,13 +78,13 @@ export class CheckoutService {
             }
         });
 
-        // B. Cria TRANSAÇÃO (Para Extrato e Minhas Vendas)
+        // B. Transação (Extrato e Minhas Vendas)
         await this.prisma.transaction.create({
             data: {
                 id: externalId,
                 amount: totalAmountInCents,
                 status: 'PENDING',
-                type: 'SALE', // Importante para aparecer em Minhas Vendas
+                type: 'SALE', // Garante que aparece como Venda
                 paymentMethod: 'PIX',
                 description: `Venda: ${product.name}`,
                 userId: sellerUser.id,
@@ -104,7 +105,7 @@ export class CheckoutService {
             pix: {
                 qrCode: keyclubResult.qrcode,
                 copyPaste: keyclubResult.qrcode,
-                transactionId: keyclubResult.transactionId // Retorna o ID da Keyclub
+                transactionId: keyclubResult.transactionId 
             }
         };
 
@@ -124,9 +125,9 @@ export class CheckoutService {
     }
   }
 
-  // ✅ MÉTODO DE CONSULTA DE STATUS
+  // ✅ MÉTODO DE STATUS (USADO PELO CONTROLLER)
   async checkTransactionStatus(id: string) {
-    // Tenta achar na Transação (Prioridade)
+    // 1. Busca na tabela Transação (onde o Webhook atualiza para COMPLETED)
     const tx = await this.prisma.transaction.findFirst({
         where: { 
             OR: [
@@ -140,7 +141,7 @@ export class CheckoutService {
 
     if (tx) return { status: tx.status };
 
-    // Fallback: Depósito
+    // 2. Fallback: Busca no Depósito
     const dep = await this.prisma.deposit.findFirst({
         where: { 
             OR: [
