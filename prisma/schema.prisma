@@ -201,7 +201,7 @@ model MemberAccess {
 }
 
 // ===================================
-// 3. MODELO PRODUCT (✅ ATUALIZADO COMPLETO)
+// 3. MODELO PRODUCT (✅ ATUALIZADO)
 // ===================================
 model Product {
   id               String       @id @default(uuid())
@@ -217,8 +217,8 @@ model Product {
   paymentType      String       @default("ONE_TIME")
   
   // Conteúdo e Configuração
-  content          Json?        // Módulos e aulas
-  checkoutConfig   Json?        // Visual do checkout
+  content          Json?
+  checkoutConfig   Json?
 
   // ✅ NOVOS CAMPOS PARA O MARKETPLACE E AFILIAÇÃO
   isAffiliationEnabled Boolean  @default(false)
@@ -231,7 +231,6 @@ model Product {
   coproductionEmail    String?
   coproductionPercent  Float?   @default(0)
 
-  // Relacionamentos
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
   
@@ -244,7 +243,6 @@ model Product {
   
   @@index([merchantId])
   @@index([deliveryMethod])
-  @@index([showInMarketplace]) // Index para busca rápida no marketplace
 }
 
 // ===================================

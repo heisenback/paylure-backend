@@ -12,7 +12,7 @@ export class CreateProductDto {
 
   @IsNumber()
   @Min(0.01)
-  price: number; // Valor em REAIS que vem do front
+  price: number; // Em REAIS
 
   @IsString()
   @IsOptional()
@@ -34,7 +34,7 @@ export class CreateProductDto {
   @IsOptional()
   checkoutConfig?: any;
 
-  // ✅ NOVOS CAMPOS ACEITOS NA API
+  // ✅ NOVOS CAMPOS PARA O MARKETPLACE
   @IsBoolean()
   @IsOptional()
   isAffiliationEnabled?: boolean;
@@ -55,6 +55,7 @@ export class CreateProductDto {
   @IsOptional()
   materialLink?: string;
 
+  // ✅ CO-PRODUÇÃO
   @IsString()
   @IsOptional()
   coproductionEmail?: string;
@@ -63,6 +64,7 @@ export class CreateProductDto {
   @IsOptional()
   coproductionPercent?: number;
 
+  // ✅ CONTEÚDO (AULAS)
   @IsOptional()
   content?: any;
 }
