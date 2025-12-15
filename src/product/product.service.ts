@@ -16,14 +16,12 @@ export class ProductService {
   // ==================================================================
   async create(dto: CreateProductDto, merchantId: string): Promise<Product> {
     try {
-        // Converte preço para centavos com segurança
         const priceVal = Number(dto.price);
         if (isNaN(priceVal)) {
             throw new BadRequestException('Preço inválido.');
         }
         const priceInCents = Math.round(priceVal * 100);
 
-        // 1. Prepara o Config do Checkout
         let finalCheckoutConfig = dto.checkoutConfig || {};
         
         if (dto.imageUrl) {
@@ -39,58 +37,64 @@ export class ProductService {
             };
         }
 
-        // Garante que campos numéricos opcionais sejam números ou 0
         const commPercent = dto.commissionPercent ? Number(dto.commissionPercent) : 0;
         const coproPercent = dto.coproductionPercent ? Number(dto.coproductionPercent) : 0;
 
-        // 2. Cria o Produto no Banco
         const newProduct = await this.prisma.product.create({
           data: {
             name: dto.title,
             description: dto.description || '',
             priceInCents: priceInCents,
             merchantId: merchantId,
-            
-            // Imagem e Categoria
             imageUrl: dto.imageUrl || null,
             category: dto.category || 'WEALTH',
             
-            // Entrega e Pagamento
+            // Link de Vendas
+            salesPageUrl: dto.salesPageUrl || null,
+
             deliveryMethod: dto.deliveryMethod || 'PAYLURE_MEMBERS',
             paymentType: dto.paymentType || 'ONE_TIME',
             subscriptionPeriod: dto.subscriptionPeriod || null,
-            
-            // Arquivos e Links Externos
             deliveryUrl: dto.deliveryUrl || null,
             fileUrl: dto.fileUrl || null,
             fileName: dto.fileName || null,
             
-            // Marketplace e Afiliação
             isAffiliationEnabled: Boolean(dto.isAffiliationEnabled),
             showInMarketplace: Boolean(dto.showInMarketplace),
             commissionPercent: commPercent,
             affiliationType: dto.affiliationType || 'OPEN',
             materialLink: dto.materialLink || null,
             
-            // Co-produção
             coproductionEmail: dto.coproductionEmail || null,
             coproductionPercent: coproPercent,
 
-            // Conteúdo e Config
             content: dto.content || null,
             checkoutConfig: finalCheckoutConfig,
+
+            // ✅ Lógica para Criar Ofertas
+            offers: {
+                create: dto.offers?.map(o => ({
+                    name: o.name,
+                    priceInCents: Math.round(Number(o.price) * 100)
+                })) || []
+            },
+
+            // ✅ Lógica para Criar Cupons
+            coupons: {
+                create: dto.coupons?.map(c => ({
+                    code: c.code.toUpperCase(),
+                    discountPercent: Number(c.discountPercent)
+                })) || []
+            }
           },
         });
 
-        // 3. Cria entrada no Marketplace se necessário
         if (dto.showInMarketplace) {
             await this.prisma.marketplaceProduct.create({
                 data: {
                     productId: newProduct.id,
                     status: 'AVAILABLE',
-                    // ✅ CORREÇÃO: Salva o número inteiro (50) e não decimal (0.5)
-                    // Isso conserta o cálculo de "R$ 1,00" virando "R$ 100,00"
-                    commissionRate: commPercent 
+                    commissionRate: commPercent
                 }
             }).catch(e => this.logger.warn(`Erro ao criar marketplace entry: ${e.message}`));
         }
@@ -100,9 +104,7 @@ export class ProductService {
 
     } catch (error) {
         this.logger.error(`Erro ao criar produto: ${error.message}`, error.stack);
-        if (error.code) {
-            throw new BadRequestException(`Erro de banco de dados: ${error.message}`);
-        }
+        if (error.code) throw new BadRequestException(`Erro de banco de dados: ${error.message}`);
         throw error;
     }
   }
@@ -113,6 +115,7 @@ export class ProductService {
   async findAllByMerchant(merchantId: string): Promise<Product[]> {
     return this.prisma.product.findMany({
       where: { merchantId },
+      include: { offers: true, coupons: true }, // Inclui ofertas e cupons na listagem
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -121,7 +124,10 @@ export class ProductService {
   // BUSCAR UM (FIND ONE)
   // ==================================================================
   async findById(productId: string): Promise<Product | null> {
-    return this.prisma.product.findUnique({ where: { id: productId } });
+    return this.prisma.product.findUnique({ 
+        where: { id: productId },
+        include: { offers: true, coupons: true } // Inclui detalhes
+    });
   }
 
   // ==================================================================
@@ -132,18 +138,15 @@ export class ProductService {
     if (!product) throw new NotFoundException('Produto não encontrado.');
     if (product.merchantId !== merchantId) throw new ForbiddenException('Sem permissão.');
 
-    // Remove do marketplace primeiro (se existir)
     try {
         await this.prisma.marketplaceProduct.deleteMany({ where: { productId } });
-    } catch (e) {
-        this.logger.warn(`Não foi possível remover do marketplace: ${e.message}`);
-    }
+    } catch (e) {}
 
     await this.prisma.product.delete({ where: { id: productId } });
   }
 
   // ==================================================================
-  // ATUALIZAR (UPDATE) - CORRIGIDO
+  // ATUALIZAR (UPDATE)
   // ==================================================================
   async update(id: string, merchantId: string, dto: UpdateProductDto) {
     const product = await this.prisma.product.findUnique({ where: { id } });
@@ -153,22 +156,18 @@ export class ProductService {
 
     const data: any = { ...dto };
     
-    // Remove campos auxiliares que não vão direto pro banco
+    // Limpeza de campos
     delete data.price;
     delete data.title;
-    delete data.file; // fileUrl é o que importa
+    delete data.file;
+    // Removemos offers e coupons do objeto direto para tratar manualmente
+    delete data.offers;
+    delete data.coupons;
 
-    // Tratamento de Preço
-    if (dto.price !== undefined) {
-        data.priceInCents = Math.round(Number(dto.price) * 100);
-    }
+    if (dto.price !== undefined) data.priceInCents = Math.round(Number(dto.price) * 100);
+    if (dto.title) data.name = dto.title;
+    if (dto.salesPageUrl !== undefined) data.salesPageUrl = dto.salesPageUrl;
 
-    // Tratamento de Título
-    if (dto.title) {
-        data.name = dto.title;
-    }
-
-    // Tratamento de Imagem e Config
     if (dto.imageUrl) {
         const currentConfig = (product.checkoutConfig as any) || {};
         data.checkoutConfig = {
@@ -181,37 +180,66 @@ export class ProductService {
         };
     }
 
-    // Tratamento de numéricos opcionais
     if (dto.commissionPercent !== undefined) data.commissionPercent = Number(dto.commissionPercent);
     if (dto.coproductionPercent !== undefined) data.coproductionPercent = Number(dto.coproductionPercent);
 
-    // Atualiza o produto
+    // --- ATUALIZAÇÃO DE LISTAS (Delete + Create) ---
+    // Essa é a estratégia mais segura para garantir sincronia com o Frontend
+    if (dto.offers) {
+        await this.prisma.offer.deleteMany({ where: { productId: id } });
+        if (dto.offers.length > 0) {
+            await this.prisma.offer.createMany({
+                data: dto.offers.map((o: any) => ({
+                    productId: id,
+                    name: o.name,
+                    priceInCents: Math.round(Number(o.price) * 100)
+                }))
+            });
+        }
+    }
+
+    if (dto.coupons) {
+        await this.prisma.coupon.deleteMany({ where: { productId: id } });
+        if (dto.coupons.length > 0) {
+            await this.prisma.coupon.createMany({
+                data: dto.coupons.map((c: any) => ({
+                    productId: id,
+                    code: c.code.toUpperCase(),
+                    discountPercent: Number(c.percent || c.discountPercent)
+                }))
+            });
+        }
+    }
+
+    // Atualiza o produto principal
     const updated = await this.prisma.product.update({
         where: { id },
         data: data,
+        include: { offers: true, coupons: true }
     });
     
-    // Se mudou a comissão, atualiza a tabela do Marketplace também
-    if (dto.commissionPercent !== undefined) {
-         // Tenta atualizar se existir
-         const exists = await this.prisma.marketplaceProduct.findUnique({ where: { productId: id } });
+    // Atualiza Marketplace
+    if (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined) {
+         const commRate = dto.commissionPercent !== undefined ? Number(dto.commissionPercent) : updated.commissionPercent;
          
-         if (exists) {
-             await this.prisma.marketplaceProduct.update({
-                where: { productId: id },
-                // ✅ CORREÇÃO: Salva o número inteiro aqui também
-                data: { commissionRate: Number(dto.commissionPercent) } 
-             });
-         } else if (updated.showInMarketplace) {
-             // Se não existe mas agora está no marketplace, cria
-             await this.prisma.marketplaceProduct.create({
-                data: {
-                    productId: id,
-                    status: 'AVAILABLE',
-                    // ✅ CORREÇÃO: Salva o número inteiro
-                    commissionRate: Number(dto.commissionPercent)
-                }
-             });
+         if (updated.showInMarketplace) {
+             const exists = await this.prisma.marketplaceProduct.findUnique({ where: { productId: id } });
+             if (exists) {
+                 await this.prisma.marketplaceProduct.update({
+                    where: { productId: id },
+                    data: { commissionRate: commRate }
+                 });
+             } else {
+                 await this.prisma.marketplaceProduct.create({
+                    data: {
+                        productId: id,
+                        status: 'AVAILABLE',
+                        commissionRate: commRate || 0
+                    }
+                 });
+             }
+         } else {
+             await this.prisma.marketplaceProduct.deleteMany({ where: { productId: id } });
          }
     }
     

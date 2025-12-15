@@ -201,7 +201,7 @@ model MemberAccess {
 }
 
 // ===================================
-// 3. MODELO PRODUCT (✅ ATUALIZADO E COMPLETO)
+// 3. MODELO PRODUCT
 // ===================================
 model Product {
   id               String       @id @default(uuid())
@@ -214,17 +214,20 @@ model Product {
   imageUrl         String?
   category         String?      @default("WEALTH")
   
-  // -- Configurações de Pagamento e Entrega (NOVOS CAMPOS) --
+  // -- Links (NOVO) --
+  salesPageUrl     String?      // ✅ Página de Vendas
+  
+  // -- Configurações de Pagamento e Entrega --
   deliveryMethod   String       @default("PAYLURE_MEMBERS")
   paymentType      String       @default("ONE_TIME")
-  subscriptionPeriod String?    // ✅ Mensal, Anual, etc.
+  subscriptionPeriod String?    
   
-  // -- Arquivos e Links (NOVOS CAMPOS) --
-  deliveryUrl      String?      // ✅ Link externo ou comunidade
-  fileUrl          String?      // ✅ URL do arquivo R2
-  fileName         String?      // ✅ Nome do arquivo
+  // -- Arquivos e Links --
+  deliveryUrl      String?      
+  fileUrl          String?      
+  fileName         String?      
   
-  // -- Conteúdo (Curso) e Checkout --
+  // -- Conteúdo e Config --
   content          Json?
   checkoutConfig   Json?
 
@@ -232,12 +235,16 @@ model Product {
   isAffiliationEnabled Boolean  @default(false)
   showInMarketplace    Boolean  @default(false)
   commissionPercent    Float?   @default(0)
-  affiliationType      String?  @default("OPEN") // OPEN ou APPROVAL
+  affiliationType      String?  @default("OPEN")
   materialLink         String?
   
   // -- Co-produção --
   coproductionEmail    String?
   coproductionPercent  Float?   @default(0)
+
+  // -- Relacionamentos (NOVOS) --
+  offers           Offer[]      // ✅ Múltiplas Ofertas
+  coupons          Coupon[]     // ✅ Cupons de Desconto
 
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
@@ -252,6 +259,39 @@ model Product {
   @@index([merchantId])
   @@index([deliveryMethod])
   @@index([showInMarketplace])
+}
+
+// ✅ NOVO MODELO: OFERTAS EXTRAS (Upsell, Downsell, Variações)
+model Offer {
+  id            String   @id @default(uuid())
+  name          String   // Ex: "Acesso Vitalício", "Plano Anual"
+  priceInCents  Int
+  isDefault     Boolean  @default(false)
+  
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId     String
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@index([productId])
+}
+
+// ✅ NOVO MODELO: CUPONS
+model Coupon {
+  id            String   @id @default(uuid())
+  code          String   // Ex: "PROMO10"
+  discountPercent Int    // Ex: 10
+  isActive      Boolean  @default(true)
+  
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId     String
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([productId])
+  @@index([code])
 }
 
 // ===================================
