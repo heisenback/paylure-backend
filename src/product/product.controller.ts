@@ -21,7 +21,6 @@ import { AuthGuard } from '@nestjs/passport';
 import { GetUser } from 'src/auth/decorators/get-user.decorator';
 
 @Controller('products')
-// 🔓 O bloqueio geral foi removido daqui para permitir a rota pública
 export class ProductController {
   private readonly logger = new Logger(ProductController.name);
 
@@ -58,7 +57,7 @@ export class ProductController {
   // ==================================================================
 
   @Post()
-  @UseGuards(AuthGuard('jwt')) // 🔒 Protegido
+  @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.CREATED)
   async create(
     @Body() dto: CreateProductDto,
@@ -86,7 +85,7 @@ export class ProductController {
   }
 
   @Get()
-  @UseGuards(AuthGuard('jwt')) // 🔒 Protegido
+  @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
   async findAll(@GetUser() user: any) {
     if (!user.merchant?.id) {
@@ -95,23 +94,37 @@ export class ProductController {
 
     const products = await this.productService.findAllByMerchant(user.merchant.id);
 
+    // ✅ CORREÇÃO CRÍTICA: Retornar TODOS os campos, incluindo content
     return {
       success: true,
       data: products.map((p) => ({
         id: p.id,
-        title: p.name,
+        name: p.name, // ✅ Adiciona 'name'
+        title: p.name, // Mantém compatibilidade com frontend
         description: p.description,
-        amount: p.priceInCents, 
+        amount: p.priceInCents,
+        price: p.priceInCents / 100, // ✅ Preço em reais
         isAvailable: p.isAvailable,
+        
+        // ✅ NOVOS CAMPOS ESSENCIAIS
+        imageUrl: p.imageUrl,
+        category: p.category,
+        deliveryMethod: p.deliveryMethod,
+        paymentType: p.paymentType,
+        
+        // ✅ CRÍTICO: Campo content (módulos e aulas)
+        content: p.content,
+        
+        checkoutConfig: p.checkoutConfig,
+        
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
-        checkoutConfig: p.checkoutConfig
       })),
     };
   }
 
   @Patch(':id')
-  @UseGuards(AuthGuard('jwt')) // 🔒 Protegido
+  @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
   async update(
     @Param('id') id: string,
@@ -132,7 +145,7 @@ export class ProductController {
   }
 
   @Delete(':id')
-  @UseGuards(AuthGuard('jwt')) // 🔒 Protegido
+  @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(
     @Param('id') id: string,
