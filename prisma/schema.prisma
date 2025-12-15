@@ -201,7 +201,7 @@ model MemberAccess {
 }
 
 // ===================================
-// 3. MODELO PRODUCT (✅ ATUALIZADO)
+// 3. MODELO PRODUCT (✅ ATUALIZADO E COMPLETO)
 // ===================================
 model Product {
   id               String       @id @default(uuid())
@@ -213,21 +213,29 @@ model Product {
   
   imageUrl         String?
   category         String?      @default("WEALTH")
+  
+  // -- Configurações de Pagamento e Entrega (NOVOS CAMPOS) --
   deliveryMethod   String       @default("PAYLURE_MEMBERS")
   paymentType      String       @default("ONE_TIME")
+  subscriptionPeriod String?    // ✅ Mensal, Anual, etc.
   
-  // Conteúdo e Configuração
+  // -- Arquivos e Links (NOVOS CAMPOS) --
+  deliveryUrl      String?      // ✅ Link externo ou comunidade
+  fileUrl          String?      // ✅ URL do arquivo R2
+  fileName         String?      // ✅ Nome do arquivo
+  
+  // -- Conteúdo (Curso) e Checkout --
   content          Json?
   checkoutConfig   Json?
 
-  // ✅ NOVOS CAMPOS PARA O MARKETPLACE E AFILIAÇÃO
+  // -- Marketplace e Afiliação --
   isAffiliationEnabled Boolean  @default(false)
   showInMarketplace    Boolean  @default(false)
   commissionPercent    Float?   @default(0)
   affiliationType      String?  @default("OPEN") // OPEN ou APPROVAL
   materialLink         String?
   
-  // Co-produção
+  // -- Co-produção --
   coproductionEmail    String?
   coproductionPercent  Float?   @default(0)
 
@@ -243,6 +251,7 @@ model Product {
   
   @@index([merchantId])
   @@index([deliveryMethod])
+  @@index([showInMarketplace])
 }
 
 // ===================================
