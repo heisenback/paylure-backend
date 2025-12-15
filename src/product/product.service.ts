@@ -3,7 +3,6 @@ import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestEx
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { Product } from '@prisma/client';
 
 @Injectable()
 export class ProductService {
@@ -14,7 +13,8 @@ export class ProductService {
   // ==================================================================
   // CRIAR PRODUTO (CREATE)
   // ==================================================================
-  async create(dto: CreateProductDto, merchantId: string): Promise<Product> {
+  // 🔹 Removido ": Promise<Product>" para permitir inferência dos includes
+  async create(dto: CreateProductDto, merchantId: string) {
     try {
         const priceVal = Number(dto.price);
         if (isNaN(priceVal)) {
@@ -84,6 +84,11 @@ export class ProductService {
                 })) || []
             }
           },
+          // ✅ ADICIONADO: Retornar já com as ofertas criadas para o front não bugar
+          include: {
+              offers: true,
+              coupons: true
+          }
         });
 
         if (dto.showInMarketplace) {
@@ -91,7 +96,7 @@ export class ProductService {
                 data: {
                     productId: newProduct.id,
                     status: 'AVAILABLE',
-                    commissionRate: commPercent
+                    commissionRate: commPercent 
                 }
             }).catch(e => this.logger.warn(`Erro ao criar marketplace entry: ${e.message}`));
         }
@@ -109,10 +114,11 @@ export class ProductService {
   // ==================================================================
   // BUSCAR TODOS (FIND ALL)
   // ==================================================================
-  async findAllByMerchant(merchantId: string): Promise<Product[]> {
+  // 🔹 Removido ": Promise<Product[]>"
+  async findAllByMerchant(merchantId: string) {
     return this.prisma.product.findMany({
       where: { merchantId },
-      include: { offers: true, coupons: true },
+      include: { offers: true, coupons: true }, // O retorno agora incluirá tipagem de offers/coupons
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -120,7 +126,8 @@ export class ProductService {
   // ==================================================================
   // BUSCAR UM (FIND ONE)
   // ==================================================================
-  async findById(productId: string): Promise<Product | null> {
+  // 🔹 Removido ": Promise<Product | null>"
+  async findById(productId: string) {
     return this.prisma.product.findUnique({ 
         where: { id: productId },
         include: { offers: true, coupons: true }
@@ -208,12 +215,11 @@ export class ProductService {
     const updated = await this.prisma.product.update({
         where: { id },
         data: data,
-        include: { offers: true, coupons: true }
+        include: { offers: true, coupons: true } // O retorno inferido terá offers/coupons
     });
     
     // Atualiza Marketplace
     if (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined) {
-         // Garante que é um número e não null
          const commRate = (dto.commissionPercent !== undefined ? Number(dto.commissionPercent) : updated.commissionPercent) || 0;
          
          if (updated.showInMarketplace) {
