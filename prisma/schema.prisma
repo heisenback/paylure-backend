@@ -201,27 +201,37 @@ model MemberAccess {
 }
 
 // ===================================
-// 3. MODELO PRODUCT (✅ ATUALIZADO COM CAMPO CONTENT)
+// 3. MODELO PRODUCT (✅ ATUALIZADO COMPLETO)
 // ===================================
 model Product {
   id               String       @id @default(uuid())
+  
   name             String
   description      String?
   priceInCents     Int
   isAvailable      Boolean      @default(true)
   
-  // ✅ CAMPOS ESSENCIAIS PARA O FRONTEND
   imageUrl         String?
   category         String?      @default("WEALTH")
   deliveryMethod   String       @default("PAYLURE_MEMBERS")
   paymentType      String       @default("ONE_TIME")
   
-  // ✅ CAMPO CRÍTICO: Armazena os módulos e aulas do curso
-  content          Json?        // Array de módulos com aulas
-  
-  // Configuração do Checkout (Visual, Cores, Pixels)
-  checkoutConfig   Json?
+  // Conteúdo e Configuração
+  content          Json?        // Módulos e aulas
+  checkoutConfig   Json?        // Visual do checkout
 
+  // ✅ NOVOS CAMPOS PARA O MARKETPLACE E AFILIAÇÃO
+  isAffiliationEnabled Boolean  @default(false)
+  showInMarketplace    Boolean  @default(false)
+  commissionPercent    Float?   @default(0)
+  affiliationType      String?  @default("OPEN") // OPEN ou APPROVAL
+  materialLink         String?
+  
+  // Co-produção
+  coproductionEmail    String?
+  coproductionPercent  Float?   @default(0)
+
+  // Relacionamentos
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
   
@@ -234,6 +244,7 @@ model Product {
   
   @@index([merchantId])
   @@index([deliveryMethod])
+  @@index([showInMarketplace]) // Index para busca rápida no marketplace
 }
 
 // ===================================
@@ -280,10 +291,8 @@ model Deposit {
 
   merchant             Merchant?   @relation(fields: [merchantId], references: [id])
   merchantId           String?
-  
   paymentLink          PaymentLink? @relation(fields: [paymentLinkId], references: [id])
   paymentLinkId        String?
-  
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 }
@@ -420,12 +429,10 @@ model Transaction {
   customerEmail    String?
   customerDoc      String?
   customerPhone    String?
-  
   paymentMethod    String?
   pixQrCode        String?      @db.Text
   pixCopyPaste     String?      @db.Text
   externalId       String?
-
   referenceId      String?
   referenceType    String?
   metadata         Json?

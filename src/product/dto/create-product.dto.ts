@@ -12,10 +12,8 @@ export class CreateProductDto {
 
   @IsNumber()
   @Min(0.01)
-  price: number; // Em REAIS
+  price: number; // Valor em REAIS que vem do front
 
-  // ✅ NOVOS CAMPOS PARA SUPORTE TOTAL AO FRONTEND
-  
   @IsString()
   @IsOptional()
   imageUrl?: string;
@@ -36,7 +34,7 @@ export class CreateProductDto {
   @IsOptional()
   checkoutConfig?: any;
 
-  // Lógica de Marketplace e Afiliação
+  // ✅ NOVOS CAMPOS ACEITOS NA API
   @IsBoolean()
   @IsOptional()
   isAffiliationEnabled?: boolean;
@@ -45,7 +43,26 @@ export class CreateProductDto {
   @IsOptional()
   showInMarketplace?: boolean;
 
-  // ✅ NOVO: Campo content para módulos e aulas da área de membros
+  @IsNumber()
+  @IsOptional()
+  commissionPercent?: number;
+
+  @IsString()
+  @IsOptional()
+  affiliationType?: string;
+
+  @IsString()
+  @IsOptional()
+  materialLink?: string;
+
+  @IsString()
+  @IsOptional()
+  coproductionEmail?: string;
+
+  @IsNumber()
+  @IsOptional()
+  coproductionPercent?: number;
+
   @IsOptional()
   content?: any;
 }

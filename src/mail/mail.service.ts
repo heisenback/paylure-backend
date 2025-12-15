@@ -1,40 +1,95 @@
 // src/mail/mail.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import * as nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private transporter: nodemailer.Transporter;
+  private resend: Resend;
 
   constructor() {
-    // Configuração do transportador de email
-    this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-    });
+    // Inicializa o Resend com sua chave API
+    // (Idealmente mantenha no .env, mas deixei o fallback aqui para funcionar direto pra você)
+    this.resend = new Resend(process.env.RESEND_API_KEY || 're_fwiSDVRK_CsvXUcWeX6ddCuG6aMPHqf37');
   }
+
+  /**
+   * Define quem está enviando o e-mail.
+   * Se você já verificou o domínio 'paylure.com.br' no Resend, ele usa o oficial.
+   * Se não, usa o 'onboarding' para testes.
+   */
+  private getFromEmail(): string {
+    // DICA: Mude para true quando tiver configurado o DNS do paylure.com.br no Resend
+    const isDomainVerified = false; 
+    
+    return isDomainVerified 
+      ? 'Paylure <noreply@paylure.com.br>' 
+      : 'Paylure <onboarding@resend.dev>';
+  }
+
+  // ======================================================
+  // 📦 E-MAILS DE PRODUTO (NOVO - Para entregar o curso)
+  // ======================================================
+
+  async sendAccessEmail(email: string, productName: string, accessLink: string, password?: string) {
+    const subject = `Seu acesso chegou! - ${productName}`;
+    
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
+        <h2 style="color: #7c3aed; text-align: center;">Parabéns pela compra!</h2>
+        
+        <p style="font-size: 16px; line-height: 1.6;">
+          Olá! O seu acesso ao conteúdo <strong>${productName}</strong> já está liberado.
+        </p>
+
+        <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #7c3aed;">
+          <p style="margin: 0 0 10px 0;"><strong>Seus dados de acesso:</strong></p>
+          <p style="margin: 0;">📧 Login: <strong>${email}</strong></p>
+          ${password ? `<p style="margin: 5px 0 0 0;">🔑 Senha Provisória: <strong>${password}</strong></p>` : ''}
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${accessLink}" style="background-color: #7c3aed; color: white; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 16px;">
+            Acessar Área de Membros
+          </a>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0;" />
+        <p style="color: #666; font-size: 12px; text-align: center;">Equipe Paylure</p>
+      </div>
+    `;
+
+    try {
+      await this.resend.emails.send({
+        from: this.getFromEmail(),
+        to: [email],
+        subject: subject,
+        html: html,
+      });
+      this.logger.log(`✅ E-mail de acesso enviado para: ${email}`);
+    } catch (error) {
+      this.logger.error(`❌ Erro ao enviar acesso para ${email}:`, error);
+    }
+  }
+
+  // ======================================================
+  // 🔐 E-MAILS DE SISTEMA (AUTH/API)
+  // ======================================================
 
   /**
    * Envia email de recuperação de senha
    */
   async sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<void> {
     try {
-      await this.transporter.sendMail({
-        from: `"Paylure" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
-        to,
+      await this.resend.emails.send({
+        from: this.getFromEmail(),
+        to: [to],
         subject: '🔐 Recuperação de Senha - Paylure',
         html: this.getPasswordResetTemplate(name, resetUrl),
       });
-
       this.logger.log(`✅ Email de reset enviado para: ${to}`);
     } catch (error) {
-      this.logger.error(`❌ Erro ao enviar email para ${to}:`, error);
+      this.logger.error(`❌ Erro ao enviar reset para ${to}:`, error);
       throw error;
     }
   }
@@ -44,16 +99,15 @@ export class MailService {
    */
   async sendPasswordChangedEmail(to: string, name: string): Promise<void> {
     try {
-      await this.transporter.sendMail({
-        from: `"Paylure" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
-        to,
+      await this.resend.emails.send({
+        from: this.getFromEmail(),
+        to: [to],
         subject: '✅ Senha Alterada com Sucesso - Paylure',
         html: this.getPasswordChangedTemplate(name),
       });
-
       this.logger.log(`✅ Email de confirmação enviado para: ${to}`);
     } catch (error) {
-      this.logger.error(`❌ Erro ao enviar email para ${to}:`, error);
+      this.logger.error(`❌ Erro ao enviar confirmação para ${to}:`, error);
     }
   }
 
@@ -62,16 +116,15 @@ export class MailService {
    */
   async send2FACode(to: string, name: string, code: string): Promise<void> {
     try {
-      await this.transporter.sendMail({
-        from: `"Paylure" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
-        to,
+      await this.resend.emails.send({
+        from: this.getFromEmail(),
+        to: [to],
         subject: '🔒 Seu Código de Verificação - Paylure',
         html: this.get2FACodeTemplate(name, code),
       });
-
       this.logger.log(`✅ Código 2FA enviado para: ${to}`);
     } catch (error) {
-      this.logger.error(`❌ Erro ao enviar código 2FA para ${to}:`, error);
+      this.logger.error(`❌ Erro ao enviar 2FA para ${to}:`, error);
       throw error;
     }
   }
@@ -79,26 +132,18 @@ export class MailService {
   /**
    * Envia credenciais API por email
    */
-  async sendAPICredentials(
-    to: string,
-    name: string,
-    apiKey: string,
-    apiSecret: string,
-  ): Promise<void> {
+  async sendAPICredentials(to: string, name: string, apiKey: string, apiSecret: string): Promise<void> {
     try {
-      // Se o secret está mascarado, é um lembrete
       const isReminder = apiSecret.includes('•');
-      
-      await this.transporter.sendMail({
-        from: `"Paylure" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
-        to,
+      await this.resend.emails.send({
+        from: this.getFromEmail(),
+        to: [to],
         subject: isReminder ? '🔑 Suas Credenciais de API - Paylure' : '🔑 Novas Credenciais de API - Paylure',
         html: isReminder ? 
           this.getAPICredentialsReminderTemplate(name, apiKey) : 
           this.getAPICredentialsTemplate(name, apiKey, apiSecret),
       });
-
-      this.logger.log(`✅ ${isReminder ? 'Lembrete' : 'Credenciais'} enviado(as) para: ${to}`);
+      this.logger.log(`✅ Credenciais enviadas para: ${to}`);
     } catch (error) {
       this.logger.error(`❌ Erro ao enviar credenciais para ${to}:`, error);
       throw error;
@@ -106,46 +151,25 @@ export class MailService {
   }
 
   // ===================================
-  // TEMPLATES DE EMAIL
+  // TEMPLATES HTML (Mantidos do Original)
   // ===================================
 
   private getPasswordResetTemplate(name: string, resetUrl: string): string {
     return `
       <!DOCTYPE html>
       <html>
-      <head>
-        <meta charset="UTF-8">
-        <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #1e293b 0%, #4c1d95 100%); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-          .header { background: linear-gradient(90deg, #9333ea 0%, #06b6d4 100%); padding: 40px; text-align: center; }
-          .header h1 { color: white; margin: 0; font-size: 32px; }
-          .content { padding: 40px; color: #e9d5ff; }
-          .button { display: inline-block; background: linear-gradient(90deg, #10b981 0%, #14b8a6 100%); color: white; padding: 16px 32px; text-decoration: none; border-radius: 12px; font-weight: bold; margin: 20px 0; }
-          .footer { padding: 20px 40px; text-align: center; color: rgba(233, 213, 255, 0.5); font-size: 14px; border-top: 1px solid rgba(168, 85, 247, 0.2); }
-          .warning { background: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; padding: 16px; border-radius: 8px; margin: 20px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>🔐 Recuperação de Senha</h1>
+      <body style="font-family: sans-serif; background: #0f172a; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #1e293b; border-radius: 16px; overflow: hidden; color: #e9d5ff;">
+          <div style="background: linear-gradient(90deg, #9333ea 0%, #06b6d4 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0;">🔐 Recuperação</h1>
           </div>
-          <div class="content">
+          <div style="padding: 40px;">
             <p>Olá, <strong>${name}</strong>!</p>
-            <p>Recebemos uma solicitação para redefinir a senha da sua conta Paylure.</p>
-            <p>Clique no botão abaixo para criar uma nova senha:</p>
+            <p>Recebemos uma solicitação para redefinir sua senha.</p>
             <center>
-              <a href="${resetUrl}" class="button">Redefinir Senha</a>
+              <a href="${resetUrl}" style="display: inline-block; background: #10b981; color: white; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 20px 0;">Redefinir Senha</a>
             </center>
-            <div class="warning">
-              <p style="margin: 0;"><strong>⚠️ Atenção:</strong></p>
-              <p style="margin: 8px 0 0 0;">Este link expira em 1 hora e só pode ser usado uma vez.</p>
-            </div>
-            <p>Se você não solicitou esta alteração, ignore este email. Sua senha permanecerá segura.</p>
-          </div>
-          <div class="footer">
-            <p>© ${new Date().getFullYear()} Paylure. Todos os direitos reservados.</p>
+            <p style="font-size: 12px; color: #94a3b8;">Link expira em 1 hora.</p>
           </div>
         </div>
       </body>
@@ -157,32 +181,14 @@ export class MailService {
     return `
       <!DOCTYPE html>
       <html>
-      <head>
-        <meta charset="UTF-8">
-        <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #1e293b 0%, #4c1d95 100%); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-          .header { background: linear-gradient(90deg, #10b981 0%, #14b8a6 100%); padding: 40px; text-align: center; }
-          .header h1 { color: white; margin: 0; font-size: 32px; }
-          .content { padding: 40px; color: #e9d5ff; }
-          .footer { padding: 20px 40px; text-align: center; color: rgba(233, 213, 255, 0.5); font-size: 14px; border-top: 1px solid rgba(168, 85, 247, 0.2); }
-          .success { background: rgba(16, 185, 129, 0.1); border-left: 4px solid #10b981; padding: 16px; border-radius: 8px; margin: 20px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>✅ Senha Alterada</h1>
+      <body style="font-family: sans-serif; background: #0f172a; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #1e293b; border-radius: 16px; overflow: hidden; color: #e9d5ff;">
+          <div style="background: linear-gradient(90deg, #10b981 0%, #14b8a6 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0;">✅ Senha Alterada</h1>
           </div>
-          <div class="content">
+          <div style="padding: 40px;">
             <p>Olá, <strong>${name}</strong>!</p>
-            <div class="success">
-              <p style="margin: 0;">Sua senha foi alterada com sucesso!</p>
-            </div>
-            <p>Se você não realizou esta alteração, entre em contato com nosso suporte imediatamente.</p>
-          </div>
-          <div class="footer">
-            <p>© ${new Date().getFullYear()} Paylure. Todos os direitos reservados.</p>
+            <p>Sua senha foi alterada com sucesso. Se não foi você, contate o suporte.</p>
           </div>
         </div>
       </body>
@@ -194,34 +200,17 @@ export class MailService {
     return `
       <!DOCTYPE html>
       <html>
-      <head>
-        <meta charset="UTF-8">
-        <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #1e293b 0%, #4c1d95 100%); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-          .header { background: linear-gradient(90deg, #9333ea 0%, #06b6d4 100%); padding: 40px; text-align: center; }
-          .header h1 { color: white; margin: 0; font-size: 32px; }
-          .content { padding: 40px; color: #e9d5ff; }
-          .code-box { background: rgba(168, 85, 247, 0.1); border: 2px solid #a855f7; padding: 24px; border-radius: 12px; text-align: center; margin: 20px 0; }
-          .code { font-size: 48px; font-weight: bold; color: #a855f7; letter-spacing: 8px; }
-          .footer { padding: 20px 40px; text-align: center; color: rgba(233, 213, 255, 0.5); font-size: 14px; border-top: 1px solid rgba(168, 85, 247, 0.2); }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>🔒 Código de Verificação</h1>
+      <body style="font-family: sans-serif; background: #0f172a; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #1e293b; border-radius: 16px; overflow: hidden; color: #e9d5ff;">
+          <div style="background: linear-gradient(90deg, #9333ea 0%, #06b6d4 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0;">🔒 Verificação</h1>
           </div>
-          <div class="content">
+          <div style="padding: 40px; text-align: center;">
             <p>Olá, <strong>${name}</strong>!</p>
-            <p>Use o código abaixo para completar seu login:</p>
-            <div class="code-box">
-              <div class="code">${code}</div>
+            <div style="background: rgba(168, 85, 247, 0.1); border: 2px solid #a855f7; padding: 20px; border-radius: 12px; margin: 20px 0;">
+              <span style="font-size: 40px; font-weight: bold; color: #a855f7; letter-spacing: 5px;">${code}</span>
             </div>
-            <p style="text-align: center; color: rgba(233, 213, 255, 0.7);">Este código expira em 5 minutos</p>
-          </div>
-          <div class="footer">
-            <p>© ${new Date().getFullYear()} Paylure. Todos os direitos reservados.</p>
+            <p style="font-size: 12px; color: #94a3b8;">Válido por 5 minutos.</p>
           </div>
         </div>
       </body>
@@ -233,54 +222,20 @@ export class MailService {
     return `
       <!DOCTYPE html>
       <html>
-      <head>
-        <meta charset="UTF-8">
-        <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #1e293b 0%, #4c1d95 100%); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-          .header { background: linear-gradient(90deg, #9333ea 0%, #06b6d4 100%); padding: 40px; text-align: center; }
-          .header h1 { color: white; margin: 0; font-size: 32px; }
-          .content { padding: 40px; color: #e9d5ff; }
-          .credentials { background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(168, 85, 247, 0.2); padding: 20px; border-radius: 12px; margin: 20px 0; }
-          .cred-item { margin: 16px 0; }
-          .cred-label { color: rgba(216, 180, 254, 0.7); font-size: 14px; margin-bottom: 8px; }
-          .cred-value { background: rgba(168, 85, 247, 0.1); padding: 12px; border-radius: 8px; font-family: monospace; word-break: break-all; color: #a855f7; }
-          .footer { padding: 20px 40px; text-align: center; color: rgba(233, 213, 255, 0.5); font-size: 14px; border-top: 1px solid rgba(168, 85, 247, 0.2); }
-          .warning { background: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444; padding: 16px; border-radius: 8px; margin: 20px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>🔑 Novas Credenciais de API</h1>
+      <body style="font-family: sans-serif; background: #0f172a; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #1e293b; border-radius: 16px; overflow: hidden; color: #e9d5ff;">
+          <div style="background: linear-gradient(90deg, #9333ea 0%, #06b6d4 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0;">🔑 API Credentials</h1>
           </div>
-          <div class="content">
+          <div style="padding: 40px;">
             <p>Olá, <strong>${name}</strong>!</p>
-            <p>Suas novas credenciais de API foram geradas com sucesso:</p>
-            
-            <div class="credentials">
-              <div class="cred-item">
-                <div class="cred-label">Client ID (API Key)</div>
-                <div class="cred-value">${apiKey}</div>
-              </div>
-              <div class="cred-item">
-                <div class="cred-label">Client Secret (API Secret)</div>
-                <div class="cred-value">${apiSecret}</div>
-              </div>
+            <div style="background: #0f172a; padding: 20px; border-radius: 8px; font-family: monospace;">
+              <p style="margin: 5px 0; color: #94a3b8;">Client ID:</p>
+              <p style="margin: 0 0 15px 0; color: #a855f7;">${apiKey}</p>
+              <p style="margin: 5px 0; color: #94a3b8;">Client Secret:</p>
+              <p style="margin: 0; color: #a855f7;">${apiSecret}</p>
             </div>
-
-            <div class="warning">
-              <p style="margin: 0;"><strong>⚠️ IMPORTANTE:</strong></p>
-              <ul style="margin: 8px 0 0 0; padding-left: 20px;">
-                <li>Guarde estas credenciais em local seguro</li>
-                <li>Nunca compartilhe seu Secret com terceiros</li>
-                <li>Este é o único momento que você verá o Secret completo</li>
-                <li>As credenciais antigas foram invalidadas</li>
-              </ul>
-            </div>
-          </div>
-          <div class="footer">
-            <p>© ${new Date().getFullYear()} Paylure. Todos os direitos reservados.</p>
+            <p style="color: #ef4444; font-size: 12px; margin-top: 20px;">⚠️ Guarde o Secret em local seguro. Ele não será exibido novamente.</p>
           </div>
         </div>
       </body>
@@ -292,45 +247,17 @@ export class MailService {
     return `
       <!DOCTYPE html>
       <html>
-      <head>
-        <meta charset="UTF-8">
-        <style>
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; margin: 0; padding: 0; }
-          .container { max-width: 600px; margin: 40px auto; background: linear-gradient(135deg, #1e293b 0%, #4c1d95 100%); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-          .header { background: linear-gradient(90deg, #9333ea 0%, #06b6d4 100%); padding: 40px; text-align: center; }
-          .header h1 { color: white; margin: 0; font-size: 32px; }
-          .content { padding: 40px; color: #e9d5ff; }
-          .credentials { background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(168, 85, 247, 0.2); padding: 20px; border-radius: 12px; margin: 20px 0; }
-          .cred-item { margin: 16px 0; }
-          .cred-label { color: rgba(216, 180, 254, 0.7); font-size: 14px; margin-bottom: 8px; }
-          .cred-value { background: rgba(168, 85, 247, 0.1); padding: 12px; border-radius: 8px; font-family: monospace; word-break: break-all; color: #a855f7; }
-          .footer { padding: 20px 40px; text-align: center; color: rgba(233, 213, 255, 0.5); font-size: 14px; border-top: 1px solid rgba(168, 85, 247, 0.2); }
-          .warning { background: rgba(251, 191, 36, 0.1); border-left: 4px solid #fbbf24; padding: 16px; border-radius: 8px; margin: 20px 0; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>🔑 Suas Credenciais de API</h1>
+      <body style="font-family: sans-serif; background: #0f172a; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #1e293b; border-radius: 16px; overflow: hidden; color: #e9d5ff;">
+          <div style="background: linear-gradient(90deg, #9333ea 0%, #06b6d4 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0;">🔑 API Reminder</h1>
           </div>
-          <div class="content">
+          <div style="padding: 40px;">
             <p>Olá, <strong>${name}</strong>!</p>
-            <p>Aqui está seu Client ID (API Key):</p>
-            
-            <div class="credentials">
-              <div class="cred-item">
-                <div class="cred-label">Client ID (API Key)</div>
-                <div class="cred-value">${apiKey}</div>
-              </div>
+            <p>Seu Client ID é:</p>
+            <div style="background: #0f172a; padding: 20px; border-radius: 8px; font-family: monospace; color: #a855f7;">
+              ${apiKey}
             </div>
-
-            <div class="warning">
-              <p style="margin: 0;"><strong>⚠️ SOBRE O CLIENT SECRET:</strong></p>
-              <p style="margin: 8px 0 0 0;">Por segurança, seu Client Secret está criptografado e não pode ser recuperado. Se você perdeu o Secret, será necessário regenerar novas credenciais no painel.</p>
-            </div>
-          </div>
-          <div class="footer">
-            <p>© ${new Date().getFullYear()} Paylure. Todos os direitos reservados.</p>
           </div>
         </div>
       </body>
