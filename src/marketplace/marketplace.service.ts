@@ -34,17 +34,22 @@ export class MarketplaceService {
   }
 
   /**
-   * 🚨 CORREÇÃO TS2551: Adicionado INCLUDE para que o Controller possa acessar .product
+   * ✅ CORREÇÃO: Agora buscamos a Imagem, Descrição e Configurações para exibir no card
    */
   async findAllAvailable() {
     return this.prisma.marketplaceProduct.findMany({
       where: { status: 'AVAILABLE' },
       include: {
-        product: { // 🚨 ESSENCIAL: Incluir o produto para que o Controller possa pegar o nome/preço
+        product: { 
             select: {
                 name: true,
                 priceInCents: true,
                 merchantId: true,
+                // --- CAMPOS ADICIONADOS ---
+                description: true,   // Para mostrar o texto
+                imageUrl: true,      // Para mostrar a foto
+                category: true,      // Para o filtro
+                checkoutConfig: true // Fallback de imagem
             }
         },
       },

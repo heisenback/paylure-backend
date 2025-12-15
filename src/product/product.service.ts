@@ -88,7 +88,9 @@ export class ProductService {
                 data: {
                     productId: newProduct.id,
                     status: 'AVAILABLE',
-                    commissionRate: commPercent / 100 
+                    // ✅ CORREÇÃO: Salva o número inteiro (50) e não decimal (0.5)
+                    // Isso conserta o cálculo de "R$ 1,00" virando "R$ 100,00"
+                    commissionRate: commPercent 
                 }
             }).catch(e => this.logger.warn(`Erro ao criar marketplace entry: ${e.message}`));
         }
@@ -197,7 +199,8 @@ export class ProductService {
          if (exists) {
              await this.prisma.marketplaceProduct.update({
                 where: { productId: id },
-                data: { commissionRate: Number(dto.commissionPercent) / 100 }
+                // ✅ CORREÇÃO: Salva o número inteiro aqui também
+                data: { commissionRate: Number(dto.commissionPercent) } 
              });
          } else if (updated.showInMarketplace) {
              // Se não existe mas agora está no marketplace, cria
@@ -205,7 +208,8 @@ export class ProductService {
                 data: {
                     productId: id,
                     status: 'AVAILABLE',
-                    commissionRate: Number(dto.commissionPercent) / 100
+                    // ✅ CORREÇÃO: Salva o número inteiro
+                    commissionRate: Number(dto.commissionPercent)
                 }
              });
          }
