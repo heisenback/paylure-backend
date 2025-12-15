@@ -22,6 +22,7 @@ export class CreateProductDto {
   @IsOptional()
   category?: string;
 
+  // --- NOVOS CAMPOS (ENTREGA & PAGAMENTO) ---
   @IsString()
   @IsOptional()
   deliveryMethod?: string;
@@ -30,11 +31,27 @@ export class CreateProductDto {
   @IsOptional()
   paymentType?: string;
 
+  @IsString()
+  @IsOptional()
+  subscriptionPeriod?: string;
+
+  @IsString()
+  @IsOptional()
+  deliveryUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  fileUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  fileName?: string;
+
   @IsObject()
   @IsOptional()
   checkoutConfig?: any;
 
-  // ✅ NOVOS CAMPOS PARA O MARKETPLACE
+  // --- MARKETPLACE & AFILIAÇÃO ---
   @IsBoolean()
   @IsOptional()
   isAffiliationEnabled?: boolean;
@@ -55,7 +72,7 @@ export class CreateProductDto {
   @IsOptional()
   materialLink?: string;
 
-  // ✅ CO-PRODUÇÃO
+  // --- CO-PRODUÇÃO ---
   @IsString()
   @IsOptional()
   coproductionEmail?: string;
@@ -64,7 +81,7 @@ export class CreateProductDto {
   @IsOptional()
   coproductionPercent?: number;
 
-  // ✅ CONTEÚDO (AULAS)
+  // --- CONTEÚDO (CURSO) ---
   @IsOptional()
   content?: any;
 }

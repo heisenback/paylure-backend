@@ -11,14 +11,13 @@ export class ProductService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  // --- CREATE (ATUALIZADO - ELITE) ---
+  // --- CREATE (AGORA SALVA TUDO) ---
   async create(dto: CreateProductDto, merchantId: string): Promise<Product> {
     const priceInCents = Math.round(dto.price * 100);
 
-    // 1. Prepara o Config do Checkout (Garante que a imagem vá para o branding)
+    // 1. Prepara o Config do Checkout
     let finalCheckoutConfig = dto.checkoutConfig || {};
     
-    // Se enviou imagem no formulário, garante que ela esteja também no branding do checkout
     if (dto.imageUrl) {
         finalCheckoutConfig = {
             ...finalCheckoutConfig,
@@ -28,12 +27,11 @@ export class ProductService {
                 productImage: dto.imageUrl,
                 brandName: dto.title
             },
-            // Salva delivery method no config também para backup/redundância
             deliveryMethod: dto.deliveryMethod || 'PAYLURE_MEMBERS'
         };
     }
 
-    // 2. Cria o Produto usando as novas colunas
+    // 2. Cria o Produto mapeando TODOS os campos do DTO para o Banco
     const newProduct = await this.prisma.product.create({
       data: {
         name: dto.title,
@@ -41,33 +39,53 @@ export class ProductService {
         priceInCents: priceInCents,
         merchantId: merchantId,
         
-        // ✅ Salvando nas colunas novas
+        // Imagem e Categoria
         imageUrl: dto.imageUrl,
         category: dto.category || 'WEALTH',
+        
+        // ✅ Entrega e Pagamento
         deliveryMethod: dto.deliveryMethod || 'PAYLURE_MEMBERS',
         paymentType: dto.paymentType || 'ONE_TIME',
+        subscriptionPeriod: dto.subscriptionPeriod,
         
-        // ✅ NOVO: Campo content (módulos e aulas)
+        // ✅ Arquivos e Links Externos
+        deliveryUrl: dto.deliveryUrl,
+        fileUrl: dto.fileUrl,
+        fileName: dto.fileName,
+        
+        // ✅ Marketplace e Afiliação
+        isAffiliationEnabled: dto.isAffiliationEnabled || false,
+        showInMarketplace: dto.showInMarketplace || false,
+        commissionPercent: dto.commissionPercent ? Number(dto.commissionPercent) : 0,
+        affiliationType: dto.affiliationType,
+        materialLink: dto.materialLink,
+        
+        // ✅ Co-produção
+        coproductionEmail: dto.coproductionEmail,
+        coproductionPercent: dto.coproductionPercent ? Number(dto.coproductionPercent) : 0,
+
+        // Conteúdo e Config
         content: dto.content || null,
-        
         checkoutConfig: finalCheckoutConfig,
       },
     });
 
-    // 3. Lógica de Marketplace (Se habilitado no frontend)
+    // 3. Cria entrada na tabela MarketplaceProduct se necessário
     if (dto.showInMarketplace) {
         await this.prisma.marketplaceProduct.create({
             data: {
                 productId: newProduct.id,
                 status: 'AVAILABLE',
-                commissionRate: 0.5 // Padrão 50%, se precisar customizar, adicione ao DTO
+                commissionRate: (dto.commissionPercent || 0) / 100 // Salva como decimal (ex: 0.5 para 50%)
             }
-        }).catch(e => this.logger.warn('Erro ao criar entrada no marketplace', e));
+        }).catch(e => this.logger.warn('Erro ao criar entrada no marketplace (pode já existir)', e));
     }
 
-    this.logger.log(`Produto '${newProduct.name}' criado com sucesso (Delivery: ${newProduct.deliveryMethod})`);
+    this.logger.log(`Produto '${newProduct.name}' criado com sucesso.`);
     return newProduct;
   }
+
+  // --- MÉTODOS PADRÃO ---
 
   async findAllByMerchant(merchantId: string): Promise<Product[]> {
     return this.prisma.product.findMany({
@@ -85,7 +103,6 @@ export class ProductService {
     if (!product) throw new NotFoundException('Produto não encontrado.');
     if (product.merchantId !== merchantId) throw new ForbiddenException('Sem permissão.');
 
-    // Tenta remover dependências do marketplace antes de deletar o produto
     try {
         await this.prisma.marketplaceProduct.deleteMany({ where: { productId } });
     } catch (e) {
@@ -95,44 +112,40 @@ export class ProductService {
     await this.prisma.product.delete({ where: { id: productId } });
   }
 
-  // --- UPDATE (✅ CORRIGIDO PARA ACEITAR CONTENT) ---
+  // --- UPDATE (ATUALIZADO) ---
   async update(id: string, merchantId: string, dto: UpdateProductDto) {
     const product = await this.prisma.product.findUnique({ where: { id } });
 
     if (!product) throw new NotFoundException('Produto não encontrado');
     if (product.merchantId !== merchantId) throw new ForbiddenException('Sem permissão');
 
-    const data: any = { ...dto };
+    // Mapeia DTO para dados do Prisma
+    const data: any = { 
+        ...dto,
+        // Remove campos que precisam de conversão manual
+        price: undefined, 
+        title: undefined 
+    };
     
     // Converte Preço
     if (dto.price !== undefined) {
         data.priceInCents = Math.round(dto.price * 100);
-        delete data.price;
     }
 
     // Mapeia title -> name
     if (dto.title) {
         data.name = dto.title;
-        delete data.title;
     }
 
-    // ✅ CRÍTICO: Aceita o campo content (módulos e aulas)
-    if (dto.content !== undefined) {
-        // Se vier como string, mantém string
-        // Se vier como objeto, o Prisma converte automaticamente para JSON
-        data.content = dto.content;
-        this.logger.log(`📦 Salvando conteúdo do curso para produto ${id}`);
-    }
-
-    // Se atualizar a imagem, atualiza o checkoutConfig automaticamente
-    if (data.imageUrl) {
+    // Se atualizar a imagem, atualiza o checkoutConfig
+    if (dto.imageUrl) {
         const currentConfig = (product.checkoutConfig as any) || {};
         data.checkoutConfig = {
             ...currentConfig,
             branding: {
                 ...(currentConfig.branding || {}),
-                dashboardCover: data.imageUrl,
-                productImage: data.imageUrl,
+                dashboardCover: dto.imageUrl,
+                productImage: dto.imageUrl,
             }
         };
     }
@@ -141,15 +154,6 @@ export class ProductService {
         where: { id },
         data: data,
     });
-    
-    this.logger.log(`✅ Produto ${id} atualizado. Novo preço: R$ ${(updated.priceInCents / 100).toFixed(2)}`);
-    
-    // Log extra se salvou conteúdo
-    if (dto.content) {
-        const contentData = typeof dto.content === 'string' ? JSON.parse(dto.content) : dto.content;
-        const moduleCount = Array.isArray(contentData) ? contentData.length : 0;
-        this.logger.log(`📚 Conteúdo salvo: ${moduleCount} módulo(s)`);
-    }
     
     return updated;
   }
