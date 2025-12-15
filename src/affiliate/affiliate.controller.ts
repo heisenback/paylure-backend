@@ -1,19 +1,15 @@
 // src/affiliate/affiliate.controller.ts
-import { Controller, Post, Body, UseGuards, Get, HttpCode, HttpStatus, ForbiddenException } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Patch, Param, HttpCode, HttpStatus, ForbiddenException } from '@nestjs/common';
 import { AffiliateService } from './affiliate.service';
 import { RequestAffiliateDto } from './dto/request-affiliate.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { GetUser } from 'src/auth/decorators/get-user.decorator';
 import type { User } from '@prisma/client';
 
-// 🚨 CORREÇÃO: Usamos o nome base 'affiliates', o main.ts adicionará /api/
 @Controller('affiliates')
 export class AffiliateController {
   constructor(private readonly affiliateService: AffiliateService) {}
 
-  /**
-   * POST /api/affiliates/request
-   */
   @Post('request')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.CREATED)
@@ -21,21 +17,16 @@ export class AffiliateController {
     @Body() dto: RequestAffiliateDto,
     @GetUser() user: User
   ) {
-    // O ID do usuário logado é o promoterId
     dto.promoterId = user.id;
-
-    const affiliation = await this.affiliateService.requestAffiliation(dto);
-
+    const result = await this.affiliateService.requestAffiliation(dto);
+    
     return {
       success: true,
-      message: 'Solicitação de afiliação processada com sucesso.',
-      data: affiliation,
+      message: result.message,
+      data: result,
     };
   }
 
-  /**
-   * GET /api/affiliates/my-products
-   */
   @Get('my-products')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
@@ -45,12 +36,29 @@ export class AffiliateController {
     if (!user.merchant?.id) {
       throw new ForbiddenException('Apenas Merchants (Criadores) podem acessar esta lista.');
     }
-
     const affiliates = await this.affiliateService.findAllByMerchant(user.merchant.id);
+    return { success: true, data: affiliates };
+  }
 
-    return {
-      success: true,
-      data: affiliates,
-    };
+  // ✅ NOVA ROTA: Aprovar ou Bloquear
+  @Patch(':id')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async updateStatus(
+      @Param('id') id: string,
+      @Body('status') status: string,
+      @GetUser() user: any
+  ) {
+      if (!user.merchant?.id) {
+          throw new ForbiddenException('Acesso negado.');
+      }
+      
+      const updated = await this.affiliateService.updateStatus(id, status, user.merchant.id);
+      
+      return {
+          success: true,
+          message: `Status atualizado para ${status}`,
+          data: updated
+      };
   }
 }

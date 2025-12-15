@@ -12,7 +12,8 @@ import {
   HttpCode, 
   Logger, 
   ForbiddenException,
-  NotFoundException 
+  NotFoundException,
+  Query // ✅ Adicionado para ler ?offerId=
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -27,14 +28,30 @@ export class ProductController {
   constructor(private readonly productService: ProductService) {}
 
   // ==================================================================
-  // ROTA PÚBLICA (Checkout)
+  // ✅ ROTA PÚBLICA (CHECKOUT) - COM SUPORTE A MULTI-OFERTAS
   // ==================================================================
   @Get('public/:id')
-  async findOnePublic(@Param('id') id: string) {
+  async findOnePublic(
+    @Param('id') id: string,
+    @Query('offerId') offerId?: string // ✅ Lê o ID da oferta da URL
+  ) {
     const product = await this.productService.findById(id);
     
     if (!product) {
         throw new NotFoundException('Produto não encontrado ou indisponível.');
+    }
+
+    // Preço padrão é o do produto principal
+    let finalPrice = product.priceInCents;
+    let offerName = null;
+
+    // 🎯 SE TIVER OFERTA NA URL, SUBSTITUI O PREÇO
+    if (offerId && product.offers) {
+        const selectedOffer = product.offers.find(o => o.id === offerId);
+        if (selectedOffer) {
+            finalPrice = selectedOffer.priceInCents;
+            offerName = selectedOffer.name; // Ex: "Plano Anual"
+        }
     }
     
     return {
@@ -43,17 +60,18 @@ export class ProductController {
         id: product.id,
         title: product.name,
         description: product.description,
-        amount: product.priceInCents,
+        amount: finalPrice, // ✅ Preço Dinâmico (Principal ou Oferta)
+        offerName: offerName, // ✅ Nome da oferta (para mostrar no checkout)
         checkoutConfig: product.checkoutConfig,
         paymentType: product.paymentType,
         subscriptionPeriod: product.subscriptionPeriod,
-        imageUrl: product.imageUrl // Importante para o checkout
+        imageUrl: product.imageUrl
       }
     };
   }
 
   // ==================================================================
-  // ROTAS PROTEGIDAS (Dashboard)
+  // ROTAS PROTEGIDAS (DASHBOARD)
   // ==================================================================
 
   @Post()
@@ -72,7 +90,7 @@ export class ProductController {
     return {
       success: true,
       message: 'Produto criado com sucesso.',
-      data: product, // Retorna o objeto completo
+      data: product,
     };
   }
 
@@ -86,33 +104,20 @@ export class ProductController {
 
     const products = await this.productService.findAllByMerchant(user.merchant.id);
 
-    // ✅ CORREÇÃO: Mapeando TODOS os campos para o Frontend
-    // Antes faltava isAffiliationEnabled, showInMarketplace, etc.
     return {
       success: true,
       data: products.map((p) => ({
         id: p.id,
-        title: p.name, // O Front usa 'title'
+        title: p.name,
         name: p.name,
         description: p.description,
-        
-        // Preços
         amount: p.priceInCents,
         price: p.priceInCents / 100,
-        
-        // Status
         isAvailable: p.isAvailable,
-        createdAt: p.createdAt,
-        updatedAt: p.updatedAt,
-
-        // Imagens e Configurações
         imageUrl: p.imageUrl,
-        image: p.imageUrl, // Fallback
         category: p.category,
-        checkoutConfig: p.checkoutConfig,
-        content: p.content,
-
-        // Entrega
+        
+        // Configs
         deliveryMethod: p.deliveryMethod,
         paymentType: p.paymentType,
         subscriptionPeriod: p.subscriptionPeriod,
@@ -120,17 +125,23 @@ export class ProductController {
         fileUrl: p.fileUrl,
         fileName: p.fileName,
         file: p.fileUrl,
+        checkoutConfig: p.checkoutConfig,
+        content: p.content,
 
-        // ✅ AQUI ESTAVA FALTANDO: Campos de Afiliação e Marketplace
+        // Marketplace e Ofertas
+        offers: p.offers, // ✅ Importante para o front listar
+        coupons: p.coupons,
+        salesPageUrl: p.salesPageUrl,
         isAffiliationEnabled: p.isAffiliationEnabled,
         showInMarketplace: p.showInMarketplace,
         commissionPercent: p.commissionPercent,
         affiliationType: p.affiliationType,
         materialLink: p.materialLink,
-        
-        // Co-produção
         coproductionEmail: p.coproductionEmail,
         coproductionPercent: p.coproductionPercent,
+        
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
       })),
     };
   }
