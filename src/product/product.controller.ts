@@ -27,8 +27,7 @@ export class ProductController {
   constructor(private readonly productService: ProductService) {}
 
   // ==================================================================
-  // ✅ ROTA PÚBLICA (NOVA)
-  // O checkout usa essa rota para carregar dados sem login
+  // ROTA PÚBLICA (Checkout)
   // ==================================================================
   @Get('public/:id')
   async findOnePublic(@Param('id') id: string) {
@@ -38,7 +37,6 @@ export class ProductController {
         throw new NotFoundException('Produto não encontrado ou indisponível.');
     }
     
-    // Retorna apenas o necessário para o checkout (Segurança)
     return {
       success: true,
       data: {
@@ -46,14 +44,16 @@ export class ProductController {
         title: product.name,
         description: product.description,
         amount: product.priceInCents,
-        checkoutConfig: product.checkoutConfig 
+        checkoutConfig: product.checkoutConfig,
+        paymentType: product.paymentType,
+        subscriptionPeriod: product.subscriptionPeriod,
+        imageUrl: product.imageUrl // Importante para o checkout
       }
     };
   }
 
   // ==================================================================
-  // 🔒 ROTAS PROTEGIDAS (DASHBOARD)
-  // Exigem login para funcionar
+  // ROTAS PROTEGIDAS (Dashboard)
   // ==================================================================
 
   @Post()
@@ -64,8 +64,7 @@ export class ProductController {
     @GetUser() user: any, 
   ) {
     if (!user.merchant?.id) {
-      this.logger.error(`❌ BLOQUEIO: Usuário ${user.email} sem merchant.`);
-      throw new ForbiddenException('Erro de Perfil: Produtor não identificado. Faça login novamente.');
+      throw new ForbiddenException('Erro de Perfil: Produtor não identificado.');
     }
 
     const product = await this.productService.create(dto, user.merchant.id);
@@ -73,14 +72,7 @@ export class ProductController {
     return {
       success: true,
       message: 'Produto criado com sucesso.',
-      data: {
-        id: product.id,
-        title: product.name,
-        description: product.description,
-        amount: product.priceInCents, 
-        isAvailable: product.isAvailable,
-        createdAt: product.createdAt,
-      },
+      data: product, // Retorna o objeto completo
     };
   }
 
@@ -94,31 +86,51 @@ export class ProductController {
 
     const products = await this.productService.findAllByMerchant(user.merchant.id);
 
-    // ✅ CORREÇÃO CRÍTICA: Retornar TODOS os campos, incluindo content
+    // ✅ CORREÇÃO: Mapeando TODOS os campos para o Frontend
+    // Antes faltava isAffiliationEnabled, showInMarketplace, etc.
     return {
       success: true,
       data: products.map((p) => ({
         id: p.id,
-        name: p.name, // ✅ Adiciona 'name'
-        title: p.name, // Mantém compatibilidade com frontend
+        title: p.name, // O Front usa 'title'
+        name: p.name,
         description: p.description,
+        
+        // Preços
         amount: p.priceInCents,
-        price: p.priceInCents / 100, // ✅ Preço em reais
+        price: p.priceInCents / 100,
+        
+        // Status
         isAvailable: p.isAvailable,
-        
-        // ✅ NOVOS CAMPOS ESSENCIAIS
-        imageUrl: p.imageUrl,
-        category: p.category,
-        deliveryMethod: p.deliveryMethod,
-        paymentType: p.paymentType,
-        
-        // ✅ CRÍTICO: Campo content (módulos e aulas)
-        content: p.content,
-        
-        checkoutConfig: p.checkoutConfig,
-        
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
+
+        // Imagens e Configurações
+        imageUrl: p.imageUrl,
+        image: p.imageUrl, // Fallback
+        category: p.category,
+        checkoutConfig: p.checkoutConfig,
+        content: p.content,
+
+        // Entrega
+        deliveryMethod: p.deliveryMethod,
+        paymentType: p.paymentType,
+        subscriptionPeriod: p.subscriptionPeriod,
+        deliveryUrl: p.deliveryUrl,
+        fileUrl: p.fileUrl,
+        fileName: p.fileName,
+        file: p.fileUrl,
+
+        // ✅ AQUI ESTAVA FALTANDO: Campos de Afiliação e Marketplace
+        isAffiliationEnabled: p.isAffiliationEnabled,
+        showInMarketplace: p.showInMarketplace,
+        commissionPercent: p.commissionPercent,
+        affiliationType: p.affiliationType,
+        materialLink: p.materialLink,
+        
+        // Co-produção
+        coproductionEmail: p.coproductionEmail,
+        coproductionPercent: p.coproductionPercent,
       })),
     };
   }
@@ -132,7 +144,7 @@ export class ProductController {
     @GetUser() user: any
   ) {
       if (!user.merchant?.id) {
-          throw new ForbiddenException('Acesso negado: Merchant ID não encontrado.');
+          throw new ForbiddenException('Acesso negado.');
       }
 
       const updatedProduct = await this.productService.update(id, user.merchant.id, dto);
@@ -152,7 +164,7 @@ export class ProductController {
     @GetUser() user: any
   ) {
       if (!user.merchant?.id) {
-          throw new ForbiddenException('Acesso negado: Merchant ID não encontrado.');
+          throw new ForbiddenException('Acesso negado.');
       }
       await this.productService.remove(id, user.merchant.id);
   }
