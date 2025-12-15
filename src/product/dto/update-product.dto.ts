@@ -1,5 +1,25 @@
 // src/product/dto/update-product.dto.ts
-import { IsOptional, IsString, IsNumber, IsObject, Min, IsBoolean } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsObject, Min, IsBoolean, IsArray, ValidateNested, IsNotEmpty } from 'class-validator';
+import { Type } from 'class-transformer';
+
+// Precisamos redefinir ou importar as classes auxiliares para o Update também
+class OfferDto {
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsNumber()
+  price: number;
+}
+
+class CouponDto {
+  @IsString()
+  @IsNotEmpty()
+  code: string;
+
+  @IsNumber()
+  discountPercent: number;
+}
 
 export class UpdateProductDto {
   @IsOptional()
@@ -16,10 +36,13 @@ export class UpdateProductDto {
   price?: number;
 
   @IsOptional()
+  @IsString()
+  salesPageUrl?: string; // ✅ NOVO
+
+  @IsOptional()
   @IsObject()
   checkoutConfig?: any;
 
-  // --- NOVOS CAMPOS PARA ATUALIZAÇÃO ---
   @IsOptional()
   @IsString()
   imageUrl?: string;
@@ -86,4 +109,17 @@ export class UpdateProductDto {
 
   @IsOptional()
   content?: any;
+
+  // ✅ LISTAS PARA ATUALIZAÇÃO
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OfferDto)
+  offers?: OfferDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CouponDto)
+  coupons?: CouponDto[];
 }

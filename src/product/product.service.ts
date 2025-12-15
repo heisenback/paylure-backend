@@ -49,7 +49,6 @@ export class ProductService {
             imageUrl: dto.imageUrl || null,
             category: dto.category || 'WEALTH',
             
-            // Link de Vendas
             salesPageUrl: dto.salesPageUrl || null,
 
             deliveryMethod: dto.deliveryMethod || 'PAYLURE_MEMBERS',
@@ -71,7 +70,6 @@ export class ProductService {
             content: dto.content || null,
             checkoutConfig: finalCheckoutConfig,
 
-            // ✅ Lógica para Criar Ofertas
             offers: {
                 create: dto.offers?.map(o => ({
                     name: o.name,
@@ -79,7 +77,6 @@ export class ProductService {
                 })) || []
             },
 
-            // ✅ Lógica para Criar Cupons
             coupons: {
                 create: dto.coupons?.map(c => ({
                     code: c.code.toUpperCase(),
@@ -115,7 +112,7 @@ export class ProductService {
   async findAllByMerchant(merchantId: string): Promise<Product[]> {
     return this.prisma.product.findMany({
       where: { merchantId },
-      include: { offers: true, coupons: true }, // Inclui ofertas e cupons na listagem
+      include: { offers: true, coupons: true },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -126,7 +123,7 @@ export class ProductService {
   async findById(productId: string): Promise<Product | null> {
     return this.prisma.product.findUnique({ 
         where: { id: productId },
-        include: { offers: true, coupons: true } // Inclui detalhes
+        include: { offers: true, coupons: true }
     });
   }
 
@@ -156,11 +153,9 @@ export class ProductService {
 
     const data: any = { ...dto };
     
-    // Limpeza de campos
     delete data.price;
     delete data.title;
     delete data.file;
-    // Removemos offers e coupons do objeto direto para tratar manualmente
     delete data.offers;
     delete data.coupons;
 
@@ -183,8 +178,7 @@ export class ProductService {
     if (dto.commissionPercent !== undefined) data.commissionPercent = Number(dto.commissionPercent);
     if (dto.coproductionPercent !== undefined) data.coproductionPercent = Number(dto.coproductionPercent);
 
-    // --- ATUALIZAÇÃO DE LISTAS (Delete + Create) ---
-    // Essa é a estratégia mais segura para garantir sincronia com o Frontend
+    // --- ATUALIZAÇÃO DE LISTAS ---
     if (dto.offers) {
         await this.prisma.offer.deleteMany({ where: { productId: id } });
         if (dto.offers.length > 0) {
@@ -211,7 +205,6 @@ export class ProductService {
         }
     }
 
-    // Atualiza o produto principal
     const updated = await this.prisma.product.update({
         where: { id },
         data: data,
@@ -220,7 +213,8 @@ export class ProductService {
     
     // Atualiza Marketplace
     if (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined) {
-         const commRate = dto.commissionPercent !== undefined ? Number(dto.commissionPercent) : updated.commissionPercent;
+         // Garante que é um número e não null
+         const commRate = (dto.commissionPercent !== undefined ? Number(dto.commissionPercent) : updated.commissionPercent) || 0;
          
          if (updated.showInMarketplace) {
              const exists = await this.prisma.marketplaceProduct.findUnique({ where: { productId: id } });
@@ -234,7 +228,7 @@ export class ProductService {
                     data: {
                         productId: id,
                         status: 'AVAILABLE',
-                        commissionRate: commRate || 0
+                        commissionRate: commRate
                     }
                  });
              }
