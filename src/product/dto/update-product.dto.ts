@@ -10,8 +10,6 @@ export class UpdateProductDto {
   @IsString()
   description?: string;
 
-  // ✅ PADRONIZAÇÃO: Aceita SOMENTE 'price' em Reais (igual ao Create)
-  // O Service converte para centavos.
   @IsOptional()
   @IsNumber()
   @Min(0.01)
@@ -21,7 +19,7 @@ export class UpdateProductDto {
   @IsObject()
   checkoutConfig?: any;
 
-  // ✅ NOVOS CAMPOS PARA ACEITAR TODAS AS ATUALIZAÇÕES DO FRONTEND
+  // --- NOVOS CAMPOS PARA ATUALIZAÇÃO ---
   @IsOptional()
   @IsString()
   imageUrl?: string;
@@ -86,7 +84,6 @@ export class UpdateProductDto {
   @IsNumber()
   coproductionPercent?: number;
 
-  // ✅ CRÍTICO: Campo content para salvar módulos e aulas da área de membros
   @IsOptional()
-  content?: any; // Pode ser string (JSON stringificado) ou objeto
+  content?: any;
 }
