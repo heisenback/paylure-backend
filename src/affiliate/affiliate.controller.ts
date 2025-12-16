@@ -10,6 +10,7 @@ import type { User } from '@prisma/client';
 export class AffiliateController {
   constructor(private readonly affiliateService: AffiliateService) {}
 
+  // 1. Solicitar (Afiliado clica no marketplace)
   @Post('request')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.CREATED)
@@ -19,7 +20,6 @@ export class AffiliateController {
   ) {
     dto.promoterId = user.id;
     const result = await this.affiliateService.requestAffiliation(dto);
-    
     return {
       success: true,
       message: result.message,
@@ -27,20 +27,28 @@ export class AffiliateController {
     };
   }
 
+  // 2. Listar Meus Afiliados (Produtor vê na aba "Afiliados")
   @Get('my-products')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
   async listAffiliatesByMerchant(
     @GetUser() user: User & { merchant?: { id: string } }
   ) {
-    if (!user.merchant?.id) {
-      throw new ForbiddenException('Apenas Merchants (Criadores) podem acessar esta lista.');
-    }
-    const affiliates = await this.affiliateService.findAllByMerchant(user.merchant.id);
-    return { success: true, data: affiliates };
+    if (!user.merchant?.id) throw new ForbiddenException('Apenas produtores.');
+    const data = await this.affiliateService.findAllByMerchant(user.merchant.id);
+    return { success: true, data };
   }
 
-  // ✅ NOVA ROTA: Aprovar ou Bloquear
+  // 3. ✅ Listar Minhas Afiliações (Afiliado vê na aba "Produtos -> Sou Afiliado")
+  @Get('me')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async listMyAffiliations(@GetUser() user: User) {
+    const data = await this.affiliateService.findMyAffiliations(user.id);
+    return { success: true, data };
+  }
+
+  // 4. Aprovar/Bloquear (Produtor clica no check/ban)
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
@@ -49,9 +57,7 @@ export class AffiliateController {
       @Body('status') status: string,
       @GetUser() user: any
   ) {
-      if (!user.merchant?.id) {
-          throw new ForbiddenException('Acesso negado.');
-      }
+      if (!user.merchant?.id) throw new ForbiddenException('Acesso negado.');
       
       const updated = await this.affiliateService.updateStatus(id, status, user.merchant.id);
       

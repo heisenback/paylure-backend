@@ -2,8 +2,7 @@
 import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class RequestAffiliateDto {
-  // ✅ CORREÇÃO: O promoterId vem do token (AuthGuard), não do corpo da requisição.
-  // Então ele deve ser opcional na validação de entrada.
+  // ✅ CORREÇÃO: Opcional na validação (o Controller preenche com o token)
   @IsOptional() 
   @IsString()
   promoterId?: string;
