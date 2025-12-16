@@ -13,7 +13,7 @@ import {
   Logger, 
   ForbiddenException,
   NotFoundException,
-  Query // ✅ Adicionado para ler ?offerId=
+  Query 
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -33,7 +33,7 @@ export class ProductController {
   @Get('public/:id')
   async findOnePublic(
     @Param('id') id: string,
-    @Query('offerId') offerId?: string // ✅ Lê o ID da oferta da URL
+    @Query('offerId') offerId?: string 
   ) {
     const product = await this.productService.findById(id);
     
@@ -43,14 +43,17 @@ export class ProductController {
 
     // Preço padrão é o do produto principal
     let finalPrice = product.priceInCents;
-    let offerName = null;
+    
+    // ✅ CORREÇÃO AQUI: Tipagem explícita para evitar o erro TS2322
+    let offerName: string | null = null;
 
     // 🎯 SE TIVER OFERTA NA URL, SUBSTITUI O PREÇO
+    // O TypeScript agora sabe que "offers" existe porque corrigimos o Service na etapa anterior
     if (offerId && product.offers) {
         const selectedOffer = product.offers.find(o => o.id === offerId);
         if (selectedOffer) {
             finalPrice = selectedOffer.priceInCents;
-            offerName = selectedOffer.name; // Ex: "Plano Anual"
+            offerName = selectedOffer.name; 
         }
     }
     
@@ -60,8 +63,8 @@ export class ProductController {
         id: product.id,
         title: product.name,
         description: product.description,
-        amount: finalPrice, // ✅ Preço Dinâmico (Principal ou Oferta)
-        offerName: offerName, // ✅ Nome da oferta (para mostrar no checkout)
+        amount: finalPrice, 
+        offerName: offerName, 
         checkoutConfig: product.checkoutConfig,
         paymentType: product.paymentType,
         subscriptionPeriod: product.subscriptionPeriod,
@@ -129,7 +132,7 @@ export class ProductController {
         content: p.content,
 
         // Marketplace e Ofertas
-        offers: p.offers, // ✅ Importante para o front listar
+        offers: p.offers, 
         coupons: p.coupons,
         salesPageUrl: p.salesPageUrl,
         isAffiliationEnabled: p.isAffiliationEnabled,
