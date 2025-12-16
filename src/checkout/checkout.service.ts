@@ -50,12 +50,12 @@ export class CheckoutService {
     }
     if (!finalDocument) throw new BadRequestException('CPF/CNPJ obrigatório para emissão.');
 
-    // ✅ 4. CÁLCULO DE COMISSÕES (SPLIT)
+    // 4. CÁLCULO DE COMISSÕES (SPLIT)
     let producerAmount = totalAmountInCents;
     let affiliateAmount = 0;
     let affiliateId: string | null = null;
     let coproducerAmount = 0;
-    let coproducerId: string | null = null;
+    // let coproducerId: string | null = null;
 
     // A. Afiliação
     if (dto.ref) {
@@ -79,12 +79,15 @@ export class CheckoutService {
     }
 
     // B. Co-produção
-    if (product.coproductionEmail && product.coproductionPercent > 0) {
+    // ✅ CORREÇÃO: Adicionado verificação explícita de nulo (|| 0) para o TypeScript não reclamar
+    const coproPercent = product.coproductionPercent || 0; 
+    
+    if (product.coproductionEmail && coproPercent > 0) {
         const coproUser = await this.prisma.user.findUnique({ where: { email: product.coproductionEmail }});
         if (coproUser) {
-            coproducerAmount = Math.round(totalAmountInCents * (product.coproductionPercent / 100));
+            coproducerAmount = Math.round(totalAmountInCents * (coproPercent / 100));
             producerAmount -= coproducerAmount; // Desconta do produtor
-            coproducerId = coproUser.id;
+            // coproducerId = coproUser.id;
             this.logger.log(`Split Co-produtor: ${coproUser.id} recebe ${coproducerAmount}`);
         }
     }
@@ -121,10 +124,6 @@ export class CheckoutService {
             }
         });
 
-        // ⚠️ IMPORTANTE: Sua tabela Transaction precisa ter campos para affiliateId/Amount
-        // Se não tiver, você precisa criar uma migration para adicionar.
-        // Vou assumir que por enquanto salvamos no description ou genericamente,
-        // mas o ideal é ter os campos: affiliateId, affiliateAmount, coproducerId, coproducerAmount.
         await this.prisma.transaction.create({
             data: {
                 id: externalId,
@@ -143,12 +142,6 @@ export class CheckoutService {
                 referenceId: keyclubResult.transactionId,
                 pixQrCode: keyclubResult.qrcode,
                 pixCopyPaste: keyclubResult.qrcode,
-                
-                // Se você já tiver os campos no schema, descomente abaixo:
-                // affiliateId: affiliateId,
-                // affiliateAmount: affiliateAmount,
-                // coproducerId: coproducerId,
-                // coproducerAmount: coproducerAmount
             }
         });
 

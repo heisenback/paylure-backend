@@ -1,4 +1,5 @@
-import { IsString, IsNotEmpty, IsOptional, ValidateNested, IsNumber, IsArray } from 'class-validator';
+// src/checkout/dto/create-payment.dto.ts
+import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsObject } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class CustomerDto {
@@ -11,19 +12,23 @@ class CustomerDto {
   email: string;
 
   @IsString()
-  @IsOptional()
-  document?: string; // Pode vir vazio se o seller ocultou
+  @IsNotEmpty()
+  document: string; // CPF ou CNPJ
 
   @IsString()
-  @IsOptional()
-  phone?: string;
+  @IsNotEmpty()
+  phone: string;
 }
 
-class OrderBumpItemDto {
+class ItemDto {
   @IsString()
+  @IsNotEmpty()
   id: string;
-  
-  @IsNumber()
+
+  @IsString()
+  title: string;
+
+  @IsNotEmpty()
   price: number;
 }
 
@@ -32,11 +37,22 @@ export class CreatePaymentDto {
   @IsNotEmpty()
   productId: string;
 
+  // ✅ CORREÇÃO: Campos novos adicionados para o afiliado/oferta funcionar
+  @IsOptional()
+  @IsString()
+  offerId?: string;
+
+  @IsOptional()
+  @IsString()
+  ref?: string; // ID do afiliado (promoterId)
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ItemDto)
+  items: ItemDto[];
+
+  @IsObject()
   @ValidateNested()
   @Type(() => CustomerDto)
   customer: CustomerDto;
-
-  @IsArray()
-  @IsOptional()
-  items?: OrderBumpItemDto[]; // Para somar os Order Bumps
 }
