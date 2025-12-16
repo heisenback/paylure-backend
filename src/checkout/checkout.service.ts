@@ -26,16 +26,14 @@ export class CheckoutService {
 
     const sellerUser = product.merchant.user;
 
-    // 2. Calcula Valor Total (Produto + Order Bumps + Ofertas)
+    // 2. Calcula Valor Total
     let totalAmountInCents = Number(product.priceInCents); 
     
-    // Se tiver oferta específica, sobrescreve o preço base
     if (dto.offerId) {
         const offer = await this.prisma.offer.findUnique({ where: { id: dto.offerId }});
         if (offer) totalAmountInCents = offer.priceInCents;
     }
 
-    // Soma Order Bumps
     if (dto.items && dto.items.length > 0) {
        const bumpsTotal = dto.items
             .filter(item => item.id !== product.id)
@@ -45,24 +43,21 @@ export class CheckoutService {
 
     if (totalAmountInCents < 100) throw new BadRequestException('Valor mínimo R$ 1,00.');
 
-    // 3. Valida Documento do Pagador
+    // 3. Valida Documento
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
-    // Fallback se o cliente não mandou documento
     if (!finalDocument || finalDocument.length < 11) {
         finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '00000000000';
     }
 
-    // 4. Identifica Afiliado (Apenas para Metadados)
+    // 4. Identifica Afiliado (Apenas Metadados)
     let affiliateId: string | undefined = undefined;
     
     if (dto.ref) {
-        // Verifica se é um afiliado válido para este produto
         const mpProduct = await this.prisma.marketplaceProduct.findUnique({
              where: { productId: product.id } 
         });
         
         if (mpProduct) {
-             // Busca a afiliação usando o ID composto
              const affiliation = await this.prisma.affiliate.findUnique({
                  where: { 
                      promoterId_marketplaceProductId: { 
@@ -84,7 +79,6 @@ export class CheckoutService {
 
     try {
         // 6. Chama Gateway Keyclub
-        // Enviamos o 'ref' nos metadados para o Webhook pegar depois!
         const keyclubResult = await this.keyclubService.createDeposit({
             amount: amountInBRL,
             externalId: externalId,
@@ -97,8 +91,8 @@ export class CheckoutService {
         // 7. Salva Depósito
         await this.prisma.deposit.create({
             data: {
-                id: externalId, // Nosso ID interno
-                externalId: keyclubResult.transactionId, // ID da Keyclub
+                id: externalId,
+                externalId: keyclubResult.transactionId,
                 amountInCents: totalAmountInCents,
                 netAmountInCents: totalAmountInCents, 
                 status: 'PENDING',
@@ -112,7 +106,6 @@ export class CheckoutService {
         });
 
         // 8. Salva Transação PRINCIPAL (Do Produtor) como PENDING
-        // Salvamos o afiliado nos METADATA para o Webhook ler depois
         await this.prisma.transaction.create({
             data: {
                 id: externalId, 
@@ -131,15 +124,14 @@ export class CheckoutService {
                 referenceId: keyclubResult.transactionId,
                 pixQrCode: keyclubResult.qrcode,
                 pixCopyPaste: keyclubResult.qrcode,
+                // ✅ CORREÇÃO: Adicionado "as any" para evitar erro de tipagem no JSON
                 metadata: { 
                     ref: affiliateId, 
                     offerId: dto.offerId,
                     items: dto.items 
-                }
+                } as any
             }
         });
-
-        // NOTA: As transações de comissão serão criadas pelo Webhook quando pagar.
 
         return {
             success: true,
