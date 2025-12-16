@@ -11,15 +11,12 @@ export class ProductService {
   constructor(private readonly prisma: PrismaService) {}
 
   // ==================================================================
-  // CRIAR PRODUTO (CREATE)
+  // CRIAR PRODUTO (Mantido)
   // ==================================================================
-  // 🔹 Removido ": Promise<Product>" para permitir inferência dos includes
   async create(dto: CreateProductDto, merchantId: string) {
     try {
         const priceVal = Number(dto.price);
-        if (isNaN(priceVal)) {
-            throw new BadRequestException('Preço inválido.');
-        }
+        if (isNaN(priceVal)) throw new BadRequestException('Preço inválido.');
         const priceInCents = Math.round(priceVal * 100);
 
         let finalCheckoutConfig = dto.checkoutConfig || {};
@@ -48,35 +45,28 @@ export class ProductService {
             merchantId: merchantId,
             imageUrl: dto.imageUrl || null,
             category: dto.category || 'WEALTH',
-            
             salesPageUrl: dto.salesPageUrl || null,
-
             deliveryMethod: dto.deliveryMethod || 'PAYLURE_MEMBERS',
             paymentType: dto.paymentType || 'ONE_TIME',
             subscriptionPeriod: dto.subscriptionPeriod || null,
             deliveryUrl: dto.deliveryUrl || null,
             fileUrl: dto.fileUrl || null,
             fileName: dto.fileName || null,
-            
             isAffiliationEnabled: Boolean(dto.isAffiliationEnabled),
             showInMarketplace: Boolean(dto.showInMarketplace),
             commissionPercent: commPercent,
             affiliationType: dto.affiliationType || 'OPEN',
             materialLink: dto.materialLink || null,
-            
             coproductionEmail: dto.coproductionEmail || null,
             coproductionPercent: coproPercent,
-
             content: dto.content || null,
             checkoutConfig: finalCheckoutConfig,
-
             offers: {
                 create: dto.offers?.map(o => ({
                     name: o.name,
                     priceInCents: Math.round(Number(o.price) * 100)
                 })) || []
             },
-
             coupons: {
                 create: dto.coupons?.map(c => ({
                     code: c.code.toUpperCase(),
@@ -84,49 +74,47 @@ export class ProductService {
                 })) || []
             }
           },
-          // ✅ ADICIONADO: Retornar já com as ofertas criadas para o front não bugar
-          include: {
-              offers: true,
-              coupons: true
-          }
+          include: { offers: true, coupons: true }
         });
 
         if (dto.showInMarketplace) {
             await this.prisma.marketplaceProduct.create({
-                data: {
-                    productId: newProduct.id,
-                    status: 'AVAILABLE',
-                    commissionRate: commPercent 
-                }
-            }).catch(e => this.logger.warn(`Erro ao criar marketplace entry: ${e.message}`));
+                data: { productId: newProduct.id, status: 'AVAILABLE', commissionRate: commPercent }
+            }).catch(e => this.logger.warn(`Erro marketplace: ${e.message}`));
         }
 
-        this.logger.log(`Produto '${newProduct.name}' criado com sucesso.`);
         return newProduct;
 
     } catch (error) {
-        this.logger.error(`Erro ao criar produto: ${error.message}`, error.stack);
-        if (error.code) throw new BadRequestException(`Erro de banco de dados: ${error.message}`);
-        throw error;
+        this.logger.error(`Erro create: ${error.message}`);
+        throw new BadRequestException('Erro ao criar produto.');
     }
   }
 
   // ==================================================================
-  // BUSCAR TODOS (FIND ALL)
+  // LISTAR MEUS PRODUTOS (Produtor)
   // ==================================================================
-  // 🔹 Removido ": Promise<Product[]>"
   async findAllByMerchant(merchantId: string) {
     return this.prisma.product.findMany({
       where: { merchantId },
-      include: { offers: true, coupons: true }, // O retorno agora incluirá tipagem de offers/coupons
+      include: { offers: true, coupons: true },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   // ==================================================================
-  // BUSCAR UM (FIND ONE)
+  // ✅ NOVO: LISTAR MINHAS CO-PRODUÇÕES (Co-produtor)
   // ==================================================================
-  // 🔹 Removido ": Promise<Product | null>"
+  async findMyCoProductions(userEmail: string) {
+      return this.prisma.product.findMany({
+          where: {
+              coproductionEmail: userEmail // Busca exata pelo email
+          },
+          include: { offers: true, coupons: true },
+          orderBy: { createdAt: 'desc' }
+      });
+  }
+
   async findById(productId: string) {
     return this.prisma.product.findUnique({ 
         where: { id: productId },
@@ -134,37 +122,67 @@ export class ProductService {
     });
   }
 
-  // ==================================================================
-  // REMOVER (DELETE)
-  // ==================================================================
   async remove(productId: string, merchantId: string): Promise<void> {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException('Produto não encontrado.');
     if (product.merchantId !== merchantId) throw new ForbiddenException('Sem permissão.');
 
-    try {
-        await this.prisma.marketplaceProduct.deleteMany({ where: { productId } });
-    } catch (e) {}
-
+    try { await this.prisma.marketplaceProduct.deleteMany({ where: { productId } }); } catch (e) {}
     await this.prisma.product.delete({ where: { id: productId } });
   }
 
   // ==================================================================
-  // ATUALIZAR (UPDATE)
+  // ✅ ATUALIZAR (UPDATE) - A Lógica de Permissões Inteligente
   // ==================================================================
-  async update(id: string, merchantId: string, dto: UpdateProductDto) {
+  async update(id: string, userId: string, userEmail: string, dto: UpdateProductDto) {
     const product = await this.prisma.product.findUnique({ where: { id } });
 
     if (!product) throw new NotFoundException('Produto não encontrado');
-    if (product.merchantId !== merchantId) throw new ForbiddenException('Sem permissão');
 
+    // 1. Identifica quem é o usuário
+    const isOwner = product.merchantId === userId;
+    const isCoProducer = product.coproductionEmail === userEmail; // Verifica e-mail
+
+    // Verifica se é afiliado APROVADO
+    let isAffiliate = false;
+    if (!isOwner && !isCoProducer) {
+        const affiliation = await this.prisma.affiliate.findUnique({
+            where: {
+                promoterId_marketplaceProductId: {
+                    promoterId: userId,
+                    marketplaceProductId: id 
+                }
+            }
+        });
+        if (affiliation?.status === 'APPROVED') isAffiliate = true;
+    }
+
+    // 2. Bloqueio Geral
+    if (!isOwner && !isCoProducer && !isAffiliate) {
+        throw new ForbiddenException('Você não tem permissão para editar este produto.');
+    }
+
+    // 3. 🔒 REGRA PARA AFILIADO: Só pode editar Checkout Visual
+    if (isAffiliate && !isOwner && !isCoProducer) {
+        // Se tentar mudar preço, comissão, nome ou ofertas => ERRO
+        if (dto.price || dto.title || dto.commissionPercent || dto.offers || dto.coproductionPercent) {
+            throw new ForbiddenException('Afiliados podem personalizar apenas o visual do checkout (Branding/Pixel).');
+        }
+        
+        // Permite apenas checkoutConfig
+        // Nota: O ideal seria salvar um "AffiliateConfig" separado, mas para simplificar vamos deixar ele editar o config global ou retornar erro se não quiser permitir
+        // *AJUSTE*: Como editar o config global afetaria o produtor, o correto para afiliado é NÃO salvar no produto principal, mas sim em uma tabela de config de afiliado.
+        // Porem, para seguir seu pedido de "editar igual dono", vamos permitir salvar APENAS checkoutConfig por enquanto.
+        
+        return this.prisma.product.update({
+            where: { id },
+            data: { checkoutConfig: dto.checkoutConfig }
+        });
+    }
+
+    // 4. Lógica Completa (Dono ou Co-produtor)
     const data: any = { ...dto };
-    
-    delete data.price;
-    delete data.title;
-    delete data.file;
-    delete data.offers;
-    delete data.coupons;
+    delete data.price; delete data.title; delete data.file; delete data.offers; delete data.coupons;
 
     if (dto.price !== undefined) data.priceInCents = Math.round(Number(dto.price) * 100);
     if (dto.title) data.name = dto.title;
@@ -185,7 +203,6 @@ export class ProductService {
     if (dto.commissionPercent !== undefined) data.commissionPercent = Number(dto.commissionPercent);
     if (dto.coproductionPercent !== undefined) data.coproductionPercent = Number(dto.coproductionPercent);
 
-    // --- ATUALIZAÇÃO DE LISTAS ---
     if (dto.offers) {
         await this.prisma.offer.deleteMany({ where: { productId: id } });
         if (dto.offers.length > 0) {
@@ -215,32 +232,24 @@ export class ProductService {
     const updated = await this.prisma.product.update({
         where: { id },
         data: data,
-        include: { offers: true, coupons: true } // O retorno inferido terá offers/coupons
+        include: { offers: true, coupons: true }
     });
     
-    // Atualiza Marketplace
-    if (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined) {
-         const commRate = (dto.commissionPercent !== undefined ? Number(dto.commissionPercent) : updated.commissionPercent) || 0;
-         
-         if (updated.showInMarketplace) {
-             const exists = await this.prisma.marketplaceProduct.findUnique({ where: { productId: id } });
-             if (exists) {
-                 await this.prisma.marketplaceProduct.update({
-                    where: { productId: id },
-                    data: { commissionRate: commRate }
-                 });
+    // Atualiza Marketplace se necessário
+    if (isOwner || isCoProducer) {
+        if (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined) {
+             const commRate = (dto.commissionPercent !== undefined ? Number(dto.commissionPercent) : updated.commissionPercent) || 0;
+             if (updated.showInMarketplace) {
+                 const exists = await this.prisma.marketplaceProduct.findUnique({ where: { productId: id } });
+                 if (exists) {
+                     await this.prisma.marketplaceProduct.update({ where: { productId: id }, data: { commissionRate: commRate } });
+                 } else {
+                     await this.prisma.marketplaceProduct.create({ data: { productId: id, status: 'AVAILABLE', commissionRate: commRate } });
+                 }
              } else {
-                 await this.prisma.marketplaceProduct.create({
-                    data: {
-                        productId: id,
-                        status: 'AVAILABLE',
-                        commissionRate: commRate
-                    }
-                 });
+                 await this.prisma.marketplaceProduct.deleteMany({ where: { productId: id } });
              }
-         } else {
-             await this.prisma.marketplaceProduct.deleteMany({ where: { productId: id } });
-         }
+        }
     }
     
     return updated;

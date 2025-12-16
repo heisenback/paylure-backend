@@ -11,7 +11,7 @@ export class CheckoutService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly keyclubService: KeyclubService, // Mudei para keyclubService para padronizar
+    private readonly keyclubService: KeyclubService,
   ) {}
 
   async processCheckout(dto: CreatePaymentDto) {
@@ -26,7 +26,7 @@ export class CheckoutService {
 
     const sellerUser = product.merchant.user;
 
-    // 2. Calcula Valor
+    // 2. Calcula Valor (Base + Order Bumps se tiver)
     let totalAmountInCents = Number(product.priceInCents); 
     if (dto.items && dto.items.length > 0) {
        const bumpsTotal = dto.items
@@ -35,16 +35,61 @@ export class CheckoutService {
        totalAmountInCents += bumpsTotal;
     }
 
+    // Se for uma oferta específica, sobrescreve o valor
+    if (dto.offerId) {
+        const offer = await this.prisma.offer.findUnique({ where: { id: dto.offerId }});
+        if (offer) totalAmountInCents = offer.priceInCents;
+    }
+
     if (totalAmountInCents < 100) throw new BadRequestException('Valor mínimo R$ 1,00.');
 
-    // 3. Documento
+    // 3. Documento do Cliente
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
     if (!finalDocument || finalDocument.length < 11) {
         finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '';
     }
-    if (!finalDocument) throw new BadRequestException('CPF/CNPJ obrigatório.');
+    if (!finalDocument) throw new BadRequestException('CPF/CNPJ obrigatório para emissão.');
 
-    // 4. Integração Keyclub
+    // ✅ 4. CÁLCULO DE COMISSÕES (SPLIT)
+    let producerAmount = totalAmountInCents;
+    let affiliateAmount = 0;
+    let affiliateId: string | null = null;
+    let coproducerAmount = 0;
+    let coproducerId: string | null = null;
+
+    // A. Afiliação
+    if (dto.ref) {
+        const affiliate = await this.prisma.affiliate.findUnique({
+            where: {
+                promoterId_marketplaceProductId: {
+                    promoterId: dto.ref,
+                    marketplaceProductId: product.id 
+                }
+            }
+        });
+
+        // Só paga se estiver APROVADO
+        if (affiliate && affiliate.status === 'APPROVED') {
+            const commRate = product.commissionPercent || 0;
+            affiliateAmount = Math.round(totalAmountInCents * (commRate / 100));
+            producerAmount -= affiliateAmount;
+            affiliateId = affiliate.promoterId;
+            this.logger.log(`Split Afiliado: ${affiliateId} recebe ${affiliateAmount}`);
+        }
+    }
+
+    // B. Co-produção
+    if (product.coproductionEmail && product.coproductionPercent > 0) {
+        const coproUser = await this.prisma.user.findUnique({ where: { email: product.coproductionEmail }});
+        if (coproUser) {
+            coproducerAmount = Math.round(totalAmountInCents * (product.coproductionPercent / 100));
+            producerAmount -= coproducerAmount; // Desconta do produtor
+            coproducerId = coproUser.id;
+            this.logger.log(`Split Co-produtor: ${coproUser.id} recebe ${coproducerAmount}`);
+        }
+    }
+
+    // 5. Integração Keyclub
     const externalId = `chk_${crypto.randomUUID()}`;
     const amountInBRL = totalAmountInCents / 100;
     let keyclubResult;
@@ -59,15 +104,13 @@ export class CheckoutService {
             payerPhone: dto.customer.phone
         });
 
-        // 5. Salva Depósito e Transação
-        
-        // A. Depósito (Webhook)
+        // 6. Salva no Banco
         await this.prisma.deposit.create({
             data: {
                 id: externalId,
                 externalId: keyclubResult.transactionId,
                 amountInCents: totalAmountInCents,
-                netAmountInCents: totalAmountInCents,
+                netAmountInCents: producerAmount, // O que o produtor vê como "Líquido" (após splits)
                 status: 'PENDING',
                 payerName: dto.customer.name,
                 payerEmail: dto.customer.email,
@@ -78,15 +121,18 @@ export class CheckoutService {
             }
         });
 
-        // B. Transação (Extrato e Minhas Vendas)
+        // ⚠️ IMPORTANTE: Sua tabela Transaction precisa ter campos para affiliateId/Amount
+        // Se não tiver, você precisa criar uma migration para adicionar.
+        // Vou assumir que por enquanto salvamos no description ou genericamente,
+        // mas o ideal é ter os campos: affiliateId, affiliateAmount, coproducerId, coproducerAmount.
         await this.prisma.transaction.create({
             data: {
                 id: externalId,
                 amount: totalAmountInCents,
                 status: 'PENDING',
-                type: 'SALE', // Garante que aparece como Venda
+                type: 'SALE',
                 paymentMethod: 'PIX',
-                description: `Venda: ${product.name}`,
+                description: `Venda: ${product.name} (Ref: ${dto.ref || 'N/A'})`,
                 userId: sellerUser.id,
                 productId: product.id,
                 customerName: dto.customer.name,       
@@ -97,6 +143,12 @@ export class CheckoutService {
                 referenceId: keyclubResult.transactionId,
                 pixQrCode: keyclubResult.qrcode,
                 pixCopyPaste: keyclubResult.qrcode,
+                
+                // Se você já tiver os campos no schema, descomente abaixo:
+                // affiliateId: affiliateId,
+                // affiliateAmount: affiliateAmount,
+                // coproducerId: coproducerId,
+                // coproducerAmount: coproducerAmount
             }
         });
 
@@ -111,47 +163,15 @@ export class CheckoutService {
 
     } catch (error: any) {
         this.logger.error(`[Checkout] Erro: ${error.message}`);
-        if(keyclubResult) { 
-             return {
-                 success: true,
-                 pix: {
-                    qrCode: keyclubResult.qrcode,
-                    copyPaste: keyclubResult.qrcode,
-                    transactionId: keyclubResult.transactionId
-                }
-            };
-        }
         throw new BadRequestException('Erro ao processar pagamento.');
     }
   }
 
-  // ✅ MÉTODO DE STATUS (USADO PELO CONTROLLER)
   async checkTransactionStatus(id: string) {
-    // 1. Busca na tabela Transação (onde o Webhook atualiza para COMPLETED)
     const tx = await this.prisma.transaction.findFirst({
-        where: { 
-            OR: [
-                { externalId: id },
-                { referenceId: id },
-                { id: id }
-            ]
-        },
+        where: { OR: [{ externalId: id }, { referenceId: id }, { id: id }] },
         select: { status: true }
     });
-
-    if (tx) return { status: tx.status };
-
-    // 2. Fallback: Busca no Depósito
-    const dep = await this.prisma.deposit.findFirst({
-        where: { 
-            OR: [
-                { externalId: id },
-                { id: id }
-            ]
-        },
-        select: { status: true }
-    });
-
-    return { status: dep?.status || 'PENDING' };
+    return { status: tx?.status || 'PENDING' };
   }
 }

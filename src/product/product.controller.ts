@@ -1,19 +1,7 @@
 // src/product/product.controller.ts
 import { 
-  Controller, 
-  Post, 
-  Get, 
-  Delete,
-  Patch, 
-  Param, 
-  Body, 
-  UseGuards, 
-  HttpStatus, 
-  HttpCode, 
-  Logger, 
-  ForbiddenException,
-  NotFoundException,
-  Query 
+  Controller, Post, Get, Delete, Patch, Param, Body, 
+  UseGuards, HttpStatus, HttpCode, Logger, ForbiddenException, NotFoundException, Query 
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -27,28 +15,14 @@ export class ProductController {
 
   constructor(private readonly productService: ProductService) {}
 
-  // ==================================================================
-  // ✅ ROTA PÚBLICA (CHECKOUT) - COM SUPORTE A MULTI-OFERTAS
-  // ==================================================================
   @Get('public/:id')
-  async findOnePublic(
-    @Param('id') id: string,
-    @Query('offerId') offerId?: string 
-  ) {
+  async findOnePublic(@Param('id') id: string, @Query('offerId') offerId?: string) {
     const product = await this.productService.findById(id);
-    
-    if (!product) {
-        throw new NotFoundException('Produto não encontrado ou indisponível.');
-    }
+    if (!product) throw new NotFoundException('Produto indisponível.');
 
-    // Preço padrão é o do produto principal
     let finalPrice = product.priceInCents;
-    
-    // ✅ CORREÇÃO AQUI: Tipagem explícita para evitar o erro TS2322
     let offerName: string | null = null;
 
-    // 🎯 SE TIVER OFERTA NA URL, SUBSTITUI O PREÇO
-    // O TypeScript agora sabe que "offers" existe porque corrigimos o Service na etapa anterior
     if (offerId && product.offers) {
         const selectedOffer = product.offers.find(o => o.id === offerId);
         if (selectedOffer) {
@@ -73,54 +47,61 @@ export class ProductController {
     };
   }
 
-  // ==================================================================
-  // ROTAS PROTEGIDAS (DASHBOARD)
-  // ==================================================================
-
   @Post()
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.CREATED)
-  async create(
-    @Body() dto: CreateProductDto,
-    @GetUser() user: any, 
-  ) {
-    if (!user.merchant?.id) {
-      throw new ForbiddenException('Erro de Perfil: Produtor não identificado.');
-    }
-
+  async create(@Body() dto: CreateProductDto, @GetUser() user: any) {
+    if (!user.merchant?.id) throw new ForbiddenException('Erro de Perfil.');
     const product = await this.productService.create(dto, user.merchant.id);
-
-    return {
-      success: true,
-      message: 'Produto criado com sucesso.',
-      data: product,
-    };
+    return { success: true, message: 'Produto criado.', data: product };
   }
 
   @Get()
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(HttpStatus.OK)
   async findAll(@GetUser() user: any) {
-    if (!user.merchant?.id) {
-        throw new ForbiddenException('Usuário não tem um Merchant ID associado.');
-    }
-
+    if (!user.merchant?.id) throw new ForbiddenException('Usuário não é merchant.');
     const products = await this.productService.findAllByMerchant(user.merchant.id);
+    return { success: true, data: this.mapProducts(products) };
+  }
 
-    return {
-      success: true,
-      data: products.map((p) => ({
+  // ✅ NOVA ROTA: CO-PRODUÇÃO
+  @Get('coproduction')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async listMyCoProductions(@GetUser() user: any) {
+      const products = await this.productService.findMyCoProductions(user.email);
+      return { success: true, data: this.mapProducts(products) };
+  }
+
+  @Patch(':id')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.OK)
+  async update(@Param('id') id: string, @Body() dto: UpdateProductDto, @GetUser() user: any) {
+      // ✅ Passando user.email para validar co-produção
+      const updatedProduct = await this.productService.update(id, user.id, user.email, dto);
+      return { success: true, message: 'Atualizado com sucesso!', data: updatedProduct };
+  }
+
+  @Delete(':id')
+  @UseGuards(AuthGuard('jwt'))
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(@Param('id') id: string, @GetUser() user: any) {
+      if (!user.merchant?.id) throw new ForbiddenException('Acesso negado.');
+      await this.productService.remove(id, user.merchant.id);
+  }
+
+  // Helper para padronizar retorno
+  private mapProducts(products: any[]) {
+      return products.map((p) => ({
         id: p.id,
         title: p.name,
         name: p.name,
         description: p.description,
         amount: p.priceInCents,
         price: p.priceInCents / 100,
-        isAvailable: p.isAvailable,
         imageUrl: p.imageUrl,
         category: p.category,
-        
-        // Configs
         deliveryMethod: p.deliveryMethod,
         paymentType: p.paymentType,
         subscriptionPeriod: p.subscriptionPeriod,
@@ -129,9 +110,6 @@ export class ProductController {
         fileName: p.fileName,
         file: p.fileUrl,
         checkoutConfig: p.checkoutConfig,
-        content: p.content,
-
-        // Marketplace e Ofertas
         offers: p.offers, 
         coupons: p.coupons,
         salesPageUrl: p.salesPageUrl,
@@ -142,44 +120,7 @@ export class ProductController {
         materialLink: p.materialLink,
         coproductionEmail: p.coproductionEmail,
         coproductionPercent: p.coproductionPercent,
-        
         createdAt: p.createdAt,
-        updatedAt: p.updatedAt,
-      })),
-    };
-  }
-
-  @Patch(':id')
-  @UseGuards(AuthGuard('jwt'))
-  @HttpCode(HttpStatus.OK)
-  async update(
-    @Param('id') id: string,
-    @Body() dto: UpdateProductDto,
-    @GetUser() user: any
-  ) {
-      if (!user.merchant?.id) {
-          throw new ForbiddenException('Acesso negado.');
-      }
-
-      const updatedProduct = await this.productService.update(id, user.merchant.id, dto);
-
-      return {
-          success: true,
-          message: 'Produto atualizado com sucesso!',
-          data: updatedProduct
-      };
-  }
-
-  @Delete(':id')
-  @UseGuards(AuthGuard('jwt'))
-  @HttpCode(HttpStatus.NO_CONTENT)
-  async remove(
-    @Param('id') id: string,
-    @GetUser() user: any
-  ) {
-      if (!user.merchant?.id) {
-          throw new ForbiddenException('Acesso negado.');
-      }
-      await this.productService.remove(id, user.merchant.id);
+      }));
   }
 }
