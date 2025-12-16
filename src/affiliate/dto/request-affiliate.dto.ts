@@ -1,14 +1,14 @@
-import { IsString, IsNotEmpty } from 'class-validator'; // (Ou apenas declare as propriedades)
+// src/affiliate/dto/request-affiliate.dto.ts
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class RequestAffiliateDto {
-  // --- ADICIONE ESTAS DUAS PROPRIEDADES ---
+  // ✅ CORREÇÃO: O promoterId vem do token (AuthGuard), não do corpo da requisição.
+  // Então ele deve ser opcional na validação de entrada.
+  @IsOptional() 
   @IsString()
-  @IsNotEmpty()
-  promoterId: string;
+  promoterId?: string;
 
   @IsString()
   @IsNotEmpty()
   marketplaceProductId: string;
-
-  // ... (mantenha outras propriedades que você já tenha)
 }
