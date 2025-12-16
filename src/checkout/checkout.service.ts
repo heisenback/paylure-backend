@@ -55,9 +55,8 @@ export class CheckoutService {
     let affiliateAmount = 0;
     let affiliateId: string | null = null;
     let coproducerAmount = 0;
-    // let coproducerId: string | null = null;
-
-    // A. Afiliação
+    
+    // A. Afiliado
     if (dto.ref) {
         const affiliate = await this.prisma.affiliate.findUnique({
             where: {
@@ -78,16 +77,15 @@ export class CheckoutService {
         }
     }
 
-    // B. Co-produção
-    // ✅ CORREÇÃO: Adicionado verificação explícita de nulo (|| 0) para o TypeScript não reclamar
-    const coproPercent = product.coproductionPercent || 0; 
+    // B. Co-produtor
+    // ✅ CORREÇÃO: Garante que é número e não null para o TypeScript não reclamar
+    const coproPercent = product.coproductionPercent || 0;
     
     if (product.coproductionEmail && coproPercent > 0) {
         const coproUser = await this.prisma.user.findUnique({ where: { email: product.coproductionEmail }});
         if (coproUser) {
             coproducerAmount = Math.round(totalAmountInCents * (coproPercent / 100));
             producerAmount -= coproducerAmount; // Desconta do produtor
-            // coproducerId = coproUser.id;
             this.logger.log(`Split Co-produtor: ${coproUser.id} recebe ${coproducerAmount}`);
         }
     }
@@ -107,7 +105,7 @@ export class CheckoutService {
             payerPhone: dto.customer.phone
         });
 
-        // 6. Salva no Banco
+        // 6. Salvar Dados
         await this.prisma.deposit.create({
             data: {
                 id: externalId,

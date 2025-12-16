@@ -1,5 +1,5 @@
 // src/checkout/dto/create-payment.dto.ts
-import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsObject } from 'class-validator';
+import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsObject, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class CustomerDto {
@@ -28,6 +28,7 @@ class ItemDto {
   @IsString()
   title: string;
 
+  @IsNumber()
   @IsNotEmpty()
   price: number;
 }
