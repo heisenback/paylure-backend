@@ -10,11 +10,13 @@ export class ProductService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  // ==================================================================
-  // CRIAR PRODUTO (Mantido)
-  // ==================================================================
+  // ... (MANTENHA OS MÉTODOS create, findAllByMerchant, findMyCoProductions, findById, remove IGUAIS) ...
+  // Vou colocar apenas o método UPDATE corrigido para economizar espaço, 
+  // mas você deve substituir o arquivo todo ou apenas o método update.
+
   async create(dto: CreateProductDto, merchantId: string) {
-    try {
+      // (Mantenha o código do create original que você já tem)
+      try {
         const priceVal = Number(dto.price);
         if (isNaN(priceVal)) throw new BadRequestException('Preço inválido.');
         const priceInCents = Math.round(priceVal * 100);
@@ -91,96 +93,60 @@ export class ProductService {
     }
   }
 
-  // ==================================================================
-  // LISTAR MEUS PRODUTOS (Produtor)
-  // ==================================================================
   async findAllByMerchant(merchantId: string) {
-    return this.prisma.product.findMany({
-      where: { merchantId },
-      include: { offers: true, coupons: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.prisma.product.findMany({ where: { merchantId }, include: { offers: true, coupons: true }, orderBy: { createdAt: 'desc' } });
   }
 
-  // ==================================================================
-  // ✅ NOVO: LISTAR MINHAS CO-PRODUÇÕES (Co-produtor)
-  // ==================================================================
   async findMyCoProductions(userEmail: string) {
-      return this.prisma.product.findMany({
-          where: {
-              coproductionEmail: userEmail // Busca exata pelo email
-          },
-          include: { offers: true, coupons: true },
-          orderBy: { createdAt: 'desc' }
-      });
+      return this.prisma.product.findMany({ where: { coproductionEmail: userEmail }, include: { offers: true, coupons: true }, orderBy: { createdAt: 'desc' } });
   }
 
   async findById(productId: string) {
-    return this.prisma.product.findUnique({ 
-        where: { id: productId },
-        include: { offers: true, coupons: true }
-    });
+    return this.prisma.product.findUnique({ where: { id: productId }, include: { offers: true, coupons: true } });
   }
 
   async remove(productId: string, merchantId: string): Promise<void> {
     const product = await this.prisma.product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException('Produto não encontrado.');
     if (product.merchantId !== merchantId) throw new ForbiddenException('Sem permissão.');
-
     try { await this.prisma.marketplaceProduct.deleteMany({ where: { productId } }); } catch (e) {}
     await this.prisma.product.delete({ where: { id: productId } });
   }
 
   // ==================================================================
-  // ✅ ATUALIZAR (UPDATE) - A Lógica de Permissões Inteligente
+  // ✅ ATUALIZAR (CORRIGIDO)
   // ==================================================================
   async update(id: string, userId: string, userEmail: string, dto: UpdateProductDto) {
     const product = await this.prisma.product.findUnique({ where: { id } });
-
     if (!product) throw new NotFoundException('Produto não encontrado');
 
-    // 1. Identifica quem é o usuário
     const isOwner = product.merchantId === userId;
-    const isCoProducer = product.coproductionEmail === userEmail; // Verifica e-mail
+    const isCoProducer = product.coproductionEmail === userEmail; 
 
-    // Verifica se é afiliado APROVADO
+    // Verifica Afiliado
     let isAffiliate = false;
     if (!isOwner && !isCoProducer) {
         const affiliation = await this.prisma.affiliate.findUnique({
-            where: {
-                promoterId_marketplaceProductId: {
-                    promoterId: userId,
-                    marketplaceProductId: id 
-                }
-            }
+            where: { promoterId_marketplaceProductId: { promoterId: userId, marketplaceProductId: id } }
         });
         if (affiliation?.status === 'APPROVED') isAffiliate = true;
     }
 
-    // 2. Bloqueio Geral
-    if (!isOwner && !isCoProducer && !isAffiliate) {
-        throw new ForbiddenException('Você não tem permissão para editar este produto.');
-    }
+    if (!isOwner && !isCoProducer && !isAffiliate) throw new ForbiddenException('Sem permissão.');
 
-    // 3. 🔒 REGRA PARA AFILIADO: Só pode editar Checkout Visual
+    // REGRA AFILIADO: Apenas Checkout Config
     if (isAffiliate && !isOwner && !isCoProducer) {
-        // Se tentar mudar preço, comissão, nome ou ofertas => ERRO
-        if (dto.price || dto.title || dto.commissionPercent || dto.offers || dto.coproductionPercent) {
-            throw new ForbiddenException('Afiliados podem personalizar apenas o visual do checkout (Branding/Pixel).');
+        if (dto.price || dto.title || dto.commissionPercent || dto.offers) {
+            throw new ForbiddenException('Afiliados podem personalizar apenas o visual.');
         }
-        
-        // Permite apenas checkoutConfig
-        // Nota: O ideal seria salvar um "AffiliateConfig" separado, mas para simplificar vamos deixar ele editar o config global ou retornar erro se não quiser permitir
-        // *AJUSTE*: Como editar o config global afetaria o produtor, o correto para afiliado é NÃO salvar no produto principal, mas sim em uma tabela de config de afiliado.
-        // Porem, para seguir seu pedido de "editar igual dono", vamos permitir salvar APENAS checkoutConfig por enquanto.
-        
+        // ✅ Salva apenas o config visual
         return this.prisma.product.update({
             where: { id },
             data: { checkoutConfig: dto.checkoutConfig }
         });
     }
 
-    // 4. Lógica Completa (Dono ou Co-produtor)
+    // Lógica Dono/Co-produtor
     const data: any = { ...dto };
     delete data.price; delete data.title; delete data.file; delete data.offers; delete data.coupons;
 
@@ -188,12 +154,22 @@ export class ProductService {
     if (dto.title) data.name = dto.title;
     if (dto.salesPageUrl !== undefined) data.salesPageUrl = dto.salesPageUrl;
 
+    // ✅ CORREÇÃO CRÍTICA DO "NÃO SALVA":
+    // Prioriza o checkoutConfig que vem do Editor (dto). 
+    // Só mexe na imagem se ela foi explicitamente enviada e não quebra o resto.
+    if (dto.checkoutConfig) {
+        data.checkoutConfig = dto.checkoutConfig;
+    }
+    
+    // Se enviou imagem separada, atualiza dentro do branding sem apagar o resto
     if (dto.imageUrl) {
-        const currentConfig = (product.checkoutConfig as any) || {};
+        data.imageUrl = dto.imageUrl; // Atualiza no banco
+        const baseConfig = (data.checkoutConfig as any) || (product.checkoutConfig as any) || {};
+        
         data.checkoutConfig = {
-            ...currentConfig,
+            ...baseConfig,
             branding: {
-                ...(currentConfig.branding || {}),
+                ...(baseConfig.branding || {}),
                 dashboardCover: dto.imageUrl,
                 productImage: dto.imageUrl,
             }
@@ -202,15 +178,18 @@ export class ProductService {
 
     if (dto.commissionPercent !== undefined) data.commissionPercent = Number(dto.commissionPercent);
     if (dto.coproductionPercent !== undefined) data.coproductionPercent = Number(dto.coproductionPercent);
+    
+    // ✅ GARANTE QUE AFILIAÇÃO É ATIVADA/DESATIVADA
+    if (dto.isAffiliationEnabled !== undefined) data.isAffiliationEnabled = Boolean(dto.isAffiliationEnabled);
+    if (dto.showInMarketplace !== undefined) data.showInMarketplace = Boolean(dto.showInMarketplace);
 
+    // Atualiza Ofertas e Cupons (Mantenha igual)
     if (dto.offers) {
         await this.prisma.offer.deleteMany({ where: { productId: id } });
         if (dto.offers.length > 0) {
             await this.prisma.offer.createMany({
                 data: dto.offers.map((o: any) => ({
-                    productId: id,
-                    name: o.name,
-                    priceInCents: Math.round(Number(o.price) * 100)
+                    productId: id, name: o.name, priceInCents: Math.round(Number(o.price) * 100)
                 }))
             });
         }
@@ -221,9 +200,7 @@ export class ProductService {
         if (dto.coupons.length > 0) {
             await this.prisma.coupon.createMany({
                 data: dto.coupons.map((c: any) => ({
-                    productId: id,
-                    code: c.code.toUpperCase(),
-                    discountPercent: Number(c.percent || c.discountPercent)
+                    productId: id, code: c.code.toUpperCase(), discountPercent: Number(c.percent || c.discountPercent)
                 }))
             });
         }
@@ -235,7 +212,7 @@ export class ProductService {
         include: { offers: true, coupons: true }
     });
     
-    // Atualiza Marketplace se necessário
+    // Atualiza Marketplace
     if (isOwner || isCoProducer) {
         if (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined) {
              const commRate = (dto.commissionPercent !== undefined ? Number(dto.commissionPercent) : updated.commissionPercent) || 0;
