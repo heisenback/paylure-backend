@@ -15,7 +15,7 @@ export class CheckoutService {
   ) {}
 
   async processCheckout(dto: CreatePaymentDto) {
-    // 1. Busca Produto
+    // 1. Busca Produto e Vendedor
     const product = await this.prisma.product.findUnique({
       where: { id: dto.productId },
       include: { merchant: { include: { user: true } } }
@@ -26,8 +26,16 @@ export class CheckoutService {
 
     const sellerUser = product.merchant.user;
 
-    // 2. Calcula Valor
+    // 2. Calcula Valor Total (Produto + Order Bumps + Ofertas)
     let totalAmountInCents = Number(product.priceInCents); 
+    
+    // Se tiver oferta específica, sobrescreve o preço base
+    if (dto.offerId) {
+        const offer = await this.prisma.offer.findUnique({ where: { id: dto.offerId }});
+        if (offer) totalAmountInCents = offer.priceInCents;
+    }
+
+    // Soma Order Bumps
     if (dto.items && dto.items.length > 0) {
        const bumpsTotal = dto.items
             .filter(item => item.id !== product.id)
@@ -35,70 +43,49 @@ export class CheckoutService {
        totalAmountInCents += bumpsTotal;
     }
 
-    if (dto.offerId) {
-        const offer = await this.prisma.offer.findUnique({ where: { id: dto.offerId }});
-        if (offer) totalAmountInCents = offer.priceInCents;
-    }
-
     if (totalAmountInCents < 100) throw new BadRequestException('Valor mínimo R$ 1,00.');
 
-    // 3. Documento
+    // 3. Valida Documento do Pagador
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
+    // Fallback se o cliente não mandou documento
     if (!finalDocument || finalDocument.length < 11) {
-        finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '';
+        finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '00000000000';
     }
-    if (!finalDocument) throw new BadRequestException('CPF/CNPJ obrigatório.');
 
-    // 4. SPLIT
-    let producerAmount = totalAmountInCents;
-    let affiliateAmount = 0;
-    let affiliateId: string | null = null;
-    let coproducerAmount = 0;
-    let coproducerId: string | null = null;
+    // 4. Identifica Afiliado (Apenas para Metadados)
+    let affiliateId: string | undefined = undefined;
     
-    // ✅ CORREÇÃO CRÍTICA: Busca ID do Marketplace para achar a afiliação correta
     if (dto.ref) {
+        // Verifica se é um afiliado válido para este produto
         const mpProduct = await this.prisma.marketplaceProduct.findUnique({
-            where: { productId: product.id }
+             where: { productId: product.id } 
         });
-
+        
         if (mpProduct) {
-            const affiliate = await this.prisma.affiliate.findUnique({
-                where: {
-                    promoterId_marketplaceProductId: {
-                        promoterId: dto.ref,
-                        marketplaceProductId: mpProduct.id // ID CORRETO AQUI
-                    }
-                }
-            });
-
-            if (affiliate && affiliate.status === 'APPROVED') {
-                const commRate = mpProduct.commissionRate ?? product.commissionPercent ?? 0;
-                affiliateAmount = Math.round(totalAmountInCents * (commRate / 100));
-                producerAmount -= affiliateAmount; 
-                affiliateId = affiliate.promoterId;
-            }
+             // Busca a afiliação usando o ID composto
+             const affiliation = await this.prisma.affiliate.findUnique({
+                 where: { 
+                     promoterId_marketplaceProductId: { 
+                         promoterId: dto.ref, 
+                         marketplaceProductId: mpProduct.id 
+                     } 
+                 }
+             });
+             
+             if (affiliation && affiliation.status === 'APPROVED') {
+                 affiliateId = dto.ref;
+             }
         }
     }
 
-    // Co-produção
-    const coproPercent = product.coproductionPercent || 0;
-    if (product.coproductionEmail && coproPercent > 0) {
-        const coproUser = await this.prisma.user.findUnique({ where: { email: product.coproductionEmail }});
-        if (coproUser) {
-            coproducerAmount = Math.round(totalAmountInCents * (coproPercent / 100));
-            producerAmount -= coproducerAmount; 
-            coproducerId = coproUser.id;
-        }
-    }
-
-    // 5. Gateway Keyclub
+    // 5. Gera ID Único Interno
     const externalId = `chk_${crypto.randomUUID()}`;
     const amountInBRL = totalAmountInCents / 100;
-    let keyclubResult;
 
     try {
-        keyclubResult = await this.keyclubService.createDeposit({
+        // 6. Chama Gateway Keyclub
+        // Enviamos o 'ref' nos metadados para o Webhook pegar depois!
+        const keyclubResult = await this.keyclubService.createDeposit({
             amount: amountInBRL,
             externalId: externalId,
             payerName: dto.customer.name,
@@ -107,11 +94,11 @@ export class CheckoutService {
             payerPhone: dto.customer.phone
         });
 
-        // 6. Salvar Depósito
+        // 7. Salva Depósito
         await this.prisma.deposit.create({
             data: {
-                id: externalId,
-                externalId: keyclubResult.transactionId,
+                id: externalId, // Nosso ID interno
+                externalId: keyclubResult.transactionId, // ID da Keyclub
                 amountInCents: totalAmountInCents,
                 netAmountInCents: totalAmountInCents, 
                 status: 'PENDING',
@@ -124,11 +111,12 @@ export class CheckoutService {
             }
         });
 
-        // 7. Salvar Transação do Produtor
+        // 8. Salva Transação PRINCIPAL (Do Produtor) como PENDING
+        // Salvamos o afiliado nos METADATA para o Webhook ler depois
         await this.prisma.transaction.create({
             data: {
                 id: externalId, 
-                amount: producerAmount, 
+                amount: totalAmountInCents,
                 status: 'PENDING',
                 type: 'SALE',
                 paymentMethod: 'PIX',
@@ -143,44 +131,15 @@ export class CheckoutService {
                 referenceId: keyclubResult.transactionId,
                 pixQrCode: keyclubResult.qrcode,
                 pixCopyPaste: keyclubResult.qrcode,
-                metadata: { affiliateId, affiliateAmount, coproducerId, coproducerAmount }
+                metadata: { 
+                    ref: affiliateId, 
+                    offerId: dto.offerId,
+                    items: dto.items 
+                }
             }
         });
 
-        // ✅ Transação do Afiliado
-        if (affiliateId && affiliateAmount > 0) {
-            await this.prisma.transaction.create({
-                data: {
-                    amount: affiliateAmount,
-                    status: 'PENDING',
-                    type: 'COMMISSION',
-                    paymentMethod: 'Balance',
-                    description: `Comissão: ${product.name}`,
-                    userId: affiliateId,
-                    productId: product.id,
-                    externalId: keyclubResult.transactionId,
-                    referenceId: externalId,
-                    customerName: dto.customer.name.split(' ')[0] + '...',
-                }
-            });
-        }
-
-        // ✅ Transação do Co-produtor
-        if (coproducerId && coproducerAmount > 0) {
-            await this.prisma.transaction.create({
-                data: {
-                    amount: coproducerAmount,
-                    status: 'PENDING',
-                    type: 'COPRODUCTION',
-                    paymentMethod: 'Balance',
-                    description: `Co-produção: ${product.name}`,
-                    userId: coproducerId,
-                    productId: product.id,
-                    externalId: keyclubResult.transactionId,
-                    referenceId: externalId,
-                }
-            });
-        }
+        // NOTA: As transações de comissão serão criadas pelo Webhook quando pagar.
 
         return {
             success: true,
@@ -193,13 +152,19 @@ export class CheckoutService {
 
     } catch (error: any) {
         this.logger.error(`Checkout Error: ${error.message}`);
-        throw new BadRequestException('Erro no processamento do pagamento.');
+        throw new BadRequestException('Erro ao gerar PIX. Verifique os dados.');
     }
   }
 
   async checkTransactionStatus(id: string) {
     const tx = await this.prisma.transaction.findFirst({
-        where: { OR: [{ externalId: id }, { referenceId: id }, { id: id }] },
+        where: { 
+            OR: [
+                { externalId: id }, 
+                { referenceId: id }, 
+                { id: id }
+            ] 
+        },
         select: { status: true }
     });
     return { status: tx?.status || 'PENDING' };

@@ -20,13 +20,23 @@ export class WebhooksService {
     const rawStatus = payload.status || payload.payment_status || '';
     const rawAmount = payload.amount || payload.value || 0;
     const status = String(rawStatus).toUpperCase();
+    
+    // Tenta pegar o ID do afiliado vindo dos metadados da Keyclub (se o checkout enviou)
+    const metadata = payload.metadata || {};
+    const affiliateId = metadata.ref || metadata.affiliateId || metadata.promoterId;
 
     if (!transactionId) throw new NotFoundException('transaction_id required');
 
     // 2. Busca Depósito (Tentativa 1: External ID, Tentativa 2: Internal ID)
     let deposit = await this.prisma.deposit.findUnique({
       where: { externalId: String(transactionId) },
-      include: { paymentLink: { include: { product: true } } }
+      include: { 
+        paymentLink: { 
+          include: { 
+            product: true // Importante para pegar a % de comissão
+          } 
+        } 
+      }
     });
 
     if (!deposit) {
@@ -53,10 +63,10 @@ export class WebhooksService {
       const amountNumber = Number(rawAmount); 
       const amountInCents = Math.round(amountNumber * 100);
       
-      // REGRA: Taxa Zero na entrada (cobra no saque)
-      const netAmount = amountInCents; 
+      // Valor líquido total (taxas da plataforma podem ser descontadas aqui se necessário)
+      const totalNetAmount = amountInCents; 
 
-      // Verifica se já existe a Transação no Extrato (criada pelo Checkout)
+      // Verifica se já existe a Transação no Extrato (criada pelo Checkout como PENDING)
       const existingTransaction = await this.prisma.transaction.findFirst({
          where: { 
              OR: [
@@ -67,52 +77,83 @@ export class WebhooksService {
          }
       });
 
-      // Define Tipo e Descrição
-      const isProductSale = existingTransaction?.type === 'SALE' || !!deposit.paymentLinkId;
-      const operationType = isProductSale ? 'SALE' : 'DEPOSIT';
+      // Define se é venda de produto ou depósito direto
+      // Tenta pegar o produto via paymentLink ou busca manual se não tiver link associado
+      let product = deposit.paymentLink?.product;
+      
+      if (!product && existingTransaction?.productId) {
+          product = await this.prisma.product.findUnique({ where: { id: existingTransaction.productId } });
+      }
+
+      const isProductSale = !!product;
+      
+      this.logger.log(`💰 Processando venda. Valor Total: R$ ${amountInCents/100}`);
+
+      // --- CÁLCULO DE COMISSÃO DE AFILIADO ---
+      let producerShare = totalNetAmount;
+      let affiliateShare = 0;
+      let affiliateUser = null;
+
+      // Se for venda de produto, tiver afiliado identificado e a afiliação estiver ativa no produto
+      if (isProductSale && affiliateId && product?.isAffiliationEnabled) {
+          // Busca se o afiliado existe
+          affiliateUser = await this.prisma.user.findUnique({ where: { id: affiliateId } });
+          
+          if (affiliateUser) {
+              const commissionRate = product.commissionPercent || 0; // Ex: 50.0
+              if (commissionRate > 0) {
+                  affiliateShare = Math.round(totalNetAmount * (commissionRate / 100));
+                  producerShare = totalNetAmount - affiliateShare;
+                  
+                  this.logger.log(`🤝 Split de Comissão: Produtor: R$${producerShare/100} | Afiliado (${affiliateUser.name}): R$${affiliateShare/100}`);
+              }
+          } else {
+            this.logger.warn(`⚠️ Afiliado ID ${affiliateId} não encontrado no banco.`);
+          }
+      }
+
+      // Descrição base para o extrato
       const description = isProductSale 
-          ? (existingTransaction?.description || `Venda Aprovada`) 
+          ? (existingTransaction?.description || `Venda: ${product?.name}`) 
           : 'Depósito via PIX';
 
-      this.logger.log(`💰 Aprovando ${operationType}: R$ ${amountInCents/100}`);
-
-      // --- TRANSAÇÃO ATÔMICA ---
+      // --- TRANSAÇÃO ATÔMICA (DB) ---
       await this.prisma.$transaction(async (tx) => {
-        // A. Atualiza Depósito
+        // A. Atualiza Depósito para CONFIRMED
         await tx.deposit.update({
           where: { id: deposit!.id },
           data: { 
             status: 'CONFIRMED',
             amountInCents: amountInCents,
-            netAmountInCents: netAmount 
+            netAmountInCents: totalNetAmount 
           },
         });
 
-        // B. Atualiza Saldo do Usuário
-        const updatedUser = await tx.user.update({
+        // B. CREDITA O PRODUTOR (Com o valor já descontado a comissão)
+        await tx.user.update({
           where: { id: deposit!.userId },
-          data: { balance: { increment: netAmount } },
+          data: { balance: { increment: producerShare } },
         });
 
-        // C. Atualiza ou Cria Transação no Extrato
+        // C. Atualiza ou Cria Transação no Extrato do PRODUTOR
         if (existingTransaction) {
-            // Se já existe (Checkout criou), ATUALIZA STATUS
+            // Se já existia, atualizamos o valor para a parte do produtor
             await tx.transaction.update({
                 where: { id: existingTransaction.id },
                 data: {
                     status: 'COMPLETED',
-                    amount: netAmount,
+                    amount: producerShare, // Valor real do produtor
                     metadata: payload as any
                 }
             });
         } else {
-            // Se não existe (Depósito direto), CRIA NOVA
+            // Se não existia, cria nova para o produtor
             await tx.transaction.create({
                 data: {
                     userId: deposit!.userId,
-                    productId: deposit!.paymentLink?.productId,
-                    type: operationType,      
-                    amount: netAmount, 
+                    productId: product?.id,
+                    type: isProductSale ? 'SALE' : 'DEPOSIT',      
+                    amount: producerShare, 
                     status: 'COMPLETED',   
                     referenceId: deposit!.externalId,
                     description: description,
@@ -124,26 +165,61 @@ export class WebhooksService {
                 },
             });
         }
+
+        // D. CREDITA O AFILIADO (Se houver split)
+        if (affiliateShare > 0 && affiliateUser) {
+            // Sobe saldo do afiliado
+            await tx.user.update({
+                where: { id: affiliateUser.id },
+                data: { balance: { increment: affiliateShare } }
+            });
+
+            // Cria linha no extrato do afiliado
+            await tx.transaction.create({
+                data: {
+                    userId: affiliateUser.id,
+                    productId: product?.id,
+                    type: 'COMMISSION', // Tipo diferente para identificar comissão
+                    amount: affiliateShare,
+                    status: 'COMPLETED',
+                    referenceId: deposit!.externalId,
+                    description: `Comissão: ${product?.name}`,
+                    paymentMethod: 'PIX',
+                    customerName: deposit!.payerName, // Quem comprou
+                    metadata: { ...payload, role: 'affiliate' } as any,
+                }
+            });
+        }
       });
 
-      // 5. Notifica Frontend via Socket
+      // 5. Notifica Frontend via Socket (Tempo Real)
       try {
         if (this.paymentGateway) {
-            // Pega saldo atualizado
-            const freshUser = await this.prisma.user.findUnique({where:{id:deposit.userId}});
-            
+            // Notifica Produtor
+            const freshProducer = await this.prisma.user.findUnique({where:{id:deposit.userId}});
             this.paymentGateway.emitToUser(deposit.userId, 'balance_updated', { 
-                balance: freshUser?.balance || 0 
+                balance: freshProducer?.balance || 0 
             });
-            
-            this.paymentGateway.emitToUser(deposit.userId, isProductSale ? 'sale_approved' : 'deposit_confirmed', { 
-                amount: amountInCents,
+            this.paymentGateway.emitToUser(deposit.userId, 'sale_approved', { 
+                amount: producerShare,
                 productName: description 
             });
+
+            // Notifica Afiliado (se houver)
+            if (affiliateShare > 0 && affiliateUser) {
+                const freshAffiliate = await this.prisma.user.findUnique({where:{id:affiliateUser.id}});
+                this.paymentGateway.emitToUser(affiliateUser.id, 'balance_updated', {
+                    balance: freshAffiliate?.balance || 0
+                });
+                this.paymentGateway.emitToUser(affiliateUser.id, 'commission_received', {
+                    amount: affiliateShare,
+                    productName: product?.name
+                });
+            }
         }
       } catch (e) { this.logger.warn('Socket error'); }
 
-      return { message: 'Confirmed successfully' };
+      return { message: 'Confirmed successfully with split' };
     }
 
     return { message: `Status ignored: ${status}` };
