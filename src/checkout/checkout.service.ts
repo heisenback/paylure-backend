@@ -26,6 +26,13 @@ export class CheckoutService {
 
     const sellerUser = product.merchant.user;
 
+    // --- CORREÇÃO DO TÍTULO (Items.0.title error) ---
+    // Se o frontend mandou itens sem título, preenchemos com o nome do produto
+    const cleanItems = dto.items?.map(item => ({
+        ...item,
+        title: item.title || product.name // Fallback para o nome do banco
+    })) || [];
+
     // 2. Calcula Valor Total
     let totalAmountInCents = Number(product.priceInCents); 
     
@@ -34,8 +41,8 @@ export class CheckoutService {
         if (offer) totalAmountInCents = offer.priceInCents;
     }
 
-    if (dto.items && dto.items.length > 0) {
-       const bumpsTotal = dto.items
+    if (cleanItems.length > 0) {
+       const bumpsTotal = cleanItems
             .filter(item => item.id !== product.id)
             .reduce((acc, item) => acc + item.price, 0);
        totalAmountInCents += bumpsTotal;
@@ -43,14 +50,9 @@ export class CheckoutService {
 
     if (totalAmountInCents < 100) throw new BadRequestException('Valor mínimo R$ 1,00.');
 
-    // 3. Valida Documento
-    let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
-    if (!finalDocument || finalDocument.length < 11) {
-        finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '00000000000';
-    }
-
-    // 4. Identifica Afiliado (Apenas Metadados)
+    // --- LÓGICA DO AFILIADO (Necessária para definir o CPF depois) ---
     let affiliateId: string | undefined = undefined;
+    let affiliateUser = null;
     
     if (dto.ref) {
         const mpProduct = await this.prisma.marketplaceProduct.findUnique({
@@ -69,26 +71,48 @@ export class CheckoutService {
              
              if (affiliation && affiliation.status === 'APPROVED') {
                  affiliateId = dto.ref;
+                 // Buscamos o usuário afiliado para pegar o CPF dele se precisar
+                 affiliateUser = await this.prisma.user.findUnique({ where: { id: affiliateId }});
              }
         }
     }
 
-    // 5. Gera ID Único Interno
+    // --- 3. LÓGICA DE CPF/DOCUMENTO (Checkout Absoluto) ---
+    let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
+    let finalPhone = dto.customer.phone ? dto.customer.phone.replace(/\D/g, '') : '11999999999';
+
+    // Se o cliente não preencheu o CPF (oculto no checkout)
+    if (!finalDocument || finalDocument.length < 11) {
+        if (affiliateUser && affiliateUser.document) {
+            // REGRA: Se tem afiliado, usa o CPF do afiliado
+            finalDocument = affiliateUser.document.replace(/\D/g, '');
+            this.logger.log(`Using Affiliate Document for fallback: ${finalDocument}`);
+        } else {
+            // REGRA: Se não, usa o CPF do Seller (Produtor)
+            finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '00000000000';
+            this.logger.log(`Using Seller Document for fallback: ${finalDocument}`);
+        }
+    }
+
+    // Fallback final de segurança
+    if (!finalDocument || finalDocument.length < 11) finalDocument = '00000000000';
+
+    // 4. Gera ID Único Interno
     const externalId = `chk_${crypto.randomUUID()}`;
     const amountInBRL = totalAmountInCents / 100;
 
     try {
-        // 6. Chama Gateway Keyclub
+        // 5. Chama Gateway Keyclub
         const keyclubResult = await this.keyclubService.createDeposit({
             amount: amountInBRL,
             externalId: externalId,
             payerName: dto.customer.name,
             payerEmail: dto.customer.email,
-            payerDocument: finalDocument,
-            payerPhone: dto.customer.phone
+            payerDocument: finalDocument, // CPF resolvido
+            payerPhone: finalPhone
         });
 
-        // 7. Salva Depósito
+        // 6. Salva Depósito
         await this.prisma.deposit.create({
             data: {
                 id: externalId,
@@ -105,7 +129,7 @@ export class CheckoutService {
             }
         });
 
-        // 8. Salva Transação PRINCIPAL (Do Produtor) como PENDING
+        // 7. Salva Transação PRINCIPAL (Do Produtor) como PENDING
         await this.prisma.transaction.create({
             data: {
                 id: externalId, 
@@ -119,16 +143,15 @@ export class CheckoutService {
                 customerName: dto.customer.name,       
                 customerEmail: dto.customer.email,     
                 customerDoc: finalDocument,            
-                customerPhone: dto.customer.phone,     
+                customerPhone: finalPhone,     
                 externalId: keyclubResult.transactionId,
                 referenceId: keyclubResult.transactionId,
                 pixQrCode: keyclubResult.qrcode,
                 pixCopyPaste: keyclubResult.qrcode,
-                // ✅ CORREÇÃO: Adicionado "as any" para evitar erro de tipagem no JSON
                 metadata: { 
                     ref: affiliateId, 
                     offerId: dto.offerId,
-                    items: dto.items 
+                    items: cleanItems 
                 } as any
             }
         });
@@ -144,7 +167,7 @@ export class CheckoutService {
 
     } catch (error: any) {
         this.logger.error(`Checkout Error: ${error.message}`);
-        throw new BadRequestException('Erro ao gerar PIX. Verifique os dados.');
+        throw new BadRequestException('Erro ao gerar PIX. Verifique os dados ou tente novamente.');
     }
   }
 
