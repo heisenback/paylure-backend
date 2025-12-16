@@ -4,7 +4,6 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { KeyclubService } from 'src/keyclub/keyclub.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import * as crypto from 'crypto';
-// ✅ CORREÇÃO: Importando o tipo User para a variável affiliateUser
 import { User } from '@prisma/client';
 
 @Injectable()
@@ -28,10 +27,9 @@ export class CheckoutService {
 
     const sellerUser = product.merchant.user;
 
-    // --- CORREÇÃO DO TÍTULO (Items.0.title error) ---
     const cleanItems = dto.items?.map(item => ({
         ...item,
-        title: item.title || product.name // Fallback para o nome do banco
+        title: item.title || product.name
     })) || [];
 
     // 2. Calcula Valor Total
@@ -51,11 +49,10 @@ export class CheckoutService {
 
     if (totalAmountInCents < 100) throw new BadRequestException('Valor mínimo R$ 1,00.');
 
-    // --- LÓGICA DO AFILIADO ---
+    // ✅ CORREÇÃO 4: LÓGICA COMPLETA DO AFILIADO
     let affiliateId: string | undefined = undefined;
-    
-    // ✅ CORREÇÃO: Declarando o tipo explicitamente para evitar erro TS2322
     let affiliateUser: User | null = null;
+    let commissionRate: number = 0;
     
     if (dto.ref) {
         const mpProduct = await this.prisma.marketplaceProduct.findUnique({
@@ -74,30 +71,28 @@ export class CheckoutService {
              
              if (affiliation && affiliation.status === 'APPROVED') {
                  affiliateId = dto.ref;
-                 // Buscamos o usuário afiliado para pegar o CPF dele se precisar
+                 commissionRate = mpProduct.commissionRate || product.commissionPercent || 0;
                  affiliateUser = await this.prisma.user.findUnique({ where: { id: affiliateId }});
+                 
+                 this.logger.log(`✅ Venda com afiliado: ${affiliateUser?.email} | Comissão: ${commissionRate}%`);
              }
         }
     }
 
-    // --- 3. LÓGICA DE CPF/DOCUMENTO (Checkout Absoluto) ---
+    // 3. Lógica de CPF/Documento
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
     let finalPhone = dto.customer.phone ? dto.customer.phone.replace(/\D/g, '') : '11999999999';
 
-    // Se o cliente não preencheu o CPF (oculto no checkout)
     if (!finalDocument || finalDocument.length < 11) {
         if (affiliateUser && affiliateUser.document) {
-            // REGRA: Se tem afiliado, usa o CPF do afiliado
             finalDocument = affiliateUser.document.replace(/\D/g, '');
             this.logger.log(`Using Affiliate Document for fallback: ${finalDocument}`);
         } else {
-            // REGRA: Se não, usa o CPF do Seller (Produtor)
             finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '00000000000';
             this.logger.log(`Using Seller Document for fallback: ${finalDocument}`);
         }
     }
 
-    // Fallback final de segurança
     if (!finalDocument || finalDocument.length < 11) finalDocument = '00000000000';
 
     // 4. Gera ID Único Interno
@@ -111,7 +106,7 @@ export class CheckoutService {
             externalId: externalId,
             payerName: dto.customer.name,
             payerEmail: dto.customer.email,
-            payerDocument: finalDocument, // CPF resolvido
+            payerDocument: finalDocument,
             payerPhone: finalPhone
         });
 
@@ -132,11 +127,18 @@ export class CheckoutService {
             }
         });
 
-        // 7. Salva Transação PRINCIPAL (Do Produtor) como PENDING
+        // ✅ 7. CALCULA SPLIT DE COMISSÃO
+        const affiliateAmountInCents = affiliateId 
+            ? Math.round(totalAmountInCents * (commissionRate / 100))
+            : 0;
+        
+        const sellerAmountInCents = totalAmountInCents - affiliateAmountInCents;
+
+        // 8. Salva Transação PRINCIPAL (Do Produtor) como PENDING
         await this.prisma.transaction.create({
             data: {
                 id: externalId, 
-                amount: totalAmountInCents,
+                amount: sellerAmountInCents, // ✅ Valor já com desconto da comissão
                 status: 'PENDING',
                 type: 'SALE',
                 paymentMethod: 'PIX',
@@ -154,10 +156,40 @@ export class CheckoutService {
                 metadata: { 
                     ref: affiliateId, 
                     offerId: dto.offerId,
-                    items: cleanItems 
+                    items: cleanItems,
+                    commissionRate: commissionRate,
+                    affiliateAmount: affiliateAmountInCents
                 } as any
             }
         });
+
+        // ✅ 9. CRIA TRANSAÇÃO DO AFILIADO (Se houver)
+        if (affiliateId && affiliateAmountInCents > 0) {
+            await this.prisma.transaction.create({
+                data: {
+                    id: `${externalId}_aff`,
+                    amount: affiliateAmountInCents,
+                    status: 'PENDING',
+                    type: 'COMMISSION',
+                    paymentMethod: 'PIX',
+                    description: `Comissão de Afiliado: ${product.name} (${commissionRate}%)`,
+                    userId: affiliateId,
+                    productId: product.id,
+                    customerName: dto.customer.name,
+                    customerEmail: dto.customer.email,
+                    externalId: keyclubResult.transactionId,
+                    referenceId: externalId,
+                    metadata: {
+                        isAffiliateCommission: true,
+                        originalTransactionId: externalId,
+                        sellerId: sellerUser.id,
+                        commissionRate: commissionRate
+                    } as any
+                }
+            });
+            
+            this.logger.log(`✅ Transação de comissão criada: R$ ${(affiliateAmountInCents/100).toFixed(2)} para afiliado ${affiliateId}`);
+        }
 
         return {
             success: true,

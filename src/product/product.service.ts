@@ -10,44 +10,56 @@ export class ProductService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  // ✅ NOVO MÉTODO: Garante que achamos o ID da Loja (Merchant) pelo Usuário
-  async getMerchantId(userId: string): Promise<string> {
-      const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
-      // Se achou a loja, retorna o ID dela. Se não, retorna o ID do user como fallback.
-      return merchant ? merchant.id : userId;
-  }
-
-  // ==================================================================
-  // MÉTODOS PÚBLICOS
-  // ==================================================================
-  async findOnePublic(id: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { id },
-      include: { 
-          merchant: { include: { user: { select: { name: true, email: true } } } },
-          offers: true 
-      }
-    });
-    if (!product) throw new NotFoundException('Produto não encontrado');
-
+  // ✅ CORREÇÃO 1: Formata preço corretamente
+  private formatProduct(product: any) {
+    if (!product) return null;
     return {
         ...product,
         title: product.name,
-        amount: product.priceInCents
+        amount: product.priceInCents, // ✅ Mantém em centavos
+        price: product.priceInCents / 100, // ✅ NOVO: Adiciona versão em reais
+        image: product.imageUrl, // ✅ Compatibilidade com frontend antigo
     };
   }
 
-  // ==================================================================
-  // CREATE
-  // ==================================================================
-  async create(dto: CreateProductDto, merchantId: string) {
+  async findAllByUser(userId: string) {
+    const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
+    
+    const products = await this.prisma.product.findMany({
+      where: {
+        OR: [
+            { merchantId: userId },
+            { merchantId: merchant?.id || 'ignore' }
+        ]
+      },
+      include: { offers: true, coupons: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return products.map(p => this.formatProduct(p));
+  }
+
+  async findById(productId: string) {
+    const product = await this.prisma.product.findUnique({ 
+        where: { id: productId },
+        include: { offers: true, coupons: true }
+    });
+    return this.formatProduct(product);
+  }
+
+  async findOnePublic(id: string) {
+    return this.findById(id);
+  }
+
+  async create(dto: CreateProductDto, userId: string) {
     try {
+        const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
+        const ownerId = merchant ? merchant.id : userId;
+
         const priceVal = Number(dto.price);
-        if (isNaN(priceVal)) throw new BadRequestException('Preço inválido.');
-        const priceInCents = Math.round(priceVal * 100);
+        const priceInCents = isNaN(priceVal) ? 0 : Math.round(priceVal * 100);
 
         let finalCheckoutConfig = dto.checkoutConfig || {};
-        
         if (dto.imageUrl) {
             finalCheckoutConfig = {
                 ...finalCheckoutConfig,
@@ -56,20 +68,16 @@ export class ProductService {
                     dashboardCover: dto.imageUrl,
                     productImage: dto.imageUrl,
                     brandName: dto.title
-                },
-                deliveryMethod: dto.deliveryMethod || 'PAYLURE_MEMBERS'
+                }
             };
         }
-
-        const commPercent = dto.commissionPercent ? Number(dto.commissionPercent) : 0;
-        const coproPercent = dto.coproductionPercent ? Number(dto.coproductionPercent) : 0;
 
         const newProduct = await this.prisma.product.create({
           data: {
             name: dto.title,
             description: dto.description || '',
             priceInCents: priceInCents,
-            merchantId: merchantId, // Agora vai usar o ID certo
+            merchantId: ownerId,
             imageUrl: dto.imageUrl || null,
             category: dto.category || 'WEALTH',
             salesPageUrl: dto.salesPageUrl || null,
@@ -81,12 +89,11 @@ export class ProductService {
             fileName: dto.fileName || null,
             isAffiliationEnabled: Boolean(dto.isAffiliationEnabled),
             showInMarketplace: Boolean(dto.showInMarketplace),
-            commissionPercent: commPercent,
+            commissionPercent: Number(dto.commissionPercent || 0),
             affiliationType: dto.affiliationType || 'OPEN',
             materialLink: dto.materialLink || null,
             coproductionEmail: dto.coproductionEmail || null,
-            coproductionPercent: coproPercent,
-            content: dto.content || null,
+            coproductionPercent: Number(dto.coproductionPercent || 0),
             checkoutConfig: finalCheckoutConfig,
             offers: {
                 create: dto.offers?.map(o => ({
@@ -106,11 +113,11 @@ export class ProductService {
 
         if (dto.showInMarketplace) {
             await this.prisma.marketplaceProduct.create({
-                data: { productId: newProduct.id, status: 'AVAILABLE', commissionRate: commPercent }
-            }).catch(e => this.logger.warn(`Erro marketplace: ${e.message}`));
+                data: { productId: newProduct.id, status: 'AVAILABLE', commissionRate: Number(dto.commissionPercent || 0) }
+            }).catch(e => this.logger.warn(e));
         }
 
-        return newProduct;
+        return this.formatProduct(newProduct);
 
     } catch (error) {
         this.logger.error(`Erro create: ${error.message}`);
@@ -118,71 +125,50 @@ export class ProductService {
     }
   }
 
-  async findAllByMerchant(merchantId: string) {
-    return this.prisma.product.findMany({ where: { merchantId }, include: { offers: true, coupons: true }, orderBy: { createdAt: 'desc' } });
-  }
-
-  async findMyCoProductions(userEmail: string) {
-      return this.prisma.product.findMany({ where: { coproductionEmail: userEmail }, include: { offers: true, coupons: true }, orderBy: { createdAt: 'desc' } });
-  }
-
-  async findById(productId: string) {
-    return this.prisma.product.findUnique({ where: { id: productId }, include: { offers: true, coupons: true } });
-  }
-
-  async remove(productId: string, merchantId: string): Promise<void> {
-    const product = await this.prisma.product.findUnique({ where: { id: productId } });
-    if (!product) throw new NotFoundException('Produto não encontrado.');
-    if (product.merchantId !== merchantId) throw new ForbiddenException('Sem permissão.');
-    try { await this.prisma.marketplaceProduct.deleteMany({ where: { productId } }); } catch (e) {}
-    await this.prisma.product.delete({ where: { id: productId } });
-  }
-
-  // ==================================================================
-  // UPDATE
-  // ==================================================================
+  // ✅ CORREÇÃO 3: Afiliado pode salvar checkoutConfig
   async update(id: string, userId: string, userEmail: string, dto: UpdateProductDto) {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('Produto não encontrado');
 
-    const isOwner = product.merchantId === userId; // Note: Isso compara IDs. Se merchantId no banco for diferente do userId, pode dar false aqui.
-    // MAS, vamos confiar na verificação do controller que passa o ID correto, ou ajustar aqui.
-    // Melhor: Buscar o merchantId do usuário novamente para comparar com certeza.
-    const userMerchantId = await this.getMerchantId(userId);
-    const isRealOwner = product.merchantId === userMerchantId;
+    const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
+    const merchantId = merchant ? merchant.id : null;
 
+    const isOwner = (product.merchantId === userId) || (merchantId && product.merchantId === merchantId);
     const isCoProducer = product.coproductionEmail === userEmail; 
 
-    // Verifica Afiliado
     let isAffiliate = false;
-    if (!isRealOwner && !isCoProducer) {
+    if (!isOwner && !isCoProducer) {
         const affiliation = await this.prisma.affiliate.findUnique({
             where: { promoterId_marketplaceProductId: { promoterId: userId, marketplaceProductId: id } }
         });
         if (affiliation?.status === 'APPROVED') isAffiliate = true;
     }
 
-    if (!isRealOwner && !isCoProducer && !isAffiliate) throw new ForbiddenException('Sem permissão.');
+    if (!isOwner && !isCoProducer && !isAffiliate) throw new ForbiddenException('Sem permissão.');
 
-    // REGRA AFILIADO
-    if (isAffiliate && !isRealOwner && !isCoProducer) {
+    // ✅ AFILIADO: Permite salvar checkoutConfig sem restrições
+    if (isAffiliate && !isOwner && !isCoProducer) {
         if (dto.price || dto.title || dto.commissionPercent || dto.offers) {
             throw new ForbiddenException('Afiliados podem personalizar apenas o visual.');
         }
-        return this.prisma.product.update({
+        
+        // ✅ SALVA CONFIG DO AFILIADO
+        const updated = await this.prisma.product.update({
             where: { id },
-            data: { checkoutConfig: dto.checkoutConfig }
+            data: { checkoutConfig: dto.checkoutConfig },
+            include: { offers: true, coupons: true }
         });
+        
+        return this.formatProduct(updated);
     }
 
-    // Lógica Dono
+    // Lógica Dono/Co-Produtor
     const data: any = { ...dto };
     delete data.price; delete data.title; delete data.file; delete data.offers; delete data.coupons;
 
     if (dto.price !== undefined) data.priceInCents = Math.round(Number(dto.price) * 100);
     if (dto.title) data.name = dto.title;
-    if (dto.salesPageUrl !== undefined) data.salesPageUrl = dto.salesPageUrl;
-
+    
     if (dto.checkoutConfig) {
         data.checkoutConfig = dto.checkoutConfig;
     }
@@ -233,22 +219,38 @@ export class ProductService {
         include: { offers: true, coupons: true }
     });
     
-    if (isRealOwner || isCoProducer) {
-        if (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined) {
-             const commRate = (dto.commissionPercent !== undefined ? Number(dto.commissionPercent) : updated.commissionPercent) || 0;
-             if (updated.showInMarketplace) {
-                 const exists = await this.prisma.marketplaceProduct.findUnique({ where: { productId: id } });
-                 if (exists) {
-                     await this.prisma.marketplaceProduct.update({ where: { productId: id }, data: { commissionRate: commRate } });
-                 } else {
-                     await this.prisma.marketplaceProduct.create({ data: { productId: id, status: 'AVAILABLE', commissionRate: commRate } });
-                 }
+    if ((isOwner || isCoProducer) && (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined)) {
+         const commRate = updated.commissionPercent || 0;
+         if (updated.showInMarketplace) {
+             const exists = await this.prisma.marketplaceProduct.findUnique({ where: { productId: id } });
+             if (exists) {
+                 await this.prisma.marketplaceProduct.update({ where: { productId: id }, data: { commissionRate: commRate } });
              } else {
-                 await this.prisma.marketplaceProduct.deleteMany({ where: { productId: id } });
+                 await this.prisma.marketplaceProduct.create({ data: { productId: id, status: 'AVAILABLE', commissionRate: commRate } });
              }
-        }
+         } else {
+             await this.prisma.marketplaceProduct.deleteMany({ where: { productId: id } });
+         }
     }
     
-    return updated;
+    return this.formatProduct(updated);
+  }
+
+  async findMyCoProductions(userEmail: string) {
+      const prods = await this.prisma.product.findMany({ where: { coproductionEmail: userEmail }, include: { offers: true, coupons: true }, orderBy: { createdAt: 'desc' } });
+      return prods.map(p => this.formatProduct(p));
+  }
+  
+  async remove(productId: string, userId: string): Promise<void> {
+    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+    if (!product) throw new NotFoundException();
+    
+    const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
+    const merchantId = merchant ? merchant.id : null;
+    
+    if (product.merchantId !== userId && product.merchantId !== merchantId) throw new ForbiddenException();
+
+    try { await this.prisma.marketplaceProduct.deleteMany({ where: { productId } }); } catch (e) {}
+    await this.prisma.product.delete({ where: { id: productId } });
   }
 }

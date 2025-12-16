@@ -1,7 +1,7 @@
 // src/product/product.controller.ts
 import { 
   Controller, Get, Post, Body, Patch, Param, Delete, 
-  UseGuards, HttpCode, HttpStatus, Query 
+  UseGuards
 } from '@nestjs/common';
 import { ProductService } from './product.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -16,34 +16,37 @@ export class ProductController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'))
-  async create(@Body() createProductDto: CreateProductDto, @GetUser() user: User) {
+  create(@Body() createProductDto: CreateProductDto, @GetUser() user: User) {
     const u = user as any;
-    // ✅ CORREÇÃO: Busca o Merchant ID real no banco
-    const merchantId = await this.productService.getMerchantId(u.id);
-    return this.productService.create(createProductDto, merchantId);
+    // Passa o ID do usuário, o Service resolve se usa Merchant ou UserID
+    return this.productService.create(createProductDto, u.id);
   }
 
+  // ✅ AQUI ESTÁ A MÁGICA PARA OS PRODUTOS VOLTAREM
   @Get()
   @UseGuards(AuthGuard('jwt'))
-  async findAll(@GetUser() user: User) {
+  findAll(@GetUser() user: User) {
     const u = user as any;
-    // ✅ CORREÇÃO: Busca o Merchant ID real no banco. Isso trará seus produtos de volta!
-    const merchantId = await this.productService.getMerchantId(u.id);
-    return this.productService.findAllByMerchant(merchantId);
+    // Chama o método novo que procura em todas as gavetas
+    return this.productService.findAllByUser(u.id);
   }
 
   @Get('public/:id')
-  async findOnePublic(@Param('id') id: string) {
-    if ((this.productService as any).findOnePublic) {
-        return (this.productService as any).findOnePublic(id);
-    }
-    return this.productService.findById(id);
+  findOnePublic(@Param('id') id: string) {
+    return this.productService.findOnePublic(id);
   }
 
   @Get(':id')
   @UseGuards(AuthGuard('jwt'))
   findOne(@Param('id') id: string) {
     return this.productService.findById(id);
+  }
+
+  @Get('coproduction')
+  @UseGuards(AuthGuard('jwt'))
+  findCopro(@GetUser() user: User) {
+      const u = user as any;
+      return this.productService.findMyCoProductions(u.email);
   }
 
   @Patch(':id')
@@ -54,15 +57,13 @@ export class ProductController {
     @Body() updateProductDto: UpdateProductDto
   ) {
     const u = user as any;
-    // Passa o ID e Email para o service validar (Service agora resolve o Merchant ID sozinho)
     return this.productService.update(id, u.id, u.email, updateProductDto);
   }
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'))
-  async remove(@Param('id') id: string, @GetUser() user: User) {
+  remove(@Param('id') id: string, @GetUser() user: User) {
     const u = user as any;
-    const merchantId = await this.productService.getMerchantId(u.id);
-    return this.productService.remove(id, merchantId);
+    return this.productService.remove(id, u.id);
   }
 }
