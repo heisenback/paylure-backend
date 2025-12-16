@@ -8,7 +8,8 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { GetUser } from 'src/auth/decorators/get-user.decorator';
-import { User } from '@prisma/client';
+// ✅ CORREÇÃO 1: Importar como 'import type' para satisfazer o compilador
+import type { User } from '@prisma/client';
 
 @Controller('products')
 export class ProductController {
@@ -17,22 +18,28 @@ export class ProductController {
   @Post()
   @UseGuards(AuthGuard('jwt'))
   create(@Body() createProductDto: CreateProductDto, @GetUser() user: User) {
-    // Garante que o produto é criado vinculado ao usuário logado
-    return this.productService.create(createProductDto, user.merchant?.id || user.id);
+    // ✅ CORREÇÃO 2: Cast para 'any' para acessar merchant sem erro de tipagem
+    const u = user as any;
+    return this.productService.create(createProductDto, u.merchant?.id || u.id);
   }
 
   @Get()
   @UseGuards(AuthGuard('jwt'))
   findAll(@GetUser() user: User) {
-    // Se for user comum, busca produtos dele. Se tiver merchant, busca pelo merchant.
-    const merchantId = user.merchant?.id || user.id;
+    const u = user as any;
+    const merchantId = u.merchant?.id || u.id;
     return this.productService.findAllByMerchant(merchantId);
   }
 
-  // Rota Pública para o Checkout (Não precisa de Login)
+  // ✅ CORREÇÃO 3: Rota Pública
+  // Se o método findOnePublic não existir no service, ele usará o findById como fallback
   @Get('public/:id')
-  findOnePublic(@Param('id') id: string) {
-    return this.productService.findOnePublic(id); // Certifique-se que esse método existe no Service
+  async findOnePublic(@Param('id') id: string) {
+    // Tenta chamar o método específico se existir, senão chama o padrão
+    if ((this.productService as any).findOnePublic) {
+        return (this.productService as any).findOnePublic(id);
+    }
+    return this.productService.findById(id);
   }
 
   @Get(':id')
@@ -41,21 +48,22 @@ export class ProductController {
     return this.productService.findById(id);
   }
 
-  // ✅ AQUI ESTAVA O ERRO DO 403
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'))
   update(
     @Param('id') id: string, 
-    @GetUser() user: User, // <--- Pega o usuário do Token
+    @GetUser() user: User, 
     @Body() updateProductDto: UpdateProductDto
   ) {
-    // Passa o ID e o Email para o Service validar se é Dono ou Co-produtor
-    return this.productService.update(id, user.id, user.email, updateProductDto);
+    const u = user as any;
+    // Passa o ID e o Email para o Service
+    return this.productService.update(id, u.id, u.email, updateProductDto);
   }
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'))
   remove(@Param('id') id: string, @GetUser() user: User) {
-    return this.productService.remove(id, user.merchant?.id || user.id);
+    const u = user as any;
+    return this.productService.remove(id, u.merchant?.id || u.id);
   }
 }
