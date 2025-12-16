@@ -1,4 +1,3 @@
-// src/product/product.controller.ts
 import { 
   Controller, Get, Post, Body, Patch, Param, Delete, 
   UseGuards
@@ -16,18 +15,18 @@ export class ProductController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'))
-  create(@Body() createProductDto: CreateProductDto, @GetUser() user: User) {
+  create(
+    @Body() createProductDto: CreateProductDto, 
+    @GetUser() user: User
+  ) {
     const u = user as any;
-    // Passa o ID do usuário, o Service resolve se usa Merchant ou UserID
     return this.productService.create(createProductDto, u.id);
   }
 
-  // ✅ AQUI ESTÁ A MÁGICA PARA OS PRODUTOS VOLTAREM
   @Get()
   @UseGuards(AuthGuard('jwt'))
   findAll(@GetUser() user: User) {
     const u = user as any;
-    // Chama o método novo que procura em todas as gavetas
     return this.productService.findAllByUser(u.id);
   }
 
@@ -36,24 +35,25 @@ export class ProductController {
     return this.productService.findOnePublic(id);
   }
 
+  // ✅ ROTA DE CO-PRODUÇÃO PRECISA VIR ANTES DO :id
+  @Get('coproduction')
+  @UseGuards(AuthGuard('jwt'))
+  findCopro(@GetUser() user: User) {
+    const u = user as any;
+    return this.productService.findMyCoProductions(u.email);
+  }
+
   @Get(':id')
   @UseGuards(AuthGuard('jwt'))
   findOne(@Param('id') id: string) {
     return this.productService.findById(id);
   }
 
-  @Get('coproduction')
-  @UseGuards(AuthGuard('jwt'))
-  findCopro(@GetUser() user: User) {
-      const u = user as any;
-      return this.productService.findMyCoProductions(u.email);
-  }
-
   @Patch(':id')
   @UseGuards(AuthGuard('jwt'))
   update(
-    @Param('id') id: string, 
-    @GetUser() user: User, 
+    @Param('id') id: string,
+    @GetUser() user: User,
     @Body() updateProductDto: UpdateProductDto
   ) {
     const u = user as any;

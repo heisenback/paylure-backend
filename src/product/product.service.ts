@@ -43,7 +43,7 @@ export class ProductService {
     const shouldFixBrandName =
       !rawBrandName || rawBrandName.toLowerCase().includes('carregando');
 
-    const nextBranding = {
+    const nextBranding: any = {
       ...branding,
       brandName: shouldFixBrandName ? titleFallback : rawBrandName,
     };
@@ -65,7 +65,10 @@ export class ProductService {
 
     const products = await this.prisma.product.findMany({
       where: {
-        OR: [{ merchantId: userId }, { merchantId: merchant?.id || 'ignore' }],
+        OR: [
+          { merchantId: userId },
+          ...(merchant?.id ? [{ merchantId: merchant.id }] : []),
+        ],
       },
       include: { offers: true, coupons: true },
       orderBy: { createdAt: 'desc' },
@@ -104,7 +107,7 @@ export class ProductService {
       const priceVal = Number(dto.price);
       const priceInCents = isNaN(priceVal) ? 0 : Math.round(priceVal * 100);
 
-      // ✅ Correção: sempre normaliza o checkoutConfig (mesmo sem imageUrl)
+      // ✅ sempre normaliza o checkoutConfig
       const finalCheckoutConfig = this.normalizeCheckoutConfig(
         dto.checkoutConfig,
         dto.title,
@@ -115,7 +118,7 @@ export class ProductService {
         data: {
           name: dto.title,
           description: dto.description || '',
-          priceInCents: priceInCents,
+          priceInCents,
           merchantId: ownerId,
           imageUrl: dto.imageUrl || null,
           category: dto.category || 'WEALTH',
@@ -166,7 +169,7 @@ export class ProductService {
 
       return this.formatProduct(newProduct);
     } catch (error: any) {
-      this.logger.error(`Erro create: ${error.message}`);
+      this.logger.error(`Erro create: ${error?.message || error}`);
       throw new BadRequestException('Erro ao criar produto.');
     }
   }
@@ -178,29 +181,40 @@ export class ProductService {
     const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
     const merchantId = merchant ? merchant.id : null;
 
-    const isOwner = product.merchantId === userId || (merchantId && product.merchantId === merchantId);
-    const isCoProducer = product.coproductionEmail === userEmail;
+    const isOwner =
+      product.merchantId === userId ||
+      (merchantId && product.merchantId === merchantId);
+
+    // ✅ co-producer por email CASE-INSENSITIVE (evita “não aparece” por maiúsculas/minúsculas)
+    const isCoProducer =
+      (product.coproductionEmail || '').toLowerCase() === (userEmail || '').toLowerCase();
 
     let isAffiliate = false;
     if (!isOwner && !isCoProducer) {
       const affiliation = await this.prisma.affiliate.findUnique({
-        where: { promoterId_marketplaceProductId: { promoterId: userId, marketplaceProductId: id } },
+        where: {
+          promoterId_marketplaceProductId: {
+            promoterId: userId,
+            marketplaceProductId: id,
+          },
+        },
       });
       if (affiliation?.status === 'APPROVED') isAffiliate = true;
     }
 
-    if (!isOwner && !isCoProducer && !isAffiliate) throw new ForbiddenException('Sem permissão.');
+    if (!isOwner && !isCoProducer && !isAffiliate) {
+      throw new ForbiddenException('Sem permissão.');
+    }
 
     // ✅ Afiliado pode alterar apenas visual
     if (isAffiliate && !isOwner && !isCoProducer) {
-      if (dto.price || dto.title || dto.commissionPercent || dto.offers) {
+      if (dto.price || dto.title || dto.commissionPercent || dto.offers || dto.coupons) {
         throw new ForbiddenException('Afiliados podem personalizar apenas o visual.');
       }
 
-      // ✅ Mesmo no afiliado, normaliza pra não salvar "Carregando..."
       const normalized = this.normalizeCheckoutConfig(
         dto.checkoutConfig,
-        product.name, // fallback
+        product.name,
         null,
       );
 
@@ -215,6 +229,8 @@ export class ProductService {
 
     // Dono/Co-produtor
     const data: any = { ...dto };
+
+    // removidos do "data" pq tratamos manualmente
     delete data.price;
     delete data.title;
     delete data.file;
@@ -276,13 +292,22 @@ export class ProductService {
       include: { offers: true, coupons: true },
     });
 
-    if ((isOwner || isCoProducer) && (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined)) {
+    if (
+      (isOwner || isCoProducer) &&
+      (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined)
+    ) {
       const commRate = updated.commissionPercent || 0;
 
       if (updated.showInMarketplace) {
-        const exists = await this.prisma.marketplaceProduct.findUnique({ where: { productId: id } });
+        const exists = await this.prisma.marketplaceProduct.findUnique({
+          where: { productId: id },
+        });
+
         if (exists) {
-          await this.prisma.marketplaceProduct.update({ where: { productId: id }, data: { commissionRate: commRate } });
+          await this.prisma.marketplaceProduct.update({
+            where: { productId: id },
+            data: { commissionRate: commRate },
+          });
         } else {
           await this.prisma.marketplaceProduct.create({
             data: { productId: id, status: 'AVAILABLE', commissionRate: commRate },
@@ -297,11 +322,18 @@ export class ProductService {
   }
 
   async findMyCoProductions(userEmail: string) {
+    // ✅ busca por email CASE-INSENSITIVE (prisma)
     const prods = await this.prisma.product.findMany({
-      where: { coproductionEmail: userEmail },
+      where: {
+        coproductionEmail: {
+          equals: userEmail,
+          mode: 'insensitive',
+        },
+      },
       include: { offers: true, coupons: true },
       orderBy: { createdAt: 'desc' },
     });
+
     return prods.map((p) => this.formatProduct(p));
   }
 
@@ -312,11 +344,14 @@ export class ProductService {
     const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
     const merchantId = merchant ? merchant.id : null;
 
-    if (product.merchantId !== userId && product.merchantId !== merchantId) throw new ForbiddenException();
+    if (product.merchantId !== userId && product.merchantId !== merchantId) {
+      throw new ForbiddenException();
+    }
 
     try {
       await this.prisma.marketplaceProduct.deleteMany({ where: { productId } });
     } catch (e) {}
+
     await this.prisma.product.delete({ where: { id: productId } });
   }
 }
