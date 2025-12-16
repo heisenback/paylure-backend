@@ -15,7 +15,7 @@ export class CheckoutService {
   ) {}
 
   async processCheckout(dto: CreatePaymentDto) {
-    // 1. Busca Produto e Dados do Vendedor
+    // 1. Busca Produto
     const product = await this.prisma.product.findUnique({
       where: { id: dto.productId },
       include: { merchant: { include: { user: true } } }
@@ -26,17 +26,15 @@ export class CheckoutService {
 
     const sellerUser = product.merchant.user;
 
-    // 2. Calcula Valor (Base + Order Bumps se houver)
+    // 2. Calcula Valor
     let totalAmountInCents = Number(product.priceInCents); 
     if (dto.items && dto.items.length > 0) {
-       // Soma itens extras (bumps) se houver lógica no front enviando tudo junto
        const bumpsTotal = dto.items
             .filter(item => item.id !== product.id)
             .reduce((acc, item) => acc + item.price, 0);
        totalAmountInCents += bumpsTotal;
     }
 
-    // Se for uma oferta específica, sobrescreve o valor base
     if (dto.offerId) {
         const offer = await this.prisma.offer.findUnique({ where: { id: dto.offerId }});
         if (offer) totalAmountInCents = offer.priceInCents;
@@ -44,67 +42,57 @@ export class CheckoutService {
 
     if (totalAmountInCents < 100) throw new BadRequestException('Valor mínimo R$ 1,00.');
 
-    // 3. Documento do Cliente
+    // 3. Documento
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
-    // Fallback: se não vier documento (checkout simples), usa do produtor (arriscado, mas mantido da sua lógica)
     if (!finalDocument || finalDocument.length < 11) {
         finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '';
     }
-    if (!finalDocument) throw new BadRequestException('CPF/CNPJ obrigatório para emissão.');
+    if (!finalDocument) throw new BadRequestException('CPF/CNPJ obrigatório.');
 
-    // 4. CÁLCULO DE COMISSÕES (SPLIT)
+    // 4. SPLIT
     let producerAmount = totalAmountInCents;
     let affiliateAmount = 0;
     let affiliateId: string | null = null;
     let coproducerAmount = 0;
+    let coproducerId: string | null = null;
     
-    // ✅ A. Afiliação (LÓGICA CORRIGIDA AQUI)
+    // ✅ CORREÇÃO CRÍTICA: Busca ID do Marketplace para achar a afiliação correta
     if (dto.ref) {
-        // 1. Primeiro, descobre qual é o ID do produto no Marketplace
         const mpProduct = await this.prisma.marketplaceProduct.findUnique({
             where: { productId: product.id }
         });
 
-        // Se o produto está no marketplace, tentamos achar o afiliado
         if (mpProduct) {
             const affiliate = await this.prisma.affiliate.findUnique({
                 where: {
                     promoterId_marketplaceProductId: {
                         promoterId: dto.ref,
-                        marketplaceProductId: mpProduct.id // 🎯 CORREÇÃO: Usa o ID do Marketplace, não do Produto
+                        marketplaceProductId: mpProduct.id // ID CORRETO AQUI
                     }
                 }
             });
 
-            // Só paga se estiver APROVADO
             if (affiliate && affiliate.status === 'APPROVED') {
-                // Usa a comissão definida no Marketplace (prioridade) ou no Produto (fallback)
                 const commRate = mpProduct.commissionRate ?? product.commissionPercent ?? 0;
-                
                 affiliateAmount = Math.round(totalAmountInCents * (commRate / 100));
-                producerAmount -= affiliateAmount; // Deduz do produtor
+                producerAmount -= affiliateAmount; 
                 affiliateId = affiliate.promoterId;
-                
-                this.logger.log(`Split Afiliado: ${affiliateId} recebe ${affiliateAmount} (Rate: ${commRate}%)`);
-            } else {
-                this.logger.warn(`Afiliado ${dto.ref} inválido ou não aprovado para este produto.`);
             }
         }
     }
 
-    // B. Co-produtor
-    const coproPercent = product.coproductionPercent ? Number(product.coproductionPercent) : 0;
-    
+    // Co-produção
+    const coproPercent = product.coproductionPercent || 0;
     if (product.coproductionEmail && coproPercent > 0) {
         const coproUser = await this.prisma.user.findUnique({ where: { email: product.coproductionEmail }});
         if (coproUser) {
             coproducerAmount = Math.round(totalAmountInCents * (coproPercent / 100));
-            producerAmount -= coproducerAmount;
-            this.logger.log(`Split Co-produtor: ${coproUser.id} recebe ${coproducerAmount}`);
+            producerAmount -= coproducerAmount; 
+            coproducerId = coproUser.id;
         }
     }
 
-    // 5. Integração Keyclub (Gateway)
+    // 5. Gateway Keyclub
     const externalId = `chk_${crypto.randomUUID()}`;
     const amountInBRL = totalAmountInCents / 100;
     let keyclubResult;
@@ -119,13 +107,13 @@ export class CheckoutService {
             payerPhone: dto.customer.phone
         });
 
-        // 6. Salva no Banco (Depósito)
+        // 6. Salvar Depósito
         await this.prisma.deposit.create({
             data: {
                 id: externalId,
                 externalId: keyclubResult.transactionId,
                 amountInCents: totalAmountInCents,
-                netAmountInCents: producerAmount, // Valor Líquido do Produtor
+                netAmountInCents: totalAmountInCents, 
                 status: 'PENDING',
                 payerName: dto.customer.name,
                 payerEmail: dto.customer.email,
@@ -136,16 +124,16 @@ export class CheckoutService {
             }
         });
 
-        // 7. Salva Transação (Extrato Detalhado)
+        // 7. Salvar Transação do Produtor
         await this.prisma.transaction.create({
             data: {
-                id: externalId,
-                amount: totalAmountInCents,
+                id: externalId, 
+                amount: producerAmount, 
                 status: 'PENDING',
                 type: 'SALE',
                 paymentMethod: 'PIX',
-                description: `Venda: ${product.name} ${affiliateId ? '(Com Afiliado)' : ''}`,
-                userId: sellerUser.id,
+                description: `Venda: ${product.name}`,
+                userId: sellerUser.id, 
                 productId: product.id,
                 customerName: dto.customer.name,       
                 customerEmail: dto.customer.email,     
@@ -155,13 +143,44 @@ export class CheckoutService {
                 referenceId: keyclubResult.transactionId,
                 pixQrCode: keyclubResult.qrcode,
                 pixCopyPaste: keyclubResult.qrcode,
-                
-                // Se você já tiver criado os campos no Prisma, pode descomentar:
-                // affiliateId: affiliateId,
-                // affiliateAmount: affiliateAmount,
-                // coproducerAmount: coproducerAmount
+                metadata: { affiliateId, affiliateAmount, coproducerId, coproducerAmount }
             }
         });
+
+        // ✅ Transação do Afiliado
+        if (affiliateId && affiliateAmount > 0) {
+            await this.prisma.transaction.create({
+                data: {
+                    amount: affiliateAmount,
+                    status: 'PENDING',
+                    type: 'COMMISSION',
+                    paymentMethod: 'Balance',
+                    description: `Comissão: ${product.name}`,
+                    userId: affiliateId,
+                    productId: product.id,
+                    externalId: keyclubResult.transactionId,
+                    referenceId: externalId,
+                    customerName: dto.customer.name.split(' ')[0] + '...',
+                }
+            });
+        }
+
+        // ✅ Transação do Co-produtor
+        if (coproducerId && coproducerAmount > 0) {
+            await this.prisma.transaction.create({
+                data: {
+                    amount: coproducerAmount,
+                    status: 'PENDING',
+                    type: 'COPRODUCTION',
+                    paymentMethod: 'Balance',
+                    description: `Co-produção: ${product.name}`,
+                    userId: coproducerId,
+                    productId: product.id,
+                    externalId: keyclubResult.transactionId,
+                    referenceId: externalId,
+                }
+            });
+        }
 
         return {
             success: true,
