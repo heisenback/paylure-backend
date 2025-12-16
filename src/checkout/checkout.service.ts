@@ -4,6 +4,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { KeyclubService } from 'src/keyclub/keyclub.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import * as crypto from 'crypto';
+// ✅ CORREÇÃO: Importando o tipo User para a variável affiliateUser
+import { User } from '@prisma/client';
 
 @Injectable()
 export class CheckoutService {
@@ -27,7 +29,6 @@ export class CheckoutService {
     const sellerUser = product.merchant.user;
 
     // --- CORREÇÃO DO TÍTULO (Items.0.title error) ---
-    // Se o frontend mandou itens sem título, preenchemos com o nome do produto
     const cleanItems = dto.items?.map(item => ({
         ...item,
         title: item.title || product.name // Fallback para o nome do banco
@@ -50,9 +51,11 @@ export class CheckoutService {
 
     if (totalAmountInCents < 100) throw new BadRequestException('Valor mínimo R$ 1,00.');
 
-    // --- LÓGICA DO AFILIADO (Necessária para definir o CPF depois) ---
+    // --- LÓGICA DO AFILIADO ---
     let affiliateId: string | undefined = undefined;
-    let affiliateUser = null;
+    
+    // ✅ CORREÇÃO: Declarando o tipo explicitamente para evitar erro TS2322
+    let affiliateUser: User | null = null;
     
     if (dto.ref) {
         const mpProduct = await this.prisma.marketplaceProduct.findUnique({
