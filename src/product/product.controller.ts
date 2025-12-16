@@ -8,7 +8,6 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { GetUser } from 'src/auth/decorators/get-user.decorator';
-// ✅ CORREÇÃO 1: Importar como 'import type' para satisfazer o compilador
 import type { User } from '@prisma/client';
 
 @Controller('products')
@@ -17,25 +16,24 @@ export class ProductController {
 
   @Post()
   @UseGuards(AuthGuard('jwt'))
-  create(@Body() createProductDto: CreateProductDto, @GetUser() user: User) {
-    // ✅ CORREÇÃO 2: Cast para 'any' para acessar merchant sem erro de tipagem
+  async create(@Body() createProductDto: CreateProductDto, @GetUser() user: User) {
     const u = user as any;
-    return this.productService.create(createProductDto, u.merchant?.id || u.id);
+    // ✅ CORREÇÃO: Busca o Merchant ID real no banco
+    const merchantId = await this.productService.getMerchantId(u.id);
+    return this.productService.create(createProductDto, merchantId);
   }
 
   @Get()
   @UseGuards(AuthGuard('jwt'))
-  findAll(@GetUser() user: User) {
+  async findAll(@GetUser() user: User) {
     const u = user as any;
-    const merchantId = u.merchant?.id || u.id;
+    // ✅ CORREÇÃO: Busca o Merchant ID real no banco. Isso trará seus produtos de volta!
+    const merchantId = await this.productService.getMerchantId(u.id);
     return this.productService.findAllByMerchant(merchantId);
   }
 
-  // ✅ CORREÇÃO 3: Rota Pública
-  // Se o método findOnePublic não existir no service, ele usará o findById como fallback
   @Get('public/:id')
   async findOnePublic(@Param('id') id: string) {
-    // Tenta chamar o método específico se existir, senão chama o padrão
     if ((this.productService as any).findOnePublic) {
         return (this.productService as any).findOnePublic(id);
     }
@@ -56,14 +54,15 @@ export class ProductController {
     @Body() updateProductDto: UpdateProductDto
   ) {
     const u = user as any;
-    // Passa o ID e o Email para o Service
+    // Passa o ID e Email para o service validar (Service agora resolve o Merchant ID sozinho)
     return this.productService.update(id, u.id, u.email, updateProductDto);
   }
 
   @Delete(':id')
   @UseGuards(AuthGuard('jwt'))
-  remove(@Param('id') id: string, @GetUser() user: User) {
+  async remove(@Param('id') id: string, @GetUser() user: User) {
     const u = user as any;
-    return this.productService.remove(id, u.merchant?.id || u.id);
+    const merchantId = await this.productService.getMerchantId(u.id);
+    return this.productService.remove(id, merchantId);
   }
 }

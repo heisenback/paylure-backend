@@ -10,8 +10,15 @@ export class ProductService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // ✅ NOVO MÉTODO: Garante que achamos o ID da Loja (Merchant) pelo Usuário
+  async getMerchantId(userId: string): Promise<string> {
+      const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
+      // Se achou a loja, retorna o ID dela. Se não, retorna o ID do user como fallback.
+      return merchant ? merchant.id : userId;
+  }
+
   // ==================================================================
-  // MÉTODOS PÚBLICOS (CORREÇÃO DO ERRO)
+  // MÉTODOS PÚBLICOS
   // ==================================================================
   async findOnePublic(id: string) {
     const product = await this.prisma.product.findUnique({
@@ -62,7 +69,7 @@ export class ProductService {
             name: dto.title,
             description: dto.description || '',
             priceInCents: priceInCents,
-            merchantId: merchantId,
+            merchantId: merchantId, // Agora vai usar o ID certo
             imageUrl: dto.imageUrl || null,
             category: dto.category || 'WEALTH',
             salesPageUrl: dto.salesPageUrl || null,
@@ -138,22 +145,27 @@ export class ProductService {
     const product = await this.prisma.product.findUnique({ where: { id } });
     if (!product) throw new NotFoundException('Produto não encontrado');
 
-    const isOwner = product.merchantId === userId;
+    const isOwner = product.merchantId === userId; // Note: Isso compara IDs. Se merchantId no banco for diferente do userId, pode dar false aqui.
+    // MAS, vamos confiar na verificação do controller que passa o ID correto, ou ajustar aqui.
+    // Melhor: Buscar o merchantId do usuário novamente para comparar com certeza.
+    const userMerchantId = await this.getMerchantId(userId);
+    const isRealOwner = product.merchantId === userMerchantId;
+
     const isCoProducer = product.coproductionEmail === userEmail; 
 
     // Verifica Afiliado
     let isAffiliate = false;
-    if (!isOwner && !isCoProducer) {
+    if (!isRealOwner && !isCoProducer) {
         const affiliation = await this.prisma.affiliate.findUnique({
             where: { promoterId_marketplaceProductId: { promoterId: userId, marketplaceProductId: id } }
         });
         if (affiliation?.status === 'APPROVED') isAffiliate = true;
     }
 
-    if (!isOwner && !isCoProducer && !isAffiliate) throw new ForbiddenException('Sem permissão.');
+    if (!isRealOwner && !isCoProducer && !isAffiliate) throw new ForbiddenException('Sem permissão.');
 
     // REGRA AFILIADO
-    if (isAffiliate && !isOwner && !isCoProducer) {
+    if (isAffiliate && !isRealOwner && !isCoProducer) {
         if (dto.price || dto.title || dto.commissionPercent || dto.offers) {
             throw new ForbiddenException('Afiliados podem personalizar apenas o visual.');
         }
@@ -221,7 +233,7 @@ export class ProductService {
         include: { offers: true, coupons: true }
     });
     
-    if (isOwner || isCoProducer) {
+    if (isRealOwner || isCoProducer) {
         if (dto.commissionPercent !== undefined || dto.showInMarketplace !== undefined) {
              const commRate = (dto.commissionPercent !== undefined ? Number(dto.commissionPercent) : updated.commissionPercent) || 0;
              if (updated.showInMarketplace) {
