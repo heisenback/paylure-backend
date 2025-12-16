@@ -1,4 +1,3 @@
-// src/checkout/checkout.service.ts
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { KeyclubService } from 'src/keyclub/keyclub.service';
@@ -26,16 +25,19 @@ export class CheckoutService {
 
     const sellerUser = product.merchant.user;
 
-    // 2. Calcula Valor (Base + Order Bumps se tiver)
+    // 2. Calcula Valor (Base + Order Bumps)
     let totalAmountInCents = Number(product.priceInCents); 
     if (dto.items && dto.items.length > 0) {
+       // Filtra o produto principal para somar apenas os bumps (se houver lógica de bump)
+       // Ou se items for a lista completa, recalcula
+       // Aqui assumimos que items pode conter bumps
        const bumpsTotal = dto.items
             .filter(item => item.id !== product.id)
             .reduce((acc, item) => acc + item.price, 0);
        totalAmountInCents += bumpsTotal;
     }
 
-    // Se for uma oferta específica, sobrescreve o valor
+    // Se for uma oferta específica, sobrescreve o valor base
     if (dto.offerId) {
         const offer = await this.prisma.offer.findUnique({ where: { id: dto.offerId }});
         if (offer) totalAmountInCents = offer.priceInCents;
@@ -45,6 +47,7 @@ export class CheckoutService {
 
     // 3. Documento do Cliente
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
+    // Se o cliente não enviou CPF (checkout simples), tentamos usar do produtor (fallback arriscado, mas mantido da sua lógica)
     if (!finalDocument || finalDocument.length < 11) {
         finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '';
     }
@@ -67,7 +70,6 @@ export class CheckoutService {
             }
         });
 
-        // Só paga se estiver APROVADO
         if (affiliate && affiliate.status === 'APPROVED') {
             const commRate = product.commissionPercent || 0;
             affiliateAmount = Math.round(totalAmountInCents * (commRate / 100));
@@ -78,14 +80,14 @@ export class CheckoutService {
     }
 
     // B. Co-produtor
-    // ✅ CORREÇÃO: Garante que é número e não null para o TypeScript não reclamar
-    const coproPercent = product.coproductionPercent || 0;
+    // ✅ CORREÇÃO: Tratamento de valor nulo para evitar erro de build
+    const coproPercent = product.coproductionPercent ? Number(product.coproductionPercent) : 0;
     
     if (product.coproductionEmail && coproPercent > 0) {
         const coproUser = await this.prisma.user.findUnique({ where: { email: product.coproductionEmail }});
         if (coproUser) {
             coproducerAmount = Math.round(totalAmountInCents * (coproPercent / 100));
-            producerAmount -= coproducerAmount; // Desconta do produtor
+            producerAmount -= coproducerAmount;
             this.logger.log(`Split Co-produtor: ${coproUser.id} recebe ${coproducerAmount}`);
         }
     }
@@ -105,13 +107,13 @@ export class CheckoutService {
             payerPhone: dto.customer.phone
         });
 
-        // 6. Salvar Dados
+        // 6. Salva no Banco
         await this.prisma.deposit.create({
             data: {
                 id: externalId,
                 externalId: keyclubResult.transactionId,
                 amountInCents: totalAmountInCents,
-                netAmountInCents: producerAmount, // O que o produtor vê como "Líquido" (após splits)
+                netAmountInCents: producerAmount,
                 status: 'PENDING',
                 payerName: dto.customer.name,
                 payerEmail: dto.customer.email,
@@ -153,8 +155,8 @@ export class CheckoutService {
         };
 
     } catch (error: any) {
-        this.logger.error(`[Checkout] Erro: ${error.message}`);
-        throw new BadRequestException('Erro ao processar pagamento.');
+        this.logger.error(`Checkout Error: ${error.message}`);
+        throw new BadRequestException('Erro no processamento do pagamento.');
     }
   }
 

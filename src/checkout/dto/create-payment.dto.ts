@@ -1,4 +1,3 @@
-// src/checkout/dto/create-payment.dto.ts
 import { IsString, IsNotEmpty, IsArray, ValidateNested, IsOptional, IsObject, IsNumber } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -25,7 +24,11 @@ class ItemDto {
   @IsNotEmpty()
   id: string;
 
+  // ✅ CORREÇÃO: title agora é opcional ou validado com cuidado
+  // Se o frontend antigo não manda title, podemos deixar @IsOptional() ou garantir que venha.
+  // Vou manter obrigatório, mas vamos garantir que o frontend envie.
   @IsString()
+  @IsNotEmpty()
   title: string;
 
   @IsNumber()
@@ -38,7 +41,7 @@ export class CreatePaymentDto {
   @IsNotEmpty()
   productId: string;
 
-  // ✅ CORREÇÃO: Campos novos adicionados para o afiliado/oferta funcionar
+  // ✅ ESSENCIAIS PARA O BUILD NÃO QUEBRAR
   @IsOptional()
   @IsString()
   offerId?: string;
