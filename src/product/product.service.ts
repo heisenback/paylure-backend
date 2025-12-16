@@ -39,6 +39,17 @@ export class ProductService {
     return products.map(p => this.formatProduct(p));
   }
 
+  // ✅ MÉTODO FALTANTE - Usado pelo public-api.controller.ts
+  async findAllByMerchant(merchantId: string) {
+    const products = await this.prisma.product.findMany({
+      where: { merchantId },
+      include: { offers: true, coupons: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return products.map(p => this.formatProduct(p));
+  }
+
   async findById(productId: string) {
     const product = await this.prisma.product.findUnique({ 
         where: { id: productId },
