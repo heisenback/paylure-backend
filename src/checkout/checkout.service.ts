@@ -1,3 +1,4 @@
+// src/checkout/checkout.service.ts
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { KeyclubService } from 'src/keyclub/keyclub.service';
@@ -14,7 +15,7 @@ export class CheckoutService {
   ) {}
 
   async processCheckout(dto: CreatePaymentDto) {
-    // 1. Busca Produto
+    // 1. Busca Produto e Dados do Vendedor
     const product = await this.prisma.product.findUnique({
       where: { id: dto.productId },
       include: { merchant: { include: { user: true } } }
@@ -25,12 +26,10 @@ export class CheckoutService {
 
     const sellerUser = product.merchant.user;
 
-    // 2. Calcula Valor (Base + Order Bumps)
+    // 2. Calcula Valor (Base + Order Bumps se houver)
     let totalAmountInCents = Number(product.priceInCents); 
     if (dto.items && dto.items.length > 0) {
-       // Filtra o produto principal para somar apenas os bumps (se houver lógica de bump)
-       // Ou se items for a lista completa, recalcula
-       // Aqui assumimos que items pode conter bumps
+       // Soma itens extras (bumps) se houver lógica no front enviando tudo junto
        const bumpsTotal = dto.items
             .filter(item => item.id !== product.id)
             .reduce((acc, item) => acc + item.price, 0);
@@ -47,7 +46,7 @@ export class CheckoutService {
 
     // 3. Documento do Cliente
     let finalDocument = dto.customer.document ? dto.customer.document.replace(/\D/g, '') : '';
-    // Se o cliente não enviou CPF (checkout simples), tentamos usar do produtor (fallback arriscado, mas mantido da sua lógica)
+    // Fallback: se não vier documento (checkout simples), usa do produtor (arriscado, mas mantido da sua lógica)
     if (!finalDocument || finalDocument.length < 11) {
         finalDocument = sellerUser.document?.replace(/\D/g, '') || product.merchant.cnpj?.replace(/\D/g, '') || '';
     }
@@ -59,28 +58,41 @@ export class CheckoutService {
     let affiliateId: string | null = null;
     let coproducerAmount = 0;
     
-    // A. Afiliado
+    // ✅ A. Afiliação (LÓGICA CORRIGIDA AQUI)
     if (dto.ref) {
-        const affiliate = await this.prisma.affiliate.findUnique({
-            where: {
-                promoterId_marketplaceProductId: {
-                    promoterId: dto.ref,
-                    marketplaceProductId: product.id 
-                }
-            }
+        // 1. Primeiro, descobre qual é o ID do produto no Marketplace
+        const mpProduct = await this.prisma.marketplaceProduct.findUnique({
+            where: { productId: product.id }
         });
 
-        if (affiliate && affiliate.status === 'APPROVED') {
-            const commRate = product.commissionPercent || 0;
-            affiliateAmount = Math.round(totalAmountInCents * (commRate / 100));
-            producerAmount -= affiliateAmount;
-            affiliateId = affiliate.promoterId;
-            this.logger.log(`Split Afiliado: ${affiliateId} recebe ${affiliateAmount}`);
+        // Se o produto está no marketplace, tentamos achar o afiliado
+        if (mpProduct) {
+            const affiliate = await this.prisma.affiliate.findUnique({
+                where: {
+                    promoterId_marketplaceProductId: {
+                        promoterId: dto.ref,
+                        marketplaceProductId: mpProduct.id // 🎯 CORREÇÃO: Usa o ID do Marketplace, não do Produto
+                    }
+                }
+            });
+
+            // Só paga se estiver APROVADO
+            if (affiliate && affiliate.status === 'APPROVED') {
+                // Usa a comissão definida no Marketplace (prioridade) ou no Produto (fallback)
+                const commRate = mpProduct.commissionRate ?? product.commissionPercent ?? 0;
+                
+                affiliateAmount = Math.round(totalAmountInCents * (commRate / 100));
+                producerAmount -= affiliateAmount; // Deduz do produtor
+                affiliateId = affiliate.promoterId;
+                
+                this.logger.log(`Split Afiliado: ${affiliateId} recebe ${affiliateAmount} (Rate: ${commRate}%)`);
+            } else {
+                this.logger.warn(`Afiliado ${dto.ref} inválido ou não aprovado para este produto.`);
+            }
         }
     }
 
     // B. Co-produtor
-    // ✅ CORREÇÃO: Tratamento de valor nulo para evitar erro de build
     const coproPercent = product.coproductionPercent ? Number(product.coproductionPercent) : 0;
     
     if (product.coproductionEmail && coproPercent > 0) {
@@ -92,7 +104,7 @@ export class CheckoutService {
         }
     }
 
-    // 5. Integração Keyclub
+    // 5. Integração Keyclub (Gateway)
     const externalId = `chk_${crypto.randomUUID()}`;
     const amountInBRL = totalAmountInCents / 100;
     let keyclubResult;
@@ -107,13 +119,13 @@ export class CheckoutService {
             payerPhone: dto.customer.phone
         });
 
-        // 6. Salva no Banco
+        // 6. Salva no Banco (Depósito)
         await this.prisma.deposit.create({
             data: {
                 id: externalId,
                 externalId: keyclubResult.transactionId,
                 amountInCents: totalAmountInCents,
-                netAmountInCents: producerAmount,
+                netAmountInCents: producerAmount, // Valor Líquido do Produtor
                 status: 'PENDING',
                 payerName: dto.customer.name,
                 payerEmail: dto.customer.email,
@@ -124,6 +136,7 @@ export class CheckoutService {
             }
         });
 
+        // 7. Salva Transação (Extrato Detalhado)
         await this.prisma.transaction.create({
             data: {
                 id: externalId,
@@ -131,7 +144,7 @@ export class CheckoutService {
                 status: 'PENDING',
                 type: 'SALE',
                 paymentMethod: 'PIX',
-                description: `Venda: ${product.name} (Ref: ${dto.ref || 'N/A'})`,
+                description: `Venda: ${product.name} ${affiliateId ? '(Com Afiliado)' : ''}`,
                 userId: sellerUser.id,
                 productId: product.id,
                 customerName: dto.customer.name,       
@@ -142,6 +155,11 @@ export class CheckoutService {
                 referenceId: keyclubResult.transactionId,
                 pixQrCode: keyclubResult.qrcode,
                 pixCopyPaste: keyclubResult.qrcode,
+                
+                // Se você já tiver criado os campos no Prisma, pode descomentar:
+                // affiliateId: affiliateId,
+                // affiliateAmount: affiliateAmount,
+                // coproducerAmount: coproducerAmount
             }
         });
 
