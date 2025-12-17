@@ -134,7 +134,7 @@ model Merchant {
 }
 
 // ===================================
-// 🎯 MEMBER AREA (ESSENCIAL PARA O CORREÇÃO)
+// 🎯 MEMBER AREA
 // ===================================
 model MemberArea {
   id               String       @id @default(uuid())
@@ -151,27 +151,53 @@ model MemberArea {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
+  modules          MemberModule[] // ✅ NOVA RELAÇÃO (Módulos)
   contents         MemberContent[]
   accesses         MemberAccess[]
-  products         Product[]    // ✅ Relação inversa
+  products         Product[]    
   
   @@index([merchantId])
   @@index([slug])
 }
 
 // ===================================
-// 🎯 MEMBER CONTENT
+// 📂 MEMBER MODULE (NOVO MODELO)
+// ===================================
+model MemberModule {
+  id           String          @id @default(uuid())
+  memberAreaId String
+  memberArea   MemberArea      @relation(fields: [memberAreaId], references: [id], onDelete: Cascade)
+  title        String
+  order        Int             @default(0)
+  
+  contents     MemberContent[] // Aulas dentro do módulo
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([memberAreaId])
+}
+
+// ===================================
+// 🎯 MEMBER CONTENT (ATUALIZADO)
 // ===================================
 model MemberContent {
   id               String       @id @default(uuid())
   memberAreaId     String
   memberArea       MemberArea   @relation(fields: [memberAreaId], references: [id], onDelete: Cascade)
+  
+  moduleId         String?      // ✅ ID do Módulo
+  module           MemberModule? @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
   title            String
-  description      String?
+  description      String?      @db.Text
   type             String       
   contentUrl       String?
   thumbnailUrl     String?
   textBody         String?      @db.Text
+  
+  releaseDays      Int          @default(0) // ✅ Dias para liberação (Drip)
+  attachments      Json?        // ✅ Lista de anexos (JSON)
+
   order            Int          @default(0)
   duration         Int?
   isPublic         Boolean      @default(false) 
@@ -179,6 +205,7 @@ model MemberContent {
   updatedAt        DateTime     @updatedAt
   
   @@index([memberAreaId])
+  @@index([moduleId])
   @@index([order])
 }
 
@@ -216,25 +243,20 @@ model Product {
   imageUrl         String?
   category         String?      @default("WEALTH")
   
-  salesPageUrl     String?      
-  
+  salesPageUrl     String?
   deliveryMethod   String       @default("PAYLURE_MEMBERS")
   paymentType      String       @default("ONE_TIME")
   subscriptionPeriod String?
-  
   deliveryUrl      String?
   fileUrl          String?
   fileName         String?
-  
   content          Json?
   checkoutConfig   Json?
-
   isAffiliationEnabled Boolean  @default(false)
   showInMarketplace    Boolean  @default(false)
   commissionPercent    Float?   @default(0)
   affiliationType      String?  @default("OPEN")
   materialLink         String?
-  
   coproductionEmail    String?
   coproductionPercent  Float?   @default(0)
 
@@ -244,7 +266,6 @@ model Product {
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
 
-  // ✅ NOVOS CAMPOS PARA CONECTAR COM A ÁREA DE MEMBROS
   memberAreaId     String?
   memberArea       MemberArea?  @relation(fields: [memberAreaId], references: [id])
   
@@ -381,7 +402,6 @@ model MembershipIntegration {
   webhookUrl       String
   platform         String       
   secretKey        String?
-  
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
 

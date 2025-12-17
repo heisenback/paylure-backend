@@ -13,7 +13,6 @@ export class MemberAreaService {
   // ===================================
 
   async createMemberArea(merchantId: string, data: any) {
-    // Verifica se slug já existe
     const existing = await this.prisma.memberArea.findUnique({
       where: { slug: data.slug },
     });
@@ -74,6 +73,20 @@ export class MemberAreaService {
     return { area };
   }
 
+  // ✅ NOVO: Busca estrutura completa (Módulos + Aulas)
+  async getCourseStructure(memberAreaId: string) {
+    const modules = await this.prisma.memberModule.findMany({
+      where: { memberAreaId },
+      include: {
+        contents: {
+          orderBy: { order: 'asc' }
+        }
+      },
+      orderBy: { order: 'asc' }
+    });
+    return modules;
+  }
+
   async updateMemberArea(id: string, data: any) {
     const area = await this.prisma.memberArea.update({
       where: { id },
@@ -96,19 +109,58 @@ export class MemberAreaService {
   }
 
   // ===================================
-  // MEMBER CONTENT
+  // MODULES (NOVOS MÉTODOS)
+  // ===================================
+
+  async createModule(memberAreaId: string, title: string) {
+    const count = await this.prisma.memberModule.count({ where: { memberAreaId } });
+    const module = await this.prisma.memberModule.create({
+      data: {
+        memberAreaId,
+        title,
+        order: count + 1
+      }
+    });
+    return module;
+  }
+
+  async deleteModule(moduleId: string) {
+    return this.prisma.memberModule.delete({ where: { id: moduleId } });
+  }
+
+  // ===================================
+  // MEMBER CONTENT (ATUALIZADO)
   // ===================================
 
   async addContent(memberAreaId: string, data: any) {
+    // Se tiver moduleId, calcula ordem dentro do módulo
+    let order = 0;
+    if (data.moduleId) {
+        const last = await this.prisma.memberContent.findFirst({
+            where: { moduleId: data.moduleId },
+            orderBy: { order: 'desc' }
+        });
+        order = last ? last.order + 1 : 1;
+    } else {
+        const last = await this.prisma.memberContent.findFirst({
+            where: { memberAreaId, moduleId: null },
+            orderBy: { order: 'desc' }
+        });
+        order = last ? last.order + 1 : 1;
+    }
+
     const content = await this.prisma.memberContent.create({
       data: {
         memberAreaId,
+        moduleId: data.moduleId, // ✅ Vincula ao módulo
         title: data.title,
         description: data.description,
-        type: data.type,
+        type: data.type || 'VIDEO',
         contentUrl: data.contentUrl,
         thumbnailUrl: data.thumbnailUrl,
-        order: data.order || 0,
+        releaseDays: Number(data.releaseDays || 0), // ✅ Drip
+        attachments: data.attachments || [], // ✅ Anexos
+        order: data.order || order,
         duration: data.duration,
         isPublic: data.isPublic || false,
       },
@@ -134,29 +186,24 @@ export class MemberAreaService {
   // ===================================
 
   async grantAccess(memberAreaId: string, data: any) {
-    // Busca ou cria usuário pelo email
     let user = await this.prisma.user.findUnique({
       where: { email: data.userEmail },
     });
 
     if (!user) {
-      // Cria usuário temporário (sem senha - acesso apenas via área de membros)
       const randomPassword = Math.random().toString(36).slice(-12);
-      
       user = await this.prisma.user.create({
         data: {
           email: data.userEmail,
           name: data.userEmail.split('@')[0],
-          password: randomPassword, // Será solicitado a definir senha no primeiro acesso
+          password: randomPassword, 
           apiKey: `temp_${Date.now()}`,
           apiSecret: `temp_${Date.now()}`,
         },
       });
-
       this.logger.log(`✅ Usuário criado: ${user.email}`);
     }
 
-    // Concede acesso
     const access = await this.prisma.memberAccess.upsert({
       where: {
         userId_memberAreaId: {

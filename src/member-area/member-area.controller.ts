@@ -1,3 +1,4 @@
+// src/member-area/member-area.controller.ts
 import {
   Controller,
   Get,
@@ -17,7 +18,7 @@ import { GetUser } from 'src/auth/decorators/get-user.decorator';
 import type { User } from '@prisma/client';
 import { IsString, IsBoolean, IsOptional, IsInt, IsEnum } from 'class-validator';
 
-// --- DTOs (Mantenha igual) ---
+// --- DTOs ---
 class CreateMemberAreaDto {
   @IsString() name: string;
   @IsString() slug: string;
@@ -38,6 +39,7 @@ class UpdateMemberAreaDto {
   @IsBoolean() @IsOptional() isActive?: boolean;
 }
 
+// ✅ DTO ATUALIZADO
 class CreateMemberContentDto {
   @IsString() title: string;
   @IsString() @IsOptional() description?: string;
@@ -47,6 +49,11 @@ class CreateMemberContentDto {
   @IsInt() @IsOptional() order?: number = 0;
   @IsInt() @IsOptional() duration?: number;
   @IsBoolean() @IsOptional() isPublic?: boolean = false;
+  
+  // Novos campos:
+  @IsString() @IsOptional() moduleId?: string; 
+  @IsInt() @IsOptional() releaseDays?: number;
+  @IsOptional() attachments?: any; // JSON Array
 }
 
 class GrantAccessDto {
@@ -64,19 +71,36 @@ export class MemberAreaController {
   constructor(private readonly memberAreaService: MemberAreaService) {}
 
   // ===================================
-  // 🚨 CORREÇÃO: ROTAS ESPECÍFICAS PRIMEIRO
+  // 🚨 ROTAS ESPECÍFICAS PRIMEIRO
   // ===================================
 
-  /**
-   * GET /api/v1/member-areas/my-access
-   * Lista áreas que o usuário tem acesso
-   * ✅ MOVIDO PARA O TOPO para não ser confundido com um :slug
-   */
   @Get('my-access')
   @HttpCode(HttpStatus.OK)
   async getMyAccess(@GetUser() user: User) {
     this.logger.log(`📺 Áreas acessíveis por: ${user.email}`);
     return this.memberAreaService.getUserAccess(user.id);
+  }
+
+  // ===================================
+  // MÓDULOS (NOVAS ROTAS)
+  // ===================================
+
+  @Post(':areaId/modules')
+  @HttpCode(HttpStatus.CREATED)
+  async createModule(@Param('areaId') areaId: string, @Body() body: { title: string }) {
+    return this.memberAreaService.createModule(areaId, body.title);
+  }
+
+  @Delete('modules/:moduleId')
+  @HttpCode(HttpStatus.OK)
+  async deleteModule(@Param('moduleId') moduleId: string) {
+    return this.memberAreaService.deleteModule(moduleId);
+  }
+
+  @Get(':areaId/structure')
+  @HttpCode(HttpStatus.OK)
+  async getCourseStructure(@Param('areaId') areaId: string) {
+    return this.memberAreaService.getCourseStructure(areaId);
   }
 
   // ===================================
@@ -102,10 +126,6 @@ export class MemberAreaController {
     return this.memberAreaService.listMemberAreas(user.merchant.id);
   }
 
-  /**
-   * GET /api/v1/member-areas/:slug
-   * ✅ Agora o código só chega aqui se não for 'my-access'
-   */
   @Get(':slug')
   @HttpCode(HttpStatus.OK)
   async getMemberAreaBySlug(@Param('slug') slug: string) {
