@@ -25,12 +25,13 @@ export class ProductService {
       amount: product.priceInCents,
       price: product.priceInCents / 100,
       image: product.imageUrl,
-      // ✅ Inclui dados da área de membros
+      // ✅ Expõe a área para o frontend
       memberAreaId: product.memberAreaId, 
       memberArea: product.memberArea
     };
   }
 
+  // Normaliza configs visuais
   private normalizeCheckoutConfig(inputConfig: any, titleFallback: string, imageUrl?: string | null) {
     const cfg = inputConfig || {};
     const branding = cfg.branding || {};
@@ -59,7 +60,7 @@ export class ProductService {
     return products.map((p) => this.formatProduct(p));
   }
 
-  // ✅ REINSERIDO: Função necessária para o PublicApiController
+  // ✅ CORREÇÃO CRÍTICA: Esta função estava faltando e quebrou o PublicApi
   async findAllByMerchant(merchantId: string) {
     const products = await this.prisma.product.findMany({
       where: { merchantId },
@@ -171,7 +172,10 @@ export class ProductService {
           data: { 
              ...(dto.title && { name: dto.title }),
              ...(dto.price && { priceInCents: Math.round(dto.price * 100) }),
-             // (Para resumir, assumimos que os outros campos do DTO são passados aqui)
+             ...(dto.imageUrl && { imageUrl: dto.imageUrl }),
+             ...(dto.deliveryMethod && { deliveryMethod: dto.deliveryMethod }),
+             ...(dto.checkoutConfig && { checkoutConfig: dto.checkoutConfig }),
+             // Se tiver lógica de ofertas/cupons, deve ser tratada aqui
           },
           include: { offers: true, coupons: true, memberArea: true }
       });
