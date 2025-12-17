@@ -1,4 +1,3 @@
-// src/member-area/member-area.controller.ts
 import {
   Controller,
   Get,
@@ -11,7 +10,6 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
-  Query,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { MemberAreaService } from './member-area.service';
@@ -19,7 +17,7 @@ import { GetUser } from 'src/auth/decorators/get-user.decorator';
 import type { User } from '@prisma/client';
 import { IsString, IsBoolean, IsOptional, IsInt, IsEnum } from 'class-validator';
 
-// ... (Mantenha seus DTOs aqui: CreateMemberAreaDto, UpdateMemberAreaDto, etc. Exatamente como estavam) ...
+// --- DTOs (Mantenha igual) ---
 class CreateMemberAreaDto {
   @IsString() name: string;
   @IsString() slug: string;
@@ -72,7 +70,7 @@ export class MemberAreaController {
   /**
    * GET /api/v1/member-areas/my-access
    * Lista áreas que o usuário tem acesso
-   * ✅ MOVIDO PARA O TOPO para não conflitar com :slug ou :id
+   * ✅ MOVIDO PARA O TOPO para não ser confundido com um :slug
    */
   @Get('my-access')
   @HttpCode(HttpStatus.OK)
@@ -106,7 +104,7 @@ export class MemberAreaController {
 
   /**
    * GET /api/v1/member-areas/:slug
-   * ✅ Agora esta rota só é chamada se NÃO for 'my-access'
+   * ✅ Agora o código só chega aqui se não for 'my-access'
    */
   @Get(':slug')
   @HttpCode(HttpStatus.OK)
@@ -133,7 +131,7 @@ export class MemberAreaController {
   }
 
   // ===================================
-  // MEMBER CONTENT
+  // CONTEÚDOS E ACESSOS
   // ===================================
 
   @Post(':areaId/contents')
@@ -152,10 +150,6 @@ export class MemberAreaController {
     this.logger.log(`📹 Removendo conteúdo: ${contentId}`);
     return this.memberAreaService.deleteContent(contentId);
   }
-
-  // ===================================
-  // MEMBER ACCESS
-  // ===================================
 
   @Post(':areaId/grant-access')
   @HttpCode(HttpStatus.CREATED)

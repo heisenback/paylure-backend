@@ -24,8 +24,10 @@ import { SocketModule } from './gateway/socket.module';
 import { PushNotificationModule } from './push-notification/push-notification.module';
 import { AdminModule } from './admin/admin.module';
 import { CheckoutModule } from './checkout/checkout.module';
-// ✅ IMPORTAR O NOVO MÓDULO DE PIXEL
 import { PixelsModule } from './pixels/pixels.module';
+
+// ✅ IMPORTAÇÃO DO MÓDULO FALTANTE
+import { MemberAreaModule } from './member-area/member-area.module'; 
 
 @Module({
   imports: [
@@ -54,7 +56,10 @@ import { PixelsModule } from './pixels/pixels.module';
     PushNotificationModule,
     AdminModule,
     CheckoutModule,
-    PixelsModule, // ✅ ADICIONADO AQUI
+    PixelsModule,
+    
+    // ✅ REGISTRO DO MÓDULO NO SISTEMA
+    MemberAreaModule, 
   ],
   controllers: [AppController],
   providers: [],
