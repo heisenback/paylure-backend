@@ -44,7 +44,7 @@ model User {
   twoFactorCodes       TwoFactorCode[]
   memberAccesses       MemberAccess[]
   transactions         Transaction[]
-  pixels               Pixel[]      // ✅ Adicionado para relacionamento
+  pixels               Pixel[]
 }
 
 // ===================================
@@ -134,7 +134,7 @@ model Merchant {
 }
 
 // ===================================
-// 🎯 MEMBER AREA
+// 🎯 MEMBER AREA (ESSENCIAL PARA O CORREÇÃO)
 // ===================================
 model MemberArea {
   id               String       @id @default(uuid())
@@ -153,6 +153,7 @@ model MemberArea {
   
   contents         MemberContent[]
   accesses         MemberAccess[]
+  products         Product[]    // ✅ Relação inversa
   
   @@index([merchantId])
   @@index([slug])
@@ -215,40 +216,37 @@ model Product {
   imageUrl         String?
   category         String?      @default("WEALTH")
   
-  // -- Links --
   salesPageUrl     String?      
   
-  // -- Configurações de Pagamento e Entrega --
   deliveryMethod   String       @default("PAYLURE_MEMBERS")
   paymentType      String       @default("ONE_TIME")
   subscriptionPeriod String?
   
-  // -- Arquivos e Links --
   deliveryUrl      String?
   fileUrl          String?
   fileName         String?
   
-  // -- Conteúdo e Config --
   content          Json?
   checkoutConfig   Json?
 
-  // -- Marketplace e Afiliação --
   isAffiliationEnabled Boolean  @default(false)
   showInMarketplace    Boolean  @default(false)
   commissionPercent    Float?   @default(0)
   affiliationType      String?  @default("OPEN")
   materialLink         String?
   
-  // -- Co-produção --
   coproductionEmail    String?
   coproductionPercent  Float?   @default(0)
 
-  // -- Relacionamentos --
   offers           Offer[]      
   coupons          Coupon[]     
 
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
+
+  // ✅ NOVOS CAMPOS PARA CONECTAR COM A ÁREA DE MEMBROS
+  memberAreaId     String?
+  memberArea       MemberArea?  @relation(fields: [memberAreaId], references: [id])
   
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
@@ -259,7 +257,7 @@ model Product {
   
   @@index([merchantId])
   @@index([deliveryMethod])
-  @@index([showInMarketplace])
+  @@index([memberAreaId])
 }
 
 // MODELO: OFERTAS EXTRAS
@@ -339,8 +337,10 @@ model Deposit {
 
   merchant             Merchant?   @relation(fields: [merchantId], references: [id])
   merchantId           String?
+
   paymentLink          PaymentLink? @relation(fields: [paymentLinkId], references: [id])
   paymentLinkId        String?
+
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 }
@@ -381,6 +381,7 @@ model MembershipIntegration {
   webhookUrl       String
   platform         String       
   secretKey        String?
+  
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
 
@@ -431,8 +432,10 @@ model SubscriptionPlan {
   interval         String
   priceInCents     Int
   trialPeriodDays  Int          @default(0)
+  
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
+  
   subscriptions    Subscription[]
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
@@ -450,8 +453,10 @@ model Subscription {
   status           String       @default("ACTIVE") 
   nextBillingDate  DateTime     
   gatewaySubscriptionId String?
+  
   plan             SubscriptionPlan @relation(fields: [planId], references: [id])
   planId           String
+  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 }
@@ -493,7 +498,7 @@ model Transaction {
 }
 
 // ===================================
-// 13. PIXEL & TRACKING (NOVO ✅)
+// 13. PIXEL & TRACKING
 // ===================================
 model Pixel {
   id          String   @id @default(uuid())
