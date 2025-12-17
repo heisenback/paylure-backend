@@ -23,8 +23,9 @@ import { PublicApiModule } from './api/public-api.module';
 import { SocketModule } from './gateway/socket.module';
 import { PushNotificationModule } from './push-notification/push-notification.module';
 import { AdminModule } from './admin/admin.module';
-// ✅ NOVO MÓDULO IMPORTADO
 import { CheckoutModule } from './checkout/checkout.module';
+// ✅ IMPORTAR O NOVO MÓDULO DE PIXEL
+import { PixelsModule } from './pixels/pixels.module';
 
 @Module({
   imports: [
@@ -52,7 +53,8 @@ import { CheckoutModule } from './checkout/checkout.module';
     SocketModule,
     PushNotificationModule,
     AdminModule,
-    CheckoutModule, // ✅ ADICIONADO NA LISTA DE IMPORTS
+    CheckoutModule,
+    PixelsModule, // ✅ ADICIONADO AQUI
   ],
   controllers: [AppController],
   providers: [],

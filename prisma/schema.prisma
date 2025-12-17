@@ -44,6 +44,7 @@ model User {
   twoFactorCodes       TwoFactorCode[]
   memberAccesses       MemberAccess[]
   transactions         Transaction[]
+  pixels               Pixel[]      // ✅ Adicionado para relacionamento
 }
 
 // ===================================
@@ -214,18 +215,18 @@ model Product {
   imageUrl         String?
   category         String?      @default("WEALTH")
   
-  // -- Links (NOVO) --
-  salesPageUrl     String?      // ✅ Página de Vendas
+  // -- Links --
+  salesPageUrl     String?      
   
   // -- Configurações de Pagamento e Entrega --
   deliveryMethod   String       @default("PAYLURE_MEMBERS")
   paymentType      String       @default("ONE_TIME")
-  subscriptionPeriod String?    
+  subscriptionPeriod String?
   
   // -- Arquivos e Links --
-  deliveryUrl      String?      
-  fileUrl          String?      
-  fileName         String?      
+  deliveryUrl      String?
+  fileUrl          String?
+  fileName         String?
   
   // -- Conteúdo e Config --
   content          Json?
@@ -242,9 +243,9 @@ model Product {
   coproductionEmail    String?
   coproductionPercent  Float?   @default(0)
 
-  // -- Relacionamentos (NOVOS) --
-  offers           Offer[]      // ✅ Múltiplas Ofertas
-  coupons          Coupon[]     // ✅ Cupons de Desconto
+  // -- Relacionamentos --
+  offers           Offer[]      
+  coupons          Coupon[]     
 
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
@@ -261,10 +262,10 @@ model Product {
   @@index([showInMarketplace])
 }
 
-// ✅ NOVO MODELO: OFERTAS EXTRAS (Upsell, Downsell, Variações)
+// MODELO: OFERTAS EXTRAS
 model Offer {
   id            String   @id @default(uuid())
-  name          String   // Ex: "Acesso Vitalício", "Plano Anual"
+  name          String   
   priceInCents  Int
   isDefault     Boolean  @default(false)
   
@@ -277,11 +278,11 @@ model Offer {
   @@index([productId])
 }
 
-// ✅ NOVO MODELO: CUPONS
+// MODELO: CUPONS
 model Coupon {
   id            String   @id @default(uuid())
-  code          String   // Ex: "PROMO10"
-  discountPercent Int    // Ex: 10
+  code          String   
+  discountPercent Int    
   isActive      Boolean  @default(true)
   
   product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -489,4 +490,28 @@ model Transaction {
   @@index([userId])
   @@index([type])
   @@index([createdAt])
+}
+
+// ===================================
+// 13. PIXEL & TRACKING (NOVO ✅)
+// ===================================
+model Pixel {
+  id          String   @id @default(uuid())
+  name        String
+  platform    String   // FACEBOOK, GOOGLE, TIKTOK, etc.
+  pixelId     String
+  accessToken String?  // Para API de Conversão (CAPI)
+  testCode    String?
+  active      Boolean  @default(true)
+  
+  // Configuração de eventos (JSON: { purchase: true, lead: false ... })
+  events      Json     
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
 }
