@@ -13,10 +13,9 @@ export type WithdrawalDto = {
   description?: string;
 };
 
-// Tipo Unificado que o Frontend espera
 export type UnifiedTransaction = {
     id: string;
-    type: string; // 'SALE' | 'DEPOSIT' | 'WITHDRAWAL'
+    type: string;
     amountInCents: number;
     status: string;
     createdAt: Date;
@@ -39,6 +38,9 @@ export type HistoryOptions = {
   page: number;
   limit: number;
   status: string;
+  // ✅ ADICIONADO NO TYPE
+  startDate?: string;
+  endDate?: string;
 };
 
 @Injectable()
@@ -50,47 +52,54 @@ export class TransactionsService {
     private readonly keyclubService: KeyclubService,
   ) {}
 
-  // ===========================================================================
-  // 1. HISTÓRICO UNIFICADO (CORREÇÃO: LÊ A TABELA 'TRANSACTION')
-  // ===========================================================================
   async getHistory(userId: string, options: HistoryOptions): Promise<HistoryResponseData> {
-    const { page, limit, status } = options;
+    const { page, limit, status, startDate, endDate } = options;
     const skip = (page - 1) * limit;
 
-    this.logger.log(`📋 Buscando histórico para User: ${userId} (Status: ${status})`);
+    this.logger.log(`📋 Buscando histórico User: ${userId} | Status: ${status} | De: ${startDate} Até: ${endDate}`);
     
-    // Filtro Base
     const where: Prisma.TransactionWhereInput = { userId };
 
-    // Filtros de Status
+    // ✅ LÓGICA DE DATAS ADICIONADA
+    if (startDate && endDate) {
+        // Ajusta o endDate para o final do dia (23:59:59) para pegar o dia todo
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+
+        where.createdAt = {
+            gte: start,
+            lte: end
+        };
+    }
+
     if (status !== 'ALL') {
         if (status === 'PENDING') {
             where.status = 'PENDING';
         } else if (status === 'CONFIRMED' || status === 'COMPLETED') {
-            where.status = { in: ['COMPLETED', 'CONFIRMED', 'PAID'] };
+            where.status = { in: ['COMPLETED', 'CONFIRMED', 'PAID', 'APPROVED'] };
         } else if (status === 'FAILED') {
             where.status = { in: ['FAILED', 'REJECTED'] };
         }
     }
 
-    // 1. Busca Total (para paginação)
     const totalItems = await this.prisma.transaction.count({ where });
 
-    // 2. Busca Dados (na tabela certa!)
     const transactions = await this.prisma.transaction.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
       include: {
-          product: { select: { name: true } } // Traz nome do produto
+          product: { select: { name: true } }
       }
     });
 
-    // 3. Mapeia para o formato do Front
     const mappedTransactions: UnifiedTransaction[] = transactions.map(t => ({
         id: t.id,
-        type: t.type,           // Retorna SALE, DEPOSIT ou WITHDRAWAL
+        type: t.type,
         amountInCents: t.amount,
         status: t.status,
         createdAt: t.createdAt,
@@ -110,9 +119,7 @@ export class TransactionsService {
     };
   }
 
-  // ===========================================================================
-  // 2. SAQUE (GRAVA NA TRANSACTION)
-  // ===========================================================================
+  // ... (Mantenha createWithdrawal e createQuickPix iguais, não mudaram)
   async createWithdrawal(userId: string, dto: WithdrawalDto) {
     const amountInCents = Math.round(dto.amount * 100);
 
@@ -123,7 +130,6 @@ export class TransactionsService {
 
       const externalId = uuidv4();
 
-      // A. Cria Saque
       const withdrawal = await tx.withdrawal.create({
         data: {
           userId,
@@ -136,13 +142,11 @@ export class TransactionsService {
         },
       });
 
-      // B. Debita Saldo
       await tx.user.update({
         where: { id: userId },
         data: { balance: { decrement: amountInCents } },
       });
 
-      // C. ✅ Grava no Extrato Unificado
       await tx.transaction.create({
           data: {
               userId,
@@ -156,7 +160,6 @@ export class TransactionsService {
           }
       });
 
-      // D. Gateway
       try {
         const keyTypeForKeyclub = dto.keyType === 'RANDOM' ? 'EVP' : dto.keyType;
         await this.keyclubService.createWithdrawal({
@@ -174,14 +177,10 @@ export class TransactionsService {
     });
   }
 
-  // ===========================================================================
-  // 3. PIX RÁPIDO (GRAVA NA TRANSACTION)
-  // ===========================================================================
   async createQuickPix(userId: string, merchantId: string, dto: QuickPixDto) {
     const amountInCents = Math.round(dto.amount * 100);
     const externalId = uuidv4();
 
-    // A. Cria Depósito
     const deposit = await this.prisma.deposit.create({
       data: {
         amountInCents,
@@ -197,7 +196,6 @@ export class TransactionsService {
       },
     });
 
-    // B. ✅ Grava no Extrato Unificado (Tipo DEPOSIT)
     await this.prisma.transaction.create({
         data: {
             userId,
