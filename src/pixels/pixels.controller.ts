@@ -1,10 +1,10 @@
-// src/pixels/pixels.controller.ts
 import { Controller, Get, Post, Body, Param, Delete, Put, UseGuards, Patch } from '@nestjs/common';
 import { PixelsService } from './pixels.service';
 import { CreatePixelDto } from './dto/create-pixel.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { GetUser } from 'src/auth/decorators/get-user.decorator';
-import { User } from '@prisma/client';
+// ✅ CORREÇÃO AQUI: Adicionado 'type' na importação
+import type { User } from '@prisma/client';
 
 @UseGuards(AuthGuard('jwt'))
 @Controller('pixels')
@@ -19,7 +19,7 @@ export class PixelsController {
   @Get()
   async findAll(@GetUser() user: User) {
     const pixels = await this.pixelsService.findAll(user.id);
-    return { data: pixels }; // Retorna no formato que o front espera { data: [...] }
+    return { data: pixels };
   }
 
   @Put(':id')
