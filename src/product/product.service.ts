@@ -183,8 +183,40 @@ export class ProductService {
   }
 
   async remove(id: string, userId: string) {
-      const product = await this.prisma.product.findUnique({ where: { id } });
-      if (!product) throw new NotFoundException();
-      await this.prisma.product.delete({ where: { id } });
+    // 1. Verifica se existe
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    
+    if (!product) {
+        throw new NotFoundException('Produto não encontrado');
+    }
+
+    // 2. Executa a exclusão em cascata manual (Transaction)
+    await this.prisma.$transaction(async (tx) => {
+        // A. Remove dependências do Marketplace se houver
+        await tx.marketplaceProduct.deleteMany({
+            where: { productId: id }
+        });
+
+        // B. Remove Links de Pagamento vinculados
+        await tx.paymentLink.deleteMany({
+            where: { productId: id }
+        });
+
+        // C. Desvincula Transações financeiras (NÃO APAGA, apenas remove o ID do produto para manter histórico)
+        await tx.transaction.updateMany({
+            where: { productId: id },
+            data: { productId: null }
+        });
+
+        // D. Remove Ofertas e Cupons (O Schema já tem Cascade, mas se não tiver, isso garante)
+        // Opcional se seu schema já estiver com onDelete: Cascade
+        
+        // E. Finalmente apaga o Produto
+        await tx.product.delete({
+            where: { id }
+        });
+    });
+
+    return { message: 'Produto removido com sucesso' };
   }
 }
