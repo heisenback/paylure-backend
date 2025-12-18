@@ -6,25 +6,39 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
   
-  // 👇 AQUI FOI A MUDANÇA
   const app = await NestFactory.create(AppModule, {
-    rawBody: true, // Habilita o rawBody para validar webhooks
+    rawBody: true, // Necessário para webhooks (Stripe/Keyclub)
   });
 
-  // ✅ Prefixo global
+  // 👇 AJUSTE IMPORTANTE SOBRE O PREFIXO
+  // Se o seu frontend estiver chamando "api.paylure.com.br/auth/..." e aqui estiver "api/v1",
+  // o navegador dará erro de CORS (falso positivo para 404).
+  // Certifique-se de que a URL no frontend inclua "/api/v1" ou remova esta linha abaixo.
   app.setGlobalPrefix('api/v1');
   logger.log('✅ Prefixo global configurado: /api/v1');
 
-  // 1. ✅ CORREÇÃO CRÍTICA DO CORS: Definir origens permitidas explicitamente
-  // O erro 'Access-Control-Allow-Origin' geralmente é resolvido ao especificar a origem.
+  // 👇 LISTA DE ORIGENS PERMITIDAS (Adicionado www e localhost:3000)
   const allowedOrigins = [
-    'https://paylure.com.br', // Seu frontend
-    'https://api.paylure.com.br', // Seu próprio backend
-    'http://localhost:3001', // Se você usar localhost para desenvolvimento
+    'https://paylure.com.br',
+    'https://www.paylure.com.br',
+    'https://api.paylure.com.br',
+    'http://localhost:3000', // Frontend Local
+    'http://localhost:3001', // Backend Local
   ];
 
+  // 👇 CONFIGURAÇÃO DE CORS ROBUSTA (Função Callback)
   app.enableCors({
-    origin: allowedOrigins, // Agora aceita apenas estas origens
+    origin: (origin, callback) => {
+      // Permite requisições sem 'origin' (ex: Postman, Webhooks servidor-para-servidor)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        logger.warn(`🚫 Bloqueado pelo CORS: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -33,22 +47,20 @@ async function bootstrap() {
       'X-Requested-With',
       'Accept',
       'Origin',
+      'x-keyclub-signature', // Se usar Keyclub, libere este header
     ],
-    exposedHeaders: ['Authorization'],
     preflightContinue: false,
     optionsSuccessStatus: 204,
   });
-  logger.log('✅ CORS habilitado');
+  logger.log('✅ CORS habilitado com verificação estrita');
 
-  // ✅ CORREÇÃO: forbidNonWhitelisted: false
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
-      forbidNonWhitelisted: false, // ✅ MUDANÇA CRÍTICA
+      forbidNonWhitelisted: false,
       transform: true,
     }),
   );
-  logger.log('✅ Validação global configurada');
 
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');
@@ -58,13 +70,5 @@ async function bootstrap() {
   logger.log(`🚀 Backend rodando em http://0.0.0.0:${port}`);
   logger.log(`🌐 API disponível em http://0.0.0.0:${port}/api/v1`);
   logger.log('🚀 ====================================');
-  logger.log('');
-  logger.log('📚 Rotas disponíveis:');
-  logger.log('   GET  /api/v1/health');
-  logger.log('   POST /api/v1/auth/register');
-  logger.log('   POST /api/v1/auth/login');
-  logger.log('   GET  /api/v1/auth/me');
-  logger.log('   POST /api/v1/deposits');
-  logger.log('');
 }
 bootstrap();
