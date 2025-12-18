@@ -2,6 +2,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Resend } from 'resend';
 
+// ✅ DEFINIÇÃO DOS TIPOS DE E-MAIL (ORGANIZAÇÃO)
+export type MailType = 'acesso' | 'entrega' | 'parceiros' | 'seguranca' | 'financeiro';
+
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
@@ -11,14 +14,27 @@ export class MailService {
     this.resend = new Resend(process.env.RESEND_API_KEY || 're_fwiSDVRK_CsvXUcWeX6ddCuG6aMPHqf37');
   }
 
-  private getFromEmail(): string {
-    const isDomainVerified = false; 
+  // ✅ NOVA LÓGICA: ESCOLHE O REMETENTE BASEADO NO TIPO
+  private getFromEmail(type: MailType = 'seguranca'): string {
+    // Como seu domínio principal está verificado, o Resend permite subdomínios automaticamente
+    const isDomainVerified = true; 
+
+    const senders = {
+      seguranca: 'acesso@seguranca.paylure.com.br',    // Reset de senha, 2FA
+      entrega: 'contato@entrega.paylure.com.br',      // Acesso ao curso, Boas-vindas
+      parceiros: 'parceria@parceiros.paylure.com.br',  // Convites de co-produção
+      acesso: 'nao-responder@acesso.paylure.com.br',   // Alertas de conta
+      financeiro: 'financeiro@contas.paylure.com.br'   // (Futuro) Saques
+    };
+
     return isDomainVerified 
-      ? 'Paylure <noreply@paylure.com.br>' 
+      ? `Paylure <${senders[type]}>` 
       : 'Paylure <onboarding@resend.dev>';
   }
 
-  // ✅ MÉTODO ADICIONADO PARA RESOLVER O ERRO DE BUILD E ENVIAR O CONVITE
+  // ======================================================
+  // 🤝 E-MAILS DE CO-PRODUÇÃO
+  // ======================================================
   async sendCoproductionInvite(email: string, productName: string, percentage: number, producerName: string) {
     const registerLink = `${process.env.FRONTEND_URL}/register?email=${email}`;
 
@@ -41,7 +57,7 @@ export class MailService {
 
     try {
       await this.resend.emails.send({
-        from: this.getFromEmail(),
+        from: this.getFromEmail('parceiros'), // ✅ Usa parceria@parceiros...
         to: [email],
         subject: `Convite de Co-produção: ${productName}`,
         html: html,
@@ -55,9 +71,9 @@ export class MailService {
   // ======================================================
   // 📦 E-MAILS DE PRODUTO
   // ======================================================
-
   async sendAccessEmail(email: string, productName: string, accessLink: string, password?: string) {
     const subject = `Seu acesso chegou! - ${productName}`;
+    
     const html = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #020617; color: #cbd5e1;">
         <div style="background-color: #0f172a; padding: 40px; border-radius: 16px; border: 1px solid #1e293b;">
@@ -83,7 +99,7 @@ export class MailService {
 
     try {
       await this.resend.emails.send({
-        from: this.getFromEmail(),
+        from: this.getFromEmail('entrega'), // ✅ Usa contato@entrega...
         to: [email],
         subject: subject,
         html: html,
@@ -94,10 +110,13 @@ export class MailService {
     }
   }
 
+  // ======================================================
+  // 🔐 E-MAILS DE SISTEMA (RESET, 2FA, API)
+  // ======================================================
   async sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<void> {
     try {
       await this.resend.emails.send({
-        from: this.getFromEmail(),
+        from: this.getFromEmail('seguranca'), // ✅ Usa acesso@seguranca...
         to: [to],
         subject: '🔐 Recuperação de Senha - Paylure',
         html: this.getPasswordResetTemplate(name, resetUrl),
@@ -112,7 +131,7 @@ export class MailService {
   async sendPasswordChangedEmail(to: string, name: string): Promise<void> {
     try {
       await this.resend.emails.send({
-        from: this.getFromEmail(),
+        from: this.getFromEmail('seguranca'), // ✅ Usa acesso@seguranca...
         to: [to],
         subject: '✅ Senha Alterada com Sucesso - Paylure',
         html: this.getPasswordChangedTemplate(name),
@@ -126,7 +145,7 @@ export class MailService {
   async send2FACode(to: string, name: string, code: string): Promise<void> {
     try {
       await this.resend.emails.send({
-        from: this.getFromEmail(),
+        from: this.getFromEmail('seguranca'), // ✅ Usa acesso@seguranca...
         to: [to],
         subject: '🔒 Seu Código de Verificação - Paylure',
         html: this.get2FACodeTemplate(name, code),
@@ -142,7 +161,7 @@ export class MailService {
     try {
       const isReminder = apiSecret.includes('•');
       await this.resend.emails.send({
-        from: this.getFromEmail(),
+        from: this.getFromEmail('seguranca'), // ✅ Usa acesso@seguranca...
         to: [to],
         subject: isReminder ? '🔑 Suas Credenciais de API - Paylure' : '🔑 Novas Credenciais de API - Paylure',
         html: isReminder ? 
@@ -156,6 +175,9 @@ export class MailService {
     }
   }
 
+  // ======================================================
+  // 📝 TEMPLATES HTML (MANTIDOS ORIGINAIS)
+  // ======================================================
   private getPasswordResetTemplate(name: string, resetUrl: string): string {
     return `
       <!DOCTYPE html>
@@ -179,18 +201,90 @@ export class MailService {
   }
 
   private getPasswordChangedTemplate(name: string): string {
-    return `<!DOCTYPE html><html><body style="font-family: sans-serif; background: #020617; margin: 0; padding: 20px;"><div style="max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 16px; overflow: hidden; color: #e2e8f0; border: 1px solid #1e293b;"><div style="background: linear-gradient(90deg, #10b981 0%, #059669 100%); padding: 30px; text-align: center;"><h1 style="color: white; margin: 0; font-size: 24px;">✅ Senha Alterada</h1></div><div style="padding: 40px;"><p>Olá, <strong>${name}</strong>!</p><p style="color: #94a3b8;">Sua senha foi alterada com sucesso.</p></div></div></body></html>`;
+    return `
+      <!DOCTYPE html>
+      <html>
+      <body style="font-family: sans-serif; background: #020617; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 16px; overflow: hidden; color: #e2e8f0; border: 1px solid #1e293b;">
+          <div style="background: linear-gradient(90deg, #10b981 0%, #059669 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">✅ Senha Alterada</h1>
+          </div>
+          <div style="padding: 40px;">
+            <p>Olá, <strong>${name}</strong>!</p>
+            <p style="color: #94a3b8;">Sua senha foi alterada com sucesso.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
   }
 
   private get2FACodeTemplate(name: string, code: string): string {
-    return `<!DOCTYPE html><html><body style="font-family: sans-serif; background: #020617; margin: 0; padding: 20px;"><div style="max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 16px; overflow: hidden; color: #e2e8f0; border: 1px solid #1e293b;"><div style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); padding: 30px; text-align: center;"><h1 style="color: white; margin: 0; font-size: 24px;">🔒 Verificação</h1></div><div style="padding: 40px; text-align: center;"><p>Olá, <strong>${name}</strong>!</p><div style="background: rgba(147, 51, 234, 0.1); border: 2px solid #9333ea; padding: 20px; border-radius: 12px; margin: 20px 0;"><span style="font-size: 40px; font-weight: bold; color: #a855f7; letter-spacing: 5px;">${code}</span></div></div></div></body></html>`;
+    return `
+      <!DOCTYPE html>
+      <html>
+      <body style="font-family: sans-serif; background: #020617; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 16px; overflow: hidden; color: #e2e8f0; border: 1px solid #1e293b;">
+          <div style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">🔒 Verificação</h1>
+          </div>
+          <div style="padding: 40px; text-align: center;">
+            <p>Olá, <strong>${name}</strong>!</p>
+            <div style="background: rgba(147, 51, 234, 0.1); border: 2px solid #9333ea; padding: 20px; border-radius: 12px; margin: 20px 0;">
+              <span style="font-size: 40px; font-weight: bold; color: #a855f7; letter-spacing: 5px;">${code}</span>
+            </div>
+            <p style="font-size: 12px; color: #64748b;">Válido por 5 minutos.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
   }
 
   private getAPICredentialsTemplate(name: string, apiKey: string, apiSecret: string): string {
-    return `<!DOCTYPE html><html><body style="font-family: sans-serif; background: #020617; margin: 0; padding: 20px;"><div style="max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 16px; overflow: hidden; color: #e2e8f0; border: 1px solid #1e293b;"><div style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); padding: 30px; text-align: center;"><h1 style="color: white; margin: 0; font-size: 24px;">🔑 API Credentials</h1></div><div style="padding: 40px;"><p>Olá, <strong>${name}</strong>!</p><div style="background: #020617; padding: 20px; border-radius: 8px; font-family: monospace; border: 1px solid #1e293b;"><p style=\"margin: 5px 0; color: #94a3b8;\">Client ID:</p><p style=\"margin: 0 0 15px 0; color: #a855f7;\">${apiKey}</p><p style=\"margin: 5px 0; color: #94a3b8;\">Client Secret:</p><p style=\"margin: 0; color: #a855f7;\">${apiSecret}</p></div></div></div></body></html>`;
+    return `
+      <!DOCTYPE html>
+      <html>
+      <body style="font-family: sans-serif; background: #020617; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 16px; overflow: hidden; color: #e2e8f0; border: 1px solid #1e293b;">
+          <div style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">🔑 API Credentials</h1>
+          </div>
+          <div style="padding: 40px;">
+            <p>Olá, <strong>${name}</strong>!</p>
+            <div style="background: #020617; padding: 20px; border-radius: 8px; font-family: monospace; border: 1px solid #1e293b;">
+              <p style="margin: 5px 0; color: #94a3b8;">Client ID:</p>
+              <p style="margin: 0 0 15px 0; color: #a855f7;">${apiKey}</p>
+              <p style="margin: 5px 0; color: #94a3b8;">Client Secret:</p>
+              <p style="margin: 0; color: #a855f7;">${apiSecret}</p>
+            </div>
+            <p style="color: #ef4444; font-size: 12px; margin-top: 20px;">⚠️ Guarde o Secret. Ele não será exibido novamente.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
   }
 
   private getAPICredentialsReminderTemplate(name: string, apiKey: string): string {
-    return `<!DOCTYPE html><html><body style="font-family: sans-serif; background: #020617; margin: 0; padding: 20px;"><div style="max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 16px; overflow: hidden; color: #e2e8f0; border: 1px solid #1e293b;"><div style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); padding: 30px; text-align: center;"><h1 style="color: white; margin: 0; font-size: 24px;">🔑 API Reminder</h1></div><div style="padding: 40px;"><p>Olá, <strong>${name}</strong>!</p><p>Seu Client ID é:</p><div style="background: #020617; padding: 20px; border-radius: 8px; font-family: monospace; color: #a855f7; border: 1px solid #1e293b;">${apiKey}</div></div></div></body></html>`;
+    return `
+      <!DOCTYPE html>
+      <html>
+      <body style="font-family: sans-serif; background: #020617; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background: #0f172a; border-radius: 16px; overflow: hidden; color: #e2e8f0; border: 1px solid #1e293b;">
+          <div style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); padding: 30px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">🔑 API Reminder</h1>
+          </div>
+          <div style="padding: 40px;">
+            <p>Olá, <strong>${name}</strong>!</p>
+            <p>Seu Client ID é:</p>
+            <div style="background: #020617; padding: 20px; border-radius: 8px; font-family: monospace; color: #a855f7; border: 1px solid #1e293b;">
+              ${apiKey}
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
   }
 }
