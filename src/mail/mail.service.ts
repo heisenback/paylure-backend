@@ -8,53 +8,90 @@ export class MailService {
   private resend: Resend;
 
   constructor() {
-    // Inicializa o Resend. Se não tiver no ENV, usa a chave de teste fornecida.
     this.resend = new Resend(process.env.RESEND_API_KEY || 're_fwiSDVRK_CsvXUcWeX6ddCuG6aMPHqf37');
   }
 
   private getFromEmail(): string {
-    const isDomainVerified = false; // Mude para true quando configurar DNS
+    const isDomainVerified = false; 
     return isDomainVerified 
       ? 'Paylure <noreply@paylure.com.br>' 
       : 'Paylure <onboarding@resend.dev>';
   }
 
   // ======================================================
-  // 📦 E-MAILS DE PRODUTO (Chamado pelo Webhook)
+  // 🤝 E-MAILS DE CO-PRODUÇÃO (NOVO)
   // ======================================================
+  async sendCoproductionInvite(email: string, productName: string, percentage: number, producerName: string) {
+    const registerLink = `${process.env.FRONTEND_URL}/register?email=${email}`;
 
+    const html = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #020617; color: #cbd5e1;">
+        <div style="background-color: #0f172a; padding: 40px; border-radius: 16px; border: 1px solid #1e293b; text-align: center;">
+          <div style="background: linear-gradient(135deg, #9333ea 0%, #2563eb 100%); width: 64px; height: 64px; border-radius: 16px; margin: 0 auto 24px; display: flex; align-items: center; justify-content: center; font-size: 30px;">
+            🤝
+          </div>
+          <h2 style="color: #ffffff; margin-top: 0;">Convite de Co-produção</h2>
+          <p style="font-size: 16px; line-height: 1.6; color: #94a3b8;">
+            Olá! <strong>${producerName}</strong> convidou você para ser co-produtor do produto:
+          </p>
+          <h3 style="color: #a855f7; font-size: 20px; margin: 10px 0;">${productName}</h3>
+          <div style="background-color: #1e293b; padding: 15px; border-radius: 8px; margin: 20px auto; border: 1px solid #334155; display: inline-block;">
+            <span style="color: #cbd5e1;">Sua comissão:</span>
+            <strong style="color: #10b981; font-size: 18px; margin-left: 8px;">${percentage}%</strong>
+          </div>
+          <p style="color: #64748b; font-size: 14px; margin-bottom: 30px;">
+            Para começar a receber suas comissões automaticamente, você precisa ter uma conta na Paylure com este e-mail.
+          </p>
+          <div style="margin-bottom: 30px;">
+            <a href="${registerLink}" style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+              Aceitar e Criar Conta
+            </a>
+          </div>
+          <p style="font-size: 12px; color: #475569;">Se você já tem conta, apenas ignore este e-mail. A co-produção será ativada automaticamente na próxima venda.</p>
+        </div>
+      </div>
+    `;
+
+    try {
+      await this.resend.emails.send({
+        from: this.getFromEmail(),
+        to: [email],
+        subject: `Convite: Co-produção em ${productName}`,
+        html: html,
+      });
+      this.logger.log(`🤝 Convite de co-produção enviado para: ${email}`);
+    } catch (error) {
+      this.logger.error(`❌ Erro ao enviar convite para ${email}:`, error);
+    }
+  }
+
+  // ======================================================
+  // 📦 E-MAILS DE PRODUTO
+  // ======================================================
   async sendAccessEmail(email: string, productName: string, accessLink: string, password?: string) {
     const subject = `Seu acesso chegou! - ${productName}`;
-    
-    // Template Dark Clean para combinar com o Frontend
     const html = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #020617; color: #cbd5e1;">
         <div style="background-color: #0f172a; padding: 40px; border-radius: 16px; border: 1px solid #1e293b;">
-          
           <h2 style="color: #ffffff; text-align: center; margin-top: 0;">Parabéns pela compra! 🚀</h2>
-          
           <p style="font-size: 16px; line-height: 1.6; color: #94a3b8;">
             Olá! O pagamento foi confirmado e seu acesso ao <strong>${productName}</strong> foi liberado.
           </p>
-
           <div style="background-color: #1e293b; padding: 20px; border-radius: 8px; margin: 30px 0; border-left: 4px solid #9333ea;">
             <p style="margin: 0 0 10px 0; color: #cbd5e1; font-size: 12px; text-transform: uppercase;">Suas Credenciais</p>
             <p style="margin: 0; color: #ffffff;">📧 Login: <strong>${email}</strong></p>
             ${password ? `<p style="margin: 10px 0 0 0; color: #a855f7;">🔑 Senha Provisória: <strong>${password}</strong></p>` : ''}
           </div>
-
           <div style="text-align: center; margin: 30px 0;">
             <a href="${accessLink}" style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">
               Acessar Área de Membros
             </a>
           </div>
-
           <hr style="border: 0; border-top: 1px solid #1e293b; margin: 30px 0;" />
           <p style="color: #64748b; font-size: 12px; text-align: center;">Equipe Paylure</p>
         </div>
       </div>
     `;
-
     try {
       await this.resend.emails.send({
         from: this.getFromEmail(),
@@ -69,9 +106,8 @@ export class MailService {
   }
 
   // ======================================================
-  // 🔐 E-MAILS DE SISTEMA (AUTH/API)
+  // 🔐 E-MAILS DE SISTEMA
   // ======================================================
-
   async sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<void> {
     try {
       await this.resend.emails.send({
@@ -135,9 +171,8 @@ export class MailService {
   }
 
   // ===================================
-  // TEMPLATES HTML (Dark Mode)
+  // TEMPLATES
   // ===================================
-
   private getPasswordResetTemplate(name: string, resetUrl: string): string {
     return `
       <!DOCTYPE html>
@@ -153,7 +188,6 @@ export class MailService {
             <div style="text-align: center; margin: 30px 0;">
               <a href="${resetUrl}" style="display: inline-block; background: #10b981; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2);">Redefinir Senha</a>
             </div>
-            <p style="font-size: 13px; color: #64748b;">Se você não solicitou, apenas ignore este email.</p>
           </div>
         </div>
       </body>

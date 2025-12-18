@@ -73,29 +73,70 @@ export class WebhooksService {
       this.logger.warn(`⚠️ Nenhuma transação pendente para ${deposit.externalId}`);
     }
 
-    // 4️⃣ Executa tudo atomicamente
+    // 4️⃣ Executa tudo atomicamente (SPLIT E CONFIRMAÇÃO)
     await this.prisma.$transaction(async (tx) => {
       // A. Confirma depósito
       await tx.deposit.update({
         where: { id: deposit.id },
-        data: {
-          status: 'CONFIRMED',
-        },
+        data: { status: 'CONFIRMED' },
       });
 
       // B. Confirma e credita cada transação
       for (const transaction of transactions) {
+        // 1. Atualiza status da transação
         await tx.transaction.update({
           where: { id: transaction.id },
           data: { status: 'COMPLETED' },
         });
 
+        // 2. Lógica de Co-produção (Split)
+        let producerAmount = transaction.amount;
+        let coProducerAmount = 0;
+
+        if (transaction.productId) {
+          const product = await tx.product.findUnique({ where: { id: transaction.productId } });
+          
+          // Verifica se tem co-produção configurada e ativa
+          if (product && product.coproductionEmail && product.coproductionPercent > 0) {
+             const coProducer = await tx.user.findUnique({ where: { email: product.coproductionEmail } });
+             
+             if (coProducer) {
+                // Calcula valores
+                coProducerAmount = Math.floor(transaction.amount * (product.coproductionPercent / 100));
+                producerAmount = transaction.amount - coProducerAmount;
+
+                // Credita Co-produtor
+                await tx.user.update({
+                    where: { id: coProducer.id },
+                    data: { balance: { increment: coProducerAmount } }
+                });
+
+                // Cria extrato para Co-produtor
+                await tx.transaction.create({
+                    data: {
+                        userId: coProducer.id,
+                        productId: product.id,
+                        type: 'COPRODUCTION',
+                        amount: coProducerAmount,
+                        status: 'COMPLETED',
+                        description: `Co-produção: ${product.name}`,
+                        customerEmail: transaction.customerEmail,
+                        referenceId: transaction.id
+                    }
+                });
+
+                this.logger.log(`💰 Split realizado: Produtor ${producerAmount} / Co-produtor ${coProducerAmount}`);
+             } else {
+                this.logger.warn(`⚠️ Co-produtor (${product.coproductionEmail}) não encontrado. Valor total para o produtor.`);
+             }
+          }
+        }
+
+        // 3. Credita o Produtor (Valor total ou o restante do split)
         await tx.user.update({
           where: { id: transaction.userId },
           data: {
-            balance: {
-              increment: transaction.amount,
-            },
+            balance: { increment: producerAmount },
           },
         });
       }
@@ -121,16 +162,13 @@ export class WebhooksService {
           });
 
           // B. Enviar Email de Acesso / Boas-vindas (NOVO) ✅
-          // Como o usuário já existe (foi criado no checkout), mandamos o link de acesso.
-          // Se fosse um usuário criado AGORA, poderíamos passar a senha no 4º parâmetro.
           const accessLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
-          const productName = 'Conteúdo Premium'; // Você pode tentar pegar do transaction.description se tiver
+          const productName = 'Conteúdo Premium'; 
 
           await this.mailService.sendAccessEmail(
             freshUser.email,
             productName,
             accessLink,
-            // undefined // Senha: não enviamos aqui pois o usuário já tem senha definida no cadastro
           );
         }
       }

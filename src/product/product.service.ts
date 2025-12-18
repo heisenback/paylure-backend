@@ -9,13 +9,18 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { v4 as uuidv4 } from 'uuid'; 
+import { v4 as uuidv4 } from 'uuid';
+import { MailService } from 'src/mail/mail.service'; // ✅ IMPORTADO
 
 @Injectable()
 export class ProductService {
   private readonly logger = new Logger(ProductService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  // ✅ MailService injetado
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mailService: MailService 
+  ) {}
 
   private formatProduct(product: any) {
     if (!product) return null;
@@ -145,6 +150,17 @@ export class ProductService {
         }).catch((e) => this.logger.warn(e));
       }
 
+      // 🤝 ENVIA CONVITE SE TIVER CO-PRODUTOR NO CREATE
+      if (dto.coproductionEmail) {
+        const owner = await this.prisma.user.findUnique({ where: { id: userId } });
+        await this.mailService.sendCoproductionInvite(
+          dto.coproductionEmail,
+          newProduct.name,
+          Number(dto.coproductionPercent || 0),
+          owner?.name || 'Produtor'
+        );
+      }
+
       return this.formatProduct(newProduct);
     } catch (error: any) {
       this.logger.error(`Erro create: ${error?.message || error}`);
@@ -167,6 +183,17 @@ export class ProductService {
       const product = await this.prisma.product.findUnique({ where: { id } });
       if (!product) throw new NotFoundException();
       
+      // 🤝 LOGICA DE CONVITE DE CO-PRODUÇÃO
+      if (dto.coproductionEmail && dto.coproductionEmail !== product.coproductionEmail) {
+        const owner = await this.prisma.user.findUnique({ where: { id: userId } });
+        await this.mailService.sendCoproductionInvite(
+          dto.coproductionEmail,
+          dto.title || product.name,
+          Number(dto.coproductionPercent || product.coproductionPercent || 0),
+          owner?.name || 'Um Produtor'
+        );
+      }
+
       const updated = await this.prisma.product.update({
           where: { id },
           data: { 
@@ -175,7 +202,10 @@ export class ProductService {
              ...(dto.imageUrl && { imageUrl: dto.imageUrl }),
              ...(dto.deliveryMethod && { deliveryMethod: dto.deliveryMethod }),
              ...(dto.checkoutConfig && { checkoutConfig: dto.checkoutConfig }),
-             // Se tiver lógica de ofertas/cupons, deve ser tratada aqui
+             
+             // Atualiza co-produção
+             ...(dto.coproductionEmail && { coproductionEmail: dto.coproductionEmail }),
+             ...(dto.coproductionPercent && { coproductionPercent: Number(dto.coproductionPercent) }),
           },
           include: { offers: true, coupons: true, memberArea: true }
       });
