@@ -30,11 +30,16 @@ export class ProductService {
     };
   }
 
-  private normalizeCheckoutConfig(inputConfig: any, titleFallback: string, imageUrl?: string | null) {
+  private normalizeCheckoutConfig(
+    inputConfig: any,
+    titleFallback: string,
+    imageUrl?: string | null,
+  ) {
     const cfg = inputConfig || {};
     const branding = cfg.branding || {};
     const rawBrandName = (branding.brandName ?? '').toString().trim();
-    const shouldFixBrandName = !rawBrandName || rawBrandName.toLowerCase().includes('carregando');
+    const shouldFixBrandName =
+      !rawBrandName || rawBrandName.toLowerCase().includes('carregando');
 
     const nextBranding: any = {
       ...branding,
@@ -102,7 +107,11 @@ export class ProductService {
       const priceVal = Number(dto.price);
       const priceInCents = isNaN(priceVal) ? 0 : Math.round(priceVal * 100);
 
-      const finalConfig = this.normalizeCheckoutConfig(dto.checkoutConfig, dto.title, dto.imageUrl);
+      const finalConfig = this.normalizeCheckoutConfig(
+        dto.checkoutConfig,
+        dto.title,
+        dto.imageUrl,
+      );
 
       let memberAreaId: string | null = null;
 
@@ -294,4 +303,7 @@ export class ProductService {
       await tx.product.delete({ where: { id } });
     });
 
-    return { message: 'Produto removido com sucesso
+    // ✅ AQUI estava o erro (string sem fechar)
+    return { message: 'Produto removido com sucesso' };
+  }
+}
