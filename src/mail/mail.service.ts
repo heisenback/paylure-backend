@@ -18,7 +18,7 @@ export class MailService {
       : 'Paylure <onboarding@resend.dev>';
   }
 
-  // ✅ MÉTODO ADICIONADO PARA RESOLVER O ERRO DE BUILD
+  // ✅ MÉTODO ADICIONADO PARA RESOLVER O ERRO DE BUILD E ENVIAR O CONVITE
   async sendCoproductionInvite(email: string, productName: string, percentage: number, producerName: string) {
     const registerLink = `${process.env.FRONTEND_URL}/register?email=${email}`;
 
