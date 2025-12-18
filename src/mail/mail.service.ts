@@ -5,103 +5,85 @@ import { Resend } from 'resend';
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private resend: Resend;
+  private readonly resend: Resend;
 
   constructor() {
-    this.resend = new Resend(process.env.RESEND_API_KEY || 're_fwiSDVRK_CsvXUcWeX6ddCuG6aMPHqf37');
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      this.logger.warn(
+        '⚠️ RESEND_API_KEY não definido no ENV. Emails NÃO serão enviados.',
+      );
+    }
+    this.resend = new Resend(apiKey || ''); // não hardcode
   }
 
   private getFromEmail(): string {
-    const isDomainVerified = false; 
-    return isDomainVerified 
-      ? 'Paylure <noreply@paylure.com.br>' 
-      : 'Paylure <onboarding@resend.dev>';
-  }
+    // Você controla isso no ENV:
+    // RESEND_FROM="Paylure <noreply@paylure.com.br>"
+    // RESEND_DOMAIN_VERIFIED="true"
+    const verified = String(process.env.RESEND_DOMAIN_VERIFIED || '').toLowerCase() === 'true';
 
-  // ======================================================
-  // 🤝 E-MAILS DE CO-PRODUÇÃO (NOVO)
-  // ======================================================
-  async sendCoproductionInvite(email: string, productName: string, percentage: number, producerName: string) {
-    const registerLink = `${process.env.FRONTEND_URL}/register?email=${email}`;
+    const fromVerified = process.env.RESEND_FROM?.trim();
+    const fromFallback = process.env.RESEND_FROM_FALLBACK?.trim() || 'Paylure <onboarding@resend.dev>';
 
-    const html = `
-      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #020617; color: #cbd5e1;">
-        <div style="background-color: #0f172a; padding: 40px; border-radius: 16px; border: 1px solid #1e293b; text-align: center;">
-          <div style="background: linear-gradient(135deg, #9333ea 0%, #2563eb 100%); width: 64px; height: 64px; border-radius: 16px; margin: 0 auto 24px; display: flex; align-items: center; justify-content: center; font-size: 30px;">
-            🤝
-          </div>
-          <h2 style="color: #ffffff; margin-top: 0;">Convite de Co-produção</h2>
-          <p style="font-size: 16px; line-height: 1.6; color: #94a3b8;">
-            Olá! <strong>${producerName}</strong> convidou você para ser co-produtor do produto:
-          </p>
-          <h3 style="color: #a855f7; font-size: 20px; margin: 10px 0;">${productName}</h3>
-          <div style="background-color: #1e293b; padding: 15px; border-radius: 8px; margin: 20px auto; border: 1px solid #334155; display: inline-block;">
-            <span style="color: #cbd5e1;">Sua comissão:</span>
-            <strong style="color: #10b981; font-size: 18px; margin-left: 8px;">${percentage}%</strong>
-          </div>
-          <p style="color: #64748b; font-size: 14px; margin-bottom: 30px;">
-            Para começar a receber suas comissões automaticamente, você precisa ter uma conta na Paylure com este e-mail.
-          </p>
-          <div style="margin-bottom: 30px;">
-            <a href="${registerLink}" style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
-              Aceitar e Criar Conta
-            </a>
-          </div>
-          <p style="font-size: 12px; color: #475569;">Se você já tem conta, apenas ignore este e-mail. A co-produção será ativada automaticamente na próxima venda.</p>
-        </div>
-      </div>
-    `;
-
-    try {
-      await this.resend.emails.send({
-        from: this.getFromEmail(),
-        to: [email],
-        subject: `Convite: Co-produção em ${productName}`,
-        html: html,
-      });
-      this.logger.log(`🤝 Convite de co-produção enviado para: ${email}`);
-    } catch (error) {
-      this.logger.error(`❌ Erro ao enviar convite para ${email}:`, error);
-    }
+    if (verified && fromVerified) return fromVerified;
+    return fromFallback;
   }
 
   // ======================================================
   // 📦 E-MAILS DE PRODUTO
   // ======================================================
-  async sendAccessEmail(email: string, productName: string, accessLink: string, password?: string) {
+  async sendAccessEmail(
+    email: string,
+    productName: string,
+    accessLink: string,
+    password?: string,
+  ) {
+    if (!process.env.RESEND_API_KEY) {
+      this.logger.warn(`⚠️ Email ignorado (sem RESEND_API_KEY) para: ${email}`);
+      return;
+    }
+
     const subject = `Seu acesso chegou! - ${productName}`;
+
     const html = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #020617; color: #cbd5e1;">
         <div style="background-color: #0f172a; padding: 40px; border-radius: 16px; border: 1px solid #1e293b;">
           <h2 style="color: #ffffff; text-align: center; margin-top: 0;">Parabéns pela compra! 🚀</h2>
+
           <p style="font-size: 16px; line-height: 1.6; color: #94a3b8;">
             Olá! O pagamento foi confirmado e seu acesso ao <strong>${productName}</strong> foi liberado.
           </p>
+
           <div style="background-color: #1e293b; padding: 20px; border-radius: 8px; margin: 30px 0; border-left: 4px solid #9333ea;">
             <p style="margin: 0 0 10px 0; color: #cbd5e1; font-size: 12px; text-transform: uppercase;">Suas Credenciais</p>
             <p style="margin: 0; color: #ffffff;">📧 Login: <strong>${email}</strong></p>
             ${password ? `<p style="margin: 10px 0 0 0; color: #a855f7;">🔑 Senha Provisória: <strong>${password}</strong></p>` : ''}
           </div>
+
           <div style="text-align: center; margin: 30px 0;">
             <a href="${accessLink}" style="background: linear-gradient(90deg, #9333ea 0%, #2563eb 100%); color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">
               Acessar Área de Membros
             </a>
           </div>
+
           <hr style="border: 0; border-top: 1px solid #1e293b; margin: 30px 0;" />
           <p style="color: #64748b; font-size: 12px; text-align: center;">Equipe Paylure</p>
         </div>
       </div>
     `;
+
     try {
       await this.resend.emails.send({
         from: this.getFromEmail(),
         to: [email],
-        subject: subject,
-        html: html,
+        subject,
+        html,
       });
+
       this.logger.log(`✅ E-mail de acesso enviado para: ${email}`);
-    } catch (error) {
-      this.logger.error(`❌ Erro ao enviar acesso para ${email}:`, error);
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao enviar acesso para ${email}: ${error?.message || error}`);
     }
   }
 
@@ -109,6 +91,11 @@ export class MailService {
   // 🔐 E-MAILS DE SISTEMA
   // ======================================================
   async sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<void> {
+    if (!process.env.RESEND_API_KEY) {
+      this.logger.warn(`⚠️ Email reset ignorado (sem RESEND_API_KEY) para: ${to}`);
+      return;
+    }
+
     try {
       await this.resend.emails.send({
         from: this.getFromEmail(),
@@ -117,13 +104,18 @@ export class MailService {
         html: this.getPasswordResetTemplate(name, resetUrl),
       });
       this.logger.log(`✅ Email de reset enviado para: ${to}`);
-    } catch (error) {
-      this.logger.error(`❌ Erro ao enviar reset para ${to}:`, error);
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao enviar reset para ${to}: ${error?.message || error}`);
       throw error;
     }
   }
 
   async sendPasswordChangedEmail(to: string, name: string): Promise<void> {
+    if (!process.env.RESEND_API_KEY) {
+      this.logger.warn(`⚠️ Email changed ignorado (sem RESEND_API_KEY) para: ${to}`);
+      return;
+    }
+
     try {
       await this.resend.emails.send({
         from: this.getFromEmail(),
@@ -132,12 +124,17 @@ export class MailService {
         html: this.getPasswordChangedTemplate(name),
       });
       this.logger.log(`✅ Email de confirmação enviado para: ${to}`);
-    } catch (error) {
-      this.logger.error(`❌ Erro ao enviar confirmação para ${to}:`, error);
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao enviar confirmação para ${to}: ${error?.message || error}`);
     }
   }
 
   async send2FACode(to: string, name: string, code: string): Promise<void> {
+    if (!process.env.RESEND_API_KEY) {
+      this.logger.warn(`⚠️ Email 2FA ignorado (sem RESEND_API_KEY) para: ${to}`);
+      return;
+    }
+
     try {
       await this.resend.emails.send({
         from: this.getFromEmail(),
@@ -146,32 +143,37 @@ export class MailService {
         html: this.get2FACodeTemplate(name, code),
       });
       this.logger.log(`✅ Código 2FA enviado para: ${to}`);
-    } catch (error) {
-      this.logger.error(`❌ Erro ao enviar 2FA para ${to}:`, error);
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao enviar 2FA para ${to}: ${error?.message || error}`);
       throw error;
     }
   }
 
   async sendAPICredentials(to: string, name: string, apiKey: string, apiSecret: string): Promise<void> {
+    if (!process.env.RESEND_API_KEY) {
+      this.logger.warn(`⚠️ Email API creds ignorado (sem RESEND_API_KEY) para: ${to}`);
+      return;
+    }
+
     try {
       const isReminder = apiSecret.includes('•');
       await this.resend.emails.send({
         from: this.getFromEmail(),
         to: [to],
         subject: isReminder ? '🔑 Suas Credenciais de API - Paylure' : '🔑 Novas Credenciais de API - Paylure',
-        html: isReminder ? 
-          this.getAPICredentialsReminderTemplate(name, apiKey) : 
-          this.getAPICredentialsTemplate(name, apiKey, apiSecret),
+        html: isReminder
+          ? this.getAPICredentialsReminderTemplate(name, apiKey)
+          : this.getAPICredentialsTemplate(name, apiKey, apiSecret),
       });
       this.logger.log(`✅ Credenciais enviadas para: ${to}`);
-    } catch (error) {
-      this.logger.error(`❌ Erro ao enviar credenciais para ${to}:`, error);
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao enviar credenciais para ${to}: ${error?.message || error}`);
       throw error;
     }
   }
 
   // ===================================
-  // TEMPLATES
+  // TEMPLATES HTML
   // ===================================
   private getPasswordResetTemplate(name: string, resetUrl: string): string {
     return `
@@ -188,6 +190,7 @@ export class MailService {
             <div style="text-align: center; margin: 30px 0;">
               <a href="${resetUrl}" style="display: inline-block; background: #10b981; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2);">Redefinir Senha</a>
             </div>
+            <p style="font-size: 13px; color: #64748b;">Se você não solicitou, ignore este email.</p>
           </div>
         </div>
       </body>

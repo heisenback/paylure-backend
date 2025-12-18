@@ -10,17 +10,12 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { v4 as uuidv4 } from 'uuid';
-import { MailService } from 'src/mail/mail.service'; // ✅ IMPORTADO
 
 @Injectable()
 export class ProductService {
   private readonly logger = new Logger(ProductService.name);
 
-  // ✅ MailService injetado
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly mailService: MailService 
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   private formatProduct(product: any) {
     if (!product) return null;
@@ -30,48 +25,64 @@ export class ProductService {
       amount: product.priceInCents,
       price: product.priceInCents / 100,
       image: product.imageUrl,
-      // ✅ Expõe a área para o frontend
-      memberAreaId: product.memberAreaId, 
-      memberArea: product.memberArea
+      memberAreaId: product.memberAreaId,
+      memberArea: product.memberArea,
     };
   }
 
-  // Normaliza configs visuais
   private normalizeCheckoutConfig(inputConfig: any, titleFallback: string, imageUrl?: string | null) {
     const cfg = inputConfig || {};
     const branding = cfg.branding || {};
     const rawBrandName = (branding.brandName ?? '').toString().trim();
     const shouldFixBrandName = !rawBrandName || rawBrandName.toLowerCase().includes('carregando');
-    const nextBranding: any = { ...branding, brandName: shouldFixBrandName ? titleFallback : rawBrandName };
-    if (imageUrl) { nextBranding.dashboardCover = imageUrl; nextBranding.productImage = imageUrl; }
+
+    const nextBranding: any = {
+      ...branding,
+      brandName: shouldFixBrandName ? titleFallback : rawBrandName,
+    };
+
+    if (imageUrl) {
+      nextBranding.dashboardCover = imageUrl;
+      nextBranding.productImage = imageUrl;
+    }
+
     return { ...cfg, branding: nextBranding };
   }
 
   private generateSlug(name: string): string {
-    const baseSlug = name.toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    const baseSlug = name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
     return `${baseSlug}-${uuidv4().split('-')[0]}`;
   }
 
-  async findAllByUser(userId: string) {
+  private async getOwnerMerchantId(userId: string): Promise<string> {
     const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
+    return merchant?.id || userId;
+  }
+
+  async findAllByUser(userId: string) {
+    const ownerId = await this.getOwnerMerchantId(userId);
+
     const products = await this.prisma.product.findMany({
-      where: { OR: [{ merchantId: userId }, ...(merchant?.id ? [{ merchantId: merchant.id }] : [])] },
+      where: { merchantId: ownerId },
       include: { offers: true, coupons: true, memberArea: true },
       orderBy: { createdAt: 'desc' },
     });
+
     return products.map((p) => this.formatProduct(p));
   }
 
-  // ✅ CORREÇÃO CRÍTICA: Esta função estava faltando e quebrou o PublicApi
   async findAllByMerchant(merchantId: string) {
     const products = await this.prisma.product.findMany({
       where: { merchantId },
       include: { offers: true, coupons: true, memberArea: true },
       orderBy: { createdAt: 'desc' },
     });
+
     return products.map((p) => this.formatProduct(p));
   }
 
@@ -80,34 +91,34 @@ export class ProductService {
       where: { id: productId },
       include: { offers: true, coupons: true, memberArea: true },
     });
+
     return this.formatProduct(product);
   }
 
   async create(dto: CreateProductDto, userId: string) {
     try {
-      const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
-      const ownerId = merchant ? merchant.id : userId;
-      
+      const ownerId = await this.getOwnerMerchantId(userId);
+
       const priceVal = Number(dto.price);
       const priceInCents = isNaN(priceVal) ? 0 : Math.round(priceVal * 100);
-      
+
       const finalConfig = this.normalizeCheckoutConfig(dto.checkoutConfig, dto.title, dto.imageUrl);
 
-      // ✅ Tipagem correta para evitar erro no build
       let memberAreaId: string | null = null;
-      
+
       if (dto.deliveryMethod === 'PAYLURE_MEMBERS') {
-          const newArea = await this.prisma.memberArea.create({
-              data: {
-                  merchantId: ownerId,
-                  name: dto.title,
-                  description: dto.description,
-                  slug: this.generateSlug(dto.title),
-                  coverImageUrl: dto.imageUrl,
-              }
-          });
-          memberAreaId = newArea.id;
-          this.logger.log(`📚 Área Criada: ${newArea.name}`);
+        const newArea = await this.prisma.memberArea.create({
+          data: {
+            merchantId: ownerId,
+            name: dto.title,
+            description: dto.description,
+            slug: this.generateSlug(dto.title),
+            coverImageUrl: dto.imageUrl,
+          },
+        });
+
+        memberAreaId = newArea.id;
+        this.logger.log(`📚 Área Criada: ${newArea.name}`);
       }
 
       const newProduct = await this.prisma.product.create({
@@ -125,8 +136,8 @@ export class ProductService {
           deliveryUrl: dto.deliveryUrl || null,
           fileUrl: dto.fileUrl || null,
           fileName: dto.fileName || null,
-          
-          memberAreaId: memberAreaId, 
+
+          memberAreaId,
 
           isAffiliationEnabled: Boolean(dto.isAffiliationEnabled),
           showInMarketplace: Boolean(dto.showInMarketplace),
@@ -135,30 +146,37 @@ export class ProductService {
           materialLink: dto.materialLink || null,
           coproductionEmail: dto.coproductionEmail || null,
           coproductionPercent: Number(dto.coproductionPercent || 0),
-          
+
           checkoutConfig: finalConfig,
-          
-          offers: { create: dto.offers?.map((o) => ({ name: o.name, priceInCents: Math.round(Number(o.price) * 100) })) || [] },
-          coupons: { create: dto.coupons?.map((c) => ({ code: c.code.toUpperCase(), discountPercent: Number(c.discountPercent) })) || [] },
+
+          offers: {
+            create:
+              dto.offers?.map((o) => ({
+                name: o.name,
+                priceInCents: Math.round(Number(o.price) * 100),
+              })) || [],
+          },
+          coupons: {
+            create:
+              dto.coupons?.map((c) => ({
+                code: c.code.toUpperCase(),
+                discountPercent: Number(c.discountPercent),
+              })) || [],
+          },
         },
         include: { offers: true, coupons: true, memberArea: true },
       });
 
       if (dto.showInMarketplace) {
-        await this.prisma.marketplaceProduct.create({
-            data: { productId: newProduct.id, status: 'AVAILABLE', commissionRate: Number(dto.commissionPercent || 0) },
-        }).catch((e) => this.logger.warn(e));
-      }
-
-      // 🤝 ENVIA CONVITE SE TIVER CO-PRODUTOR NO CREATE
-      if (dto.coproductionEmail) {
-        const owner = await this.prisma.user.findUnique({ where: { id: userId } });
-        await this.mailService.sendCoproductionInvite(
-          dto.coproductionEmail,
-          newProduct.name,
-          Number(dto.coproductionPercent || 0),
-          owner?.name || 'Produtor'
-        );
+        await this.prisma.marketplaceProduct
+          .create({
+            data: {
+              productId: newProduct.id,
+              status: 'AVAILABLE',
+              commissionRate: Number(dto.commissionPercent || 0),
+            },
+          })
+          .catch((e) => this.logger.warn(e));
       }
 
       return this.formatProduct(newProduct);
@@ -168,115 +186,112 @@ export class ProductService {
     }
   }
 
-  async findOnePublic(id: string) { return this.findById(id); }
-  
+  async findOnePublic(id: string) {
+    return this.findById(id);
+  }
+
   async findMyCoProductions(email: string) {
     const prods = await this.prisma.product.findMany({
       where: { coproductionEmail: { equals: email, mode: 'insensitive' } },
       include: { offers: true, coupons: true, memberArea: true },
       orderBy: { createdAt: 'desc' },
     });
+
     return prods.map((p) => this.formatProduct(p));
   }
 
-  async update(id: string, userId: string, email: string, dto: UpdateProductDto) {
-      const product = await this.prisma.product.findUnique({ where: { id } });
-      if (!product) throw new NotFoundException();
-      
-      // 🤝 LOGICA DE CONVITE DE CO-PRODUÇÃO
-      if (dto.coproductionEmail && dto.coproductionEmail !== product.coproductionEmail) {
-        const owner = await this.prisma.user.findUnique({ where: { id: userId } });
-        await this.mailService.sendCoproductionInvite(
-          dto.coproductionEmail,
-          dto.title || product.name,
-          Number(dto.coproductionPercent || product.coproductionPercent || 0),
-          owner?.name || 'Um Produtor'
-        );
-      }
+  async update(id: string, userId: string, _email: string, dto: UpdateProductDto) {
+    const ownerId = await this.getOwnerMerchantId(userId);
 
-      const updated = await this.prisma.product.update({
-          where: { id },
-          data: { 
-             ...(dto.title && { name: dto.title }),
-             ...(dto.price && { priceInCents: Math.round(dto.price * 100) }),
-             ...(dto.imageUrl && { imageUrl: dto.imageUrl }),
-             ...(dto.deliveryMethod && { deliveryMethod: dto.deliveryMethod }),
-             ...(dto.checkoutConfig && { checkoutConfig: dto.checkoutConfig }),
-             
-             // Atualiza co-produção
-             ...(dto.coproductionEmail && { coproductionEmail: dto.coproductionEmail }),
-             ...(dto.coproductionPercent && { coproductionPercent: Number(dto.coproductionPercent) }),
-          },
-          include: { offers: true, coupons: true, memberArea: true }
-      });
-      return this.formatProduct(updated);
-  }
+    const product = await this.prisma.product.findUnique({ where: { id } });
+    if (!product) throw new NotFoundException('Produto não encontrado');
 
-  // ✅ METODO REMOVE AJUSTADO PARA LIMPEZA PROFUNDA (RESOLVE ERRO 500)
-  async remove(id: string, userId: string) {
-    // 1. Verifica se o produto existe e busca suas dependências críticas
-    const product = await this.prisma.product.findUnique({ 
-        where: { id },
-        include: { 
-            marketplaceProduct: true, 
-            paymentLinks: true 
-        } 
-    });
-    
-    if (!product) {
-        throw new NotFoundException('Produto não encontrado');
+    if (product.merchantId !== ownerId) {
+      throw new ForbiddenException('Você não pode editar este produto');
     }
 
-    // 2. Executa a exclusão em cascata manual (Transaction)
-    await this.prisma.$transaction(async (tx) => {
-        
-        // --- ETAPA A: LIMPEZA DO MARKETPLACE ---
-        if (product.marketplaceProduct) {
-            // A1. Remove Afiliados (que impedem deletar o MarketplaceProduct)
-            await tx.affiliate.deleteMany({
-                where: { marketplaceProductId: product.marketplaceProduct.id }
-            });
+    const nextData: any = {};
 
-            // A2. Remove o produto do Marketplace
-            await tx.marketplaceProduct.delete({
-                where: { id: product.marketplaceProduct.id }
-            });
-        }
+    if (dto.title) nextData.name = dto.title;
 
-        // --- ETAPA B: LIMPEZA DE LINKS DE PAGAMENTO ---
-        if (product.paymentLinks.length > 0) {
-            const linkIds = product.paymentLinks.map(link => link.id);
-            
-            // B1. Desvincula depósitos dos links (para não apagar histórico financeiro, mas liberar o link)
-            await tx.deposit.updateMany({
-                where: { paymentLinkId: { in: linkIds } },
-                data: { paymentLinkId: null }
-            });
+    if (dto.price !== undefined && dto.price !== null) {
+      const priceVal = Number(dto.price);
+      if (isNaN(priceVal)) throw new BadRequestException('Preço inválido');
+      nextData.priceInCents = Math.round(priceVal * 100);
+    }
 
-            // B2. Remove os Links de Pagamento
-            await tx.paymentLink.deleteMany({
-                where: { productId: id }
-            });
-        }
+    if (dto.imageUrl) nextData.imageUrl = dto.imageUrl;
 
-        // --- ETAPA C: DESVINCULAR TRANSAÇÕES ---
-        // Desvincula transações financeiras do produto (mantém o registro da venda, mas sem o link)
-        await tx.transaction.updateMany({
-            where: { productId: id },
-            data: { productId: null }
-        });
+    if (dto.deliveryMethod) nextData.deliveryMethod = dto.deliveryMethod;
 
-        // --- ETAPA D: LIMPEZA FINAL ---
-        // Apaga Ofertas e Cupons explicitamente (caso o banco não tenha cascade configurado)
-        await tx.offer.deleteMany({ where: { productId: id } });
-        await tx.coupon.deleteMany({ where: { productId: id } });
+    if (dto.checkoutConfig) {
+      const titleFallback = dto.title || product.name;
+      nextData.checkoutConfig = this.normalizeCheckoutConfig(
+        dto.checkoutConfig,
+        titleFallback,
+        dto.imageUrl || product.imageUrl,
+      );
+    }
 
-        // Finalmente, apaga o Produto
-        await tx.product.delete({
-            where: { id }
-        });
+    const updated = await this.prisma.product.update({
+      where: { id },
+      data: nextData,
+      include: { offers: true, coupons: true, memberArea: true },
     });
 
-    return { message: 'Produto removido com sucesso' };
+    return this.formatProduct(updated);
   }
-}
+
+  async remove(id: string, userId: string) {
+    const ownerId = await this.getOwnerMerchantId(userId);
+
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        marketplaceProduct: true,
+        paymentLinks: true,
+      },
+    });
+
+    if (!product) throw new NotFoundException('Produto não encontrado');
+
+    if (product.merchantId !== ownerId) {
+      throw new ForbiddenException('Você não pode remover este produto');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      if (product.marketplaceProduct) {
+        await tx.affiliate.deleteMany({
+          where: { marketplaceProductId: product.marketplaceProduct.id },
+        });
+
+        await tx.marketplaceProduct.delete({
+          where: { id: product.marketplaceProduct.id },
+        });
+      }
+
+      if (product.paymentLinks?.length > 0) {
+        const linkIds = product.paymentLinks.map((link) => link.id);
+
+        await tx.deposit.updateMany({
+          where: { paymentLinkId: { in: linkIds } },
+          data: { paymentLinkId: null },
+        });
+
+        await tx.paymentLink.deleteMany({
+          where: { productId: id },
+        });
+      }
+
+      await tx.transaction.updateMany({
+        where: { productId: id },
+        data: { productId: null },
+      });
+
+      await tx.offer.deleteMany({ where: { productId: id } });
+      await tx.coupon.deleteMany({ where: { productId: id } });
+
+      await tx.product.delete({ where: { id } });
+    });
+
+    return { message: 'Produto removido com sucesso

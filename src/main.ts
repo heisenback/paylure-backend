@@ -7,20 +7,12 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   const app = await NestFactory.create(AppModule, {
-    // necessário pra assinatura de webhooks (corpo raw)
     rawBody: true,
   });
 
-  // o frontend consome /api/v1/...
   app.setGlobalPrefix('api/v1');
   logger.log('✅ Prefixo global configurado: /api/v1');
 
-  /**
-   * ✅ CORS (Vercel -> VPS)
-   * IMPORTANTE: com credentials:true, NÃO pode usar "*"
-   * Você pode controlar via ENV:
-   * CORS_ORIGINS="https://paylure.com.br,https://www.paylure.com.br,http://localhost:3000"
-   */
   const allowedOrigins = (process.env.CORS_ORIGINS ??
     'https://paylure.com.br,https://www.paylure.com.br,http://localhost:3000')
     .split(',')
@@ -29,7 +21,6 @@ async function bootstrap() {
 
   app.enableCors({
     origin: (origin, callback) => {
-      // sem origin = server-to-server / curl / healthcheck
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
       return callback(new Error(`CORS bloqueado para origin: ${origin}`), false);
@@ -42,7 +33,6 @@ async function bootstrap() {
       'Authorization',
       'X-Requested-With',
       'Origin',
-      // se você assina webhooks/gateway
       'x-keyclub-signature',
     ],
     optionsSuccessStatus: 204,

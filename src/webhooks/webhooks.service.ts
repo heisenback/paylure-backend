@@ -75,55 +75,18 @@ export class WebhooksService {
           data: { status: 'COMPLETED' },
         });
 
-        // 💰 LOGICA DE SPLIT (CORRIGIDA PARA BUILD)
-        let producerAmount = transaction.amount;
-        let coProducerAmount = 0;
-
-        if (transaction.productId) {
-          const product = await tx.product.findUnique({ where: { id: transaction.productId } });
-          
-          // ✅ Correção: Garantimos que coproductionPercent seja tratado como número
-          const percent = product?.coproductionPercent ?? 0;
-
-          if (product && product.coproductionEmail && percent > 0) {
-             const coProducer = await tx.user.findUnique({ where: { email: product.coproductionEmail } });
-             
-             if (coProducer) {
-                // Cálculo seguro do Split
-                coProducerAmount = Math.floor(transaction.amount * (percent / 100));
-                producerAmount = transaction.amount - coProducerAmount;
-
-                await tx.user.update({
-                    where: { id: coProducer.id },
-                    data: { balance: { increment: coProducerAmount } }
-                });
-
-                await tx.transaction.create({
-                    data: {
-                        userId: coProducer.id,
-                        productId: product.id,
-                        type: 'COPRODUCTION',
-                        amount: coProducerAmount,
-                        status: 'COMPLETED',
-                        description: `Co-produção: ${product.name}`,
-                        customerEmail: transaction.customerEmail,
-                        referenceId: transaction.id
-                    }
-                });
-
-                this.logger.log(`💰 Split: Produtor ${producerAmount} / Co-produtor ${coProducerAmount}`);
-             } else {
-                this.logger.warn(`⚠️ Co-produtor (${product.coproductionEmail}) não encontrado.`);
-             }
-          }
-        }
-
         await tx.user.update({
           where: { id: transaction.userId },
-          data: { balance: { increment: producerAmount } },
+          data: {
+            balance: { increment: transaction.amount },
+          },
         });
       }
     });
+
+    const frontend =
+      (process.env.FRONTEND_URL && process.env.FRONTEND_URL.trim()) ||
+      'https://paylure.com.br';
 
     try {
       for (const transaction of transactions) {
@@ -131,23 +94,38 @@ export class WebhooksService {
           where: { id: transaction.userId },
         });
 
-        if (freshUser) {
-          this.paymentGateway.emitToUser(transaction.userId, 'balance_updated', {
-            balance: freshUser.balance || 0,
-          });
+        if (!freshUser) continue;
 
-          this.paymentGateway.emitToUser(transaction.userId, 'transaction_completed', {
-            amount: transaction.amount,
-            type: transaction.type,
-            productId: transaction.productId,
-          });
+        this.paymentGateway.emitToUser(transaction.userId, 'balance_updated', {
+          balance: freshUser.balance || 0,
+        });
 
-          const accessLink = `${process.env.FRONTEND_URL || 'https://paylure.com.br'}/login`;
-          await this.mailService.sendAccessEmail(freshUser.email, 'Conteúdo Premium', accessLink);
+        this.paymentGateway.emitToUser(transaction.userId, 'transaction_completed', {
+          amount: transaction.amount,
+          type: transaction.type,
+          productId: transaction.productId,
+        });
+
+        // tenta pegar nome do produto real
+        let productName = 'Seu Produto';
+        if (transaction.productId) {
+          const prod = await this.prisma.product.findUnique({
+            where: { id: transaction.productId },
+            select: { name: true },
+          });
+          if (prod?.name) productName = prod.name;
         }
+
+        const accessLink = `${frontend}/login`;
+
+        await this.mailService.sendAccessEmail(
+          freshUser.email,
+          productName,
+          accessLink,
+        );
       }
-    } catch (e) {
-      this.logger.warn(`⚠️ Erro nas notificações: ${e.message}`);
+    } catch (e: any) {
+      this.logger.warn(`⚠️ Erro ao processar notificações: ${e?.message || e}`);
     }
 
     this.logger.log(`✅ Webhook processado com sucesso`);
