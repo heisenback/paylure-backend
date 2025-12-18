@@ -45,6 +45,10 @@ model User {
   memberAccesses       MemberAccess[]
   transactions         Transaction[]
   pixels               Pixel[]
+  
+  // ✅ NOVAS RELAÇÕES
+  lessonProgress       LessonProgress[]
+  comments             Comment[]
 }
 
 // ===================================
@@ -148,8 +152,6 @@ model MemberArea {
   isActive         Boolean      @default(true)
   primaryColor     String       @default("#9333ea")
   secondaryColor   String       @default("#06b6d4")
-  
-  // ✅ NOVO CAMPO: Permitir comentários
   allowComments    Boolean      @default(true)
 
   createdAt        DateTime     @default(now())
@@ -174,7 +176,7 @@ model MemberModule {
   title        String
   order        Int             @default(0)
   
-  contents     MemberContent[] // Aulas dentro do módulo
+  contents     MemberContent[] 
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
@@ -182,7 +184,7 @@ model MemberModule {
 }
 
 // ===================================
-// 🎯 MEMBER CONTENT
+// 🎯 MEMBER CONTENT (AULA)
 // ===================================
 model MemberContent {
   id               String       @id @default(uuid())
@@ -208,9 +210,48 @@ model MemberContent {
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
+  // ✅ NOVAS RELAÇÕES
+  progress         LessonProgress[]
+  comments         Comment[]
+
   @@index([memberAreaId])
   @@index([moduleId])
   @@index([order])
+}
+
+// ===================================
+// ✅ LESSON PROGRESS (NOVO)
+// ===================================
+model LessonProgress {
+  id        String        @id @default(uuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  contentId String
+  content   MemberContent @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  
+  completed Boolean       @default(true)
+  updatedAt DateTime      @updatedAt
+
+  @@unique([userId, contentId])
+}
+
+// ===================================
+// ✅ COMMENT (NOVO)
+// ===================================
+model Comment {
+  id        String        @id @default(uuid())
+  text      String        @db.Text
+  
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  contentId String
+  content   MemberContent @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime      @default(now())
+  
+  @@index([contentId])
 }
 
 // ===================================
@@ -238,15 +279,12 @@ model MemberAccess {
 // ===================================
 model Product {
   id               String       @id @default(uuid())
-  
   name             String
   description      String?
   priceInCents     Int
   isAvailable      Boolean      @default(true)
-  
   imageUrl         String?
   category         String?      @default("WEALTH")
-  
   salesPageUrl     String?
   deliveryMethod   String       @default("PAYLURE_MEMBERS")
   paymentType      String       @default("ONE_TIME")
@@ -263,19 +301,14 @@ model Product {
   materialLink         String?
   coproductionEmail    String?
   coproductionPercent  Float?   @default(0)
-
   offers           Offer[]      
   coupons          Coupon[]     
-
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
-
   memberAreaId     String?
   memberArea       MemberArea?  @relation(fields: [memberAreaId], references: [id])
-  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
-
   paymentLinks     PaymentLink[]
   marketplaceProduct MarketplaceProduct?
   transactions     Transaction[]
@@ -291,13 +324,10 @@ model Offer {
   name          String   
   priceInCents  Int
   isDefault     Boolean  @default(false)
-  
   product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   productId     String
-
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-  
   @@index([productId])
 }
 
@@ -307,13 +337,10 @@ model Coupon {
   code          String   
   discountPercent Int    
   isActive      Boolean  @default(true)
-  
   product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   productId     String
-
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-
   @@index([productId])
   @@index([code])
 }
@@ -328,16 +355,12 @@ model PaymentLink {
   amountInCents    Int
   isActive         Boolean      @default(true)
   sellerFeeRate    Float        @default(0) 
-  
   product          Product      @relation(fields: [productId], references: [id])
   productId        String
-  
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
-
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
-  
   deposits         Deposit[]
 }
 
@@ -356,16 +379,12 @@ model Deposit {
   payerEmail           String
   payerDocument        String
   webhookToken         String      @unique
- 
   user                 User        @relation(fields: [userId], references: [id])
   userId               String
-
   merchant             Merchant?   @relation(fields: [merchantId], references: [id])
   merchantId           String?
-
   paymentLink          PaymentLink? @relation(fields: [paymentLinkId], references: [id])
   paymentLinkId        String?
-
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 }
@@ -377,11 +396,9 @@ model Withdrawal {
   id               String       @id @default(uuid())
   userId           String
   user             User         @relation(fields: [userId], references: [id])
-  
   amount           Int          
   netAmount        Int          @default(0) 
   feeAmount        Int          @default(0) 
-  
   status           String       @default("PENDING")
   pixKey           String    
   keyType          String
@@ -389,10 +406,8 @@ model Withdrawal {
   externalId       String       @unique
   webhookToken     String?      @unique
   failureReason    String?
-  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
-  
   @@index([userId])
   @@index([status])
 }
@@ -408,7 +423,6 @@ model MembershipIntegration {
   secretKey        String?
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
-
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 }
@@ -421,12 +435,9 @@ model MarketplaceProduct {
   commissionRate   Float      
   status           String       @default("AVAILABLE") 
   attributionType  String       @default("LAST_CLICK") 
-
   product          Product      @relation(fields: [productId], references: [id])
   productId        String       @unique
-
   affiliates       Affiliate[]
-
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 }
@@ -440,10 +451,8 @@ model Affiliate {
   marketplaceProductId String
   marketplaceProduct   MarketplaceProduct @relation(fields: [marketplaceProductId], references: [id])
   status           String       @default("APPROVED") 
-
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
-  
   @@unique([promoterId, marketplaceProductId])
 }
 
@@ -456,14 +465,11 @@ model SubscriptionPlan {
   interval         String
   priceInCents     Int
   trialPeriodDays  Int          @default(0)
-  
   merchant         Merchant     @relation(fields: [merchantId], references: [id])
   merchantId       String
-  
   subscriptions    Subscription[]
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
-  
   @@unique([merchantId, name])
 }
 
@@ -477,10 +483,8 @@ model Subscription {
   status           String       @default("ACTIVE") 
   nextBillingDate  DateTime     
   gatewaySubscriptionId String?
-  
   plan             SubscriptionPlan @relation(fields: [planId], references: [id])
   planId           String
-  
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 }
@@ -490,18 +494,14 @@ model Subscription {
 // ===================================
 model Transaction {
   id               String       @id @default(uuid())
-  
   userId           String
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
   productId        String?
   product          Product?     @relation(fields: [productId], references: [id])
-
   type             String
   amount           Int
   description      String?
   status           String       @default("PENDING")
-  
   customerName     String?
   customerEmail    String?
   customerDoc      String?
@@ -515,7 +515,6 @@ model Transaction {
   metadata         Json?
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
-  
   @@index([userId])
   @@index([type])
   @@index([createdAt])
@@ -532,15 +531,10 @@ model Pixel {
   accessToken String?  // Para API de Conversão (CAPI)
   testCode    String?
   active      Boolean  @default(true)
-  
-  // Configuração de eventos (JSON: { purchase: true, lead: false ... })
   events      Json     
-  
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-
   @@index([userId])
 }

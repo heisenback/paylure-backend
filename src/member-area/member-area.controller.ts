@@ -28,7 +28,7 @@ class UpdateMemberAreaDto {
   @IsString() @IsOptional() primaryColor?: string;
   @IsString() @IsOptional() secondaryColor?: string;
   @IsBoolean() @IsOptional() isActive?: boolean;
-  @IsBoolean() @IsOptional() allowComments?: boolean; // ✅ Configuração de comentários
+  @IsBoolean() @IsOptional() allowComments?: boolean;
 }
 
 class CreateMemberContentDto {
@@ -40,7 +40,6 @@ class CreateMemberContentDto {
   @IsInt() @IsOptional() order?: number = 0;
   @IsInt() @IsOptional() duration?: number;
   @IsBoolean() @IsOptional() isPublic?: boolean = false;
-  
   @IsString() @IsOptional() moduleId?: string; 
   @IsInt() @IsOptional() releaseDays?: number;
   @IsOptional() attachments?: any; 
@@ -53,6 +52,10 @@ class GrantAccessDto {
   @IsString() @IsOptional() expiresAt?: string;
 }
 
+class AddCommentDto {
+  @IsString() text: string;
+}
+
 @Controller('member-areas')
 @UseGuards(AuthGuard('jwt'))
 export class MemberAreaController {
@@ -61,14 +64,41 @@ export class MemberAreaController {
   constructor(private readonly memberAreaService: MemberAreaService) {}
 
   // ===================================
-  // 🚨 ROTAS ESPECÍFICAS PRIMEIRO
+  // ACESSOS E PROGRESSO (ALUNO)
   // ===================================
 
   @Get('my-access')
   @HttpCode(HttpStatus.OK)
   async getMyAccess(@GetUser() user: User) {
-    this.logger.log(`📺 Áreas acessíveis por: ${user.email}`);
     return this.memberAreaService.getUserAccess(user.id);
+  }
+
+  @Get(':areaId/student-progress')
+  @HttpCode(HttpStatus.OK)
+  async getStudentProgress(@Param('areaId') areaId: string, @GetUser() user: User) {
+    return this.memberAreaService.getStudentProgress(user.id, areaId);
+  }
+
+  @Post('contents/:contentId/toggle-completion')
+  @HttpCode(HttpStatus.OK)
+  async toggleCompletion(@Param('contentId') contentId: string, @GetUser() user: User) {
+    return this.memberAreaService.toggleCompletion(user.id, contentId);
+  }
+
+  // ===================================
+  // COMENTÁRIOS
+  // ===================================
+
+  @Get('contents/:contentId/comments')
+  @HttpCode(HttpStatus.OK)
+  async getComments(@Param('contentId') contentId: string) {
+    return this.memberAreaService.getComments(contentId);
+  }
+
+  @Post('contents/:contentId/comments')
+  @HttpCode(HttpStatus.CREATED)
+  async addComment(@Param('contentId') contentId: string, @GetUser() user: User, @Body() dto: AddCommentDto) {
+    return this.memberAreaService.addComment(user.id, contentId, dto.text);
   }
 
   // ===================================
@@ -106,7 +136,6 @@ export class MemberAreaController {
   @Post(':areaId/contents')
   @HttpCode(HttpStatus.CREATED)
   async addContent(@Param('areaId') areaId: string, @Body() dto: CreateMemberContentDto) {
-    this.logger.log(`📹 Adicionando conteúdo à área: ${areaId}`);
     return this.memberAreaService.addContent(areaId, dto);
   }
 
@@ -119,21 +148,18 @@ export class MemberAreaController {
   @Delete('contents/:contentId')
   @HttpCode(HttpStatus.OK)
   async deleteContent(@Param('contentId') contentId: string) {
-    this.logger.log(`📹 Removendo conteúdo: ${contentId}`);
     return this.memberAreaService.deleteContent(contentId);
   }
 
   @Post(':areaId/grant-access')
   @HttpCode(HttpStatus.CREATED)
   async grantAccess(@Param('areaId') areaId: string, @Body() dto: GrantAccessDto) {
-    this.logger.log(`🔑 Concedendo acesso à área: ${areaId}`);
     return this.memberAreaService.grantAccess(areaId, dto);
   }
 
   @Delete(':areaId/revoke-access/:userId')
   @HttpCode(HttpStatus.OK)
   async revokeAccess(@Param('areaId') areaId: string, @Param('userId') userId: string) {
-    this.logger.log(`🔑 Revogando acesso à área: ${areaId}`);
     return this.memberAreaService.revokeAccess(areaId, userId);
   }
 
@@ -144,7 +170,6 @@ export class MemberAreaController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   async createMemberArea(@GetUser() user: User & { merchant: { id: string } }, @Body() dto: CreateMemberAreaDto) {
-    this.logger.log(`📺 Criando área de membros: ${dto.name}`);
     if (!user.merchant?.id) throw new Error('Usuário não possui merchant associado');
     return this.memberAreaService.createMemberArea(user.merchant.id, dto);
   }
@@ -152,7 +177,6 @@ export class MemberAreaController {
   @Get()
   @HttpCode(HttpStatus.OK)
   async listMemberAreas(@GetUser() user: User & { merchant: { id: string } }) {
-    this.logger.log(`📺 Listando áreas de membros`);
     if (!user.merchant?.id) return { memberAreas: [] };
     return this.memberAreaService.listMemberAreas(user.merchant.id);
   }
@@ -160,28 +184,24 @@ export class MemberAreaController {
   @Get(':slug')
   @HttpCode(HttpStatus.OK)
   async getMemberAreaBySlug(@Param('slug') slug: string) {
-    this.logger.log(`📺 Buscando área: ${slug}`);
     return this.memberAreaService.getMemberAreaBySlug(slug);
   }
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
   async updateMemberArea(@Param('id') id: string, @Body() dto: UpdateMemberAreaDto) {
-    this.logger.log(`📺 Atualizando área: ${id}`);
     return this.memberAreaService.updateMemberArea(id, dto);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   async deleteMemberArea(@Param('id') id: string) {
-    this.logger.log(`📺 Deletando área: ${id}`);
     return this.memberAreaService.deleteMemberArea(id);
   }
 
   @Get(':areaId/members')
   @HttpCode(HttpStatus.OK)
   async listMembers(@Param('areaId') areaId: string) {
-    this.logger.log(`👥 Listando membros da área: ${areaId}`);
     return this.memberAreaService.listMembers(areaId);
   }
 }
