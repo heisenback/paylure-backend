@@ -2,7 +2,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentGateway } from '../gateway/payment.gateway';
-import { MailService } from '../mail/mail.service'; // ✅ IMPORTADO
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class WebhooksService {
@@ -11,7 +11,7 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly paymentGateway: PaymentGateway,
-    private readonly mailService: MailService, // ✅ INJETADO
+    private readonly mailService: MailService,
   ) {}
 
   async handleKeyclubWebhook(payload: any) {
@@ -30,7 +30,6 @@ export class WebhooksService {
       throw new NotFoundException('transaction_id required');
     }
 
-    // 1️⃣ Busca depósito
     const deposit = await this.prisma.deposit.findUnique({
       where: { externalId: String(transactionId) },
     });
@@ -40,24 +39,15 @@ export class WebhooksService {
       throw new NotFoundException('Depósito não encontrado');
     }
 
-    // 2️⃣ Idempotência
     if (deposit.status === 'CONFIRMED' || deposit.status === 'PAID') {
       return { message: 'Already processed' };
     }
 
-    const approvedStatuses = [
-      'PAID',
-      'COMPLETED',
-      'APPROVED',
-      'SUCCEEDED',
-      'CONFIRMED',
-    ];
-
+    const approvedStatuses = ['PAID', 'COMPLETED', 'APPROVED', 'SUCCEEDED', 'CONFIRMED'];
     if (!approvedStatuses.includes(status)) {
       return { message: `Status ignored: ${status}` };
     }
 
-    // 3️⃣ Busca TODAS as transações criadas no checkout
     const transactions = await this.prisma.transaction.findMany({
       where: {
         OR: [
@@ -73,45 +63,41 @@ export class WebhooksService {
       this.logger.warn(`⚠️ Nenhuma transação pendente para ${deposit.externalId}`);
     }
 
-    // 4️⃣ Executa tudo atomicamente (SPLIT E CONFIRMAÇÃO)
     await this.prisma.$transaction(async (tx) => {
-      // A. Confirma depósito
       await tx.deposit.update({
         where: { id: deposit.id },
         data: { status: 'CONFIRMED' },
       });
 
-      // B. Confirma e credita cada transação
       for (const transaction of transactions) {
-        // 1. Atualiza status da transação
         await tx.transaction.update({
           where: { id: transaction.id },
           data: { status: 'COMPLETED' },
         });
 
-        // 2. Lógica de Co-produção (Split)
+        // 💰 LOGICA DE SPLIT (CORRIGIDA PARA BUILD)
         let producerAmount = transaction.amount;
         let coProducerAmount = 0;
 
         if (transaction.productId) {
           const product = await tx.product.findUnique({ where: { id: transaction.productId } });
           
-          // Verifica se tem co-produção configurada e ativa
-          if (product && product.coproductionEmail && product.coproductionPercent > 0) {
+          // ✅ Correção: Garantimos que coproductionPercent seja tratado como número
+          const percent = product?.coproductionPercent ?? 0;
+
+          if (product && product.coproductionEmail && percent > 0) {
              const coProducer = await tx.user.findUnique({ where: { email: product.coproductionEmail } });
              
              if (coProducer) {
-                // Calcula valores
-                coProducerAmount = Math.floor(transaction.amount * (product.coproductionPercent / 100));
+                // Cálculo seguro do Split
+                coProducerAmount = Math.floor(transaction.amount * (percent / 100));
                 producerAmount = transaction.amount - coProducerAmount;
 
-                // Credita Co-produtor
                 await tx.user.update({
                     where: { id: coProducer.id },
                     data: { balance: { increment: coProducerAmount } }
                 });
 
-                // Cria extrato para Co-produtor
                 await tx.transaction.create({
                     data: {
                         userId: coProducer.id,
@@ -125,24 +111,20 @@ export class WebhooksService {
                     }
                 });
 
-                this.logger.log(`💰 Split realizado: Produtor ${producerAmount} / Co-produtor ${coProducerAmount}`);
+                this.logger.log(`💰 Split: Produtor ${producerAmount} / Co-produtor ${coProducerAmount}`);
              } else {
-                this.logger.warn(`⚠️ Co-produtor (${product.coproductionEmail}) não encontrado. Valor total para o produtor.`);
+                this.logger.warn(`⚠️ Co-produtor (${product.coproductionEmail}) não encontrado.`);
              }
           }
         }
 
-        // 3. Credita o Produtor (Valor total ou o restante do split)
         await tx.user.update({
           where: { id: transaction.userId },
-          data: {
-            balance: { increment: producerAmount },
-          },
+          data: { balance: { increment: producerAmount } },
         });
       }
     });
 
-    // 5️⃣ Notificações e Emails
     try {
       for (const transaction of transactions) {
         const freshUser = await this.prisma.user.findUnique({
@@ -150,7 +132,6 @@ export class WebhooksService {
         });
 
         if (freshUser) {
-          // A. Enviar Socket (Tempo Real)
           this.paymentGateway.emitToUser(transaction.userId, 'balance_updated', {
             balance: freshUser.balance || 0,
           });
@@ -161,19 +142,12 @@ export class WebhooksService {
             productId: transaction.productId,
           });
 
-          // B. Enviar Email de Acesso / Boas-vindas (NOVO) ✅
-          const accessLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
-          const productName = 'Conteúdo Premium'; 
-
-          await this.mailService.sendAccessEmail(
-            freshUser.email,
-            productName,
-            accessLink,
-          );
+          const accessLink = `${process.env.FRONTEND_URL || 'https://paylure.com.br'}/login`;
+          await this.mailService.sendAccessEmail(freshUser.email, 'Conteúdo Premium', accessLink);
         }
       }
     } catch (e) {
-      this.logger.warn(`⚠️ Erro ao processar notificações: ${e.message}`);
+      this.logger.warn(`⚠️ Erro nas notificações: ${e.message}`);
     }
 
     this.logger.log(`✅ Webhook processado com sucesso`);
