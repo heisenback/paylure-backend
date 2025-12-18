@@ -25,8 +25,10 @@ export class MemberAreaService {
         logoUrl: data.logoUrl,
         primaryColor: data.primaryColor || '#9333ea',
         secondaryColor: data.secondaryColor || '#06b6d4',
+        allowComments: data.allowComments ?? true, // ✅ Salva a config
       },
     });
+    this.logger.log(`✅ Área criada: ${area.name}`);
     return { area, message: 'Área criada com sucesso!' };
   }
 
@@ -40,27 +42,29 @@ export class MemberAreaService {
     return { area };
   }
 
+  async getCourseStructure(memberAreaId: string) {
+    const modules = await this.prisma.memberModule.findMany({
+      where: { memberAreaId },
+      include: { contents: { orderBy: { order: 'asc' } } },
+      orderBy: { order: 'asc' }
+    });
+    return modules;
+  }
+
   async updateMemberArea(id: string, data: any) {
     const area = await this.prisma.memberArea.update({ where: { id }, data });
+    this.logger.log(`✅ Área atualizada: ${area.name}`);
     return { area, message: 'Área atualizada!' };
   }
 
   async deleteMemberArea(id: string) {
     await this.prisma.memberArea.delete({ where: { id } });
+    this.logger.log(`✅ Área deletada: ${id}`);
     return { message: 'Área deletada!' };
   }
 
-  // ✅ NOVO: Busca estrutura completa
-  async getCourseStructure(memberAreaId: string) {
-    return await this.prisma.memberModule.findMany({
-      where: { memberAreaId },
-      include: { contents: { orderBy: { order: 'asc' } } },
-      orderBy: { order: 'asc' }
-    });
-  }
-
   // ===================================
-  // MÓDULOS
+  // MÓDULOS 
   // ===================================
 
   async createModule(memberAreaId: string, title: string) {
@@ -70,12 +74,12 @@ export class MemberAreaService {
     });
   }
 
-  // ✅ NOVO: ATUALIZAR MÓDULO
   async updateModule(moduleId: string, title: string) {
-    return await this.prisma.memberModule.update({
-      where: { id: moduleId },
-      data: { title }
+    const module = await this.prisma.memberModule.update({
+        where: { id: moduleId },
+        data: { title }
     });
+    return module;
   }
 
   async deleteModule(moduleId: string) {
@@ -107,33 +111,33 @@ export class MemberAreaService {
         thumbnailUrl: data.thumbnailUrl,
         releaseDays: Number(data.releaseDays || 0),
         attachments: data.attachments || [],
-        order: order,
+        order: data.order || order,
         duration: data.duration,
         isPublic: data.isPublic || false,
       },
     });
-    return { content };
+    this.logger.log(`✅ Conteúdo adicionado: ${content.title}`);
+    return { content, message: 'Conteúdo adicionado com sucesso!' };
   }
 
-  // ✅ NOVO: ATUALIZAR AULA
   async updateContent(contentId: string, data: any) {
     const content = await this.prisma.memberContent.update({
-      where: { id: contentId },
-      data: {
-        title: data.title,
-        description: data.description,
-        contentUrl: data.contentUrl,
-        releaseDays: Number(data.releaseDays || 0),
-        attachments: data.attachments || [],
-        // Adicione outros campos se necessário
-      }
+        where: { id: contentId },
+        data: {
+            title: data.title,
+            description: data.description,
+            contentUrl: data.contentUrl,
+            releaseDays: Number(data.releaseDays || 0),
+            attachments: data.attachments || [],
+        }
     });
-    return { content };
+    return { content, message: 'Conteúdo atualizado!' };
   }
 
   async deleteContent(contentId: string) {
     await this.prisma.memberContent.delete({ where: { id: contentId } });
-    return { message: 'Conteúdo deletado!' };
+    this.logger.log(`✅ Conteúdo deletado: ${contentId}`);
+    return { message: 'Conteúdo removido com sucesso!' };
   }
 
   // ===================================
@@ -147,13 +151,15 @@ export class MemberAreaService {
       user = await this.prisma.user.create({
         data: { email: data.userEmail, name: data.userEmail.split('@')[0], password: randomPassword, apiKey: `temp_${Date.now()}`, apiSecret: `temp_${Date.now()}` },
       });
+      this.logger.log(`✅ Usuário criado: ${user.email}`);
     }
     const access = await this.prisma.memberAccess.upsert({
       where: { userId_memberAreaId: { userId: user.id, memberAreaId } },
       create: { userId: user.id, memberAreaId, grantedBy: data.grantedBy, externalId: data.externalId, expiresAt: data.expiresAt ? new Date(data.expiresAt) : null },
       update: { isActive: true, expiresAt: data.expiresAt ? new Date(data.expiresAt) : null },
     });
-    return { access, user: { id: user.id, email: user.email }, message: 'Acesso concedido!' };
+    this.logger.log(`✅ Acesso concedido para: ${user.email}`);
+    return { access, user: { id: user.id, email: user.email, name: user.name }, message: 'Acesso concedido com sucesso!' };
   }
 
   async revokeAccess(memberAreaId: string, userId: string) {
@@ -161,7 +167,8 @@ export class MemberAreaService {
       where: { userId_memberAreaId: { userId, memberAreaId } },
       data: { isActive: false },
     });
-    return { message: 'Acesso revogado!' };
+    this.logger.log(`✅ Acesso revogado para userId: ${userId}`);
+    return { message: 'Acesso revogado com sucesso!' };
   }
 
   async listMembers(memberAreaId: string) {

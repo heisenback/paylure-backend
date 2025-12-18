@@ -148,10 +148,14 @@ model MemberArea {
   isActive         Boolean      @default(true)
   primaryColor     String       @default("#9333ea")
   secondaryColor   String       @default("#06b6d4")
+  
+  // ✅ NOVO CAMPO: Permitir comentários
+  allowComments    Boolean      @default(true)
+
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
-  modules          MemberModule[] // ✅ NOVA RELAÇÃO (Módulos)
+  modules          MemberModule[] 
   contents         MemberContent[]
   accesses         MemberAccess[]
   products         Product[]    
@@ -161,7 +165,7 @@ model MemberArea {
 }
 
 // ===================================
-// 📂 MEMBER MODULE (NOVO MODELO)
+// 📂 MEMBER MODULE
 // ===================================
 model MemberModule {
   id           String          @id @default(uuid())
@@ -170,7 +174,7 @@ model MemberModule {
   title        String
   order        Int             @default(0)
   
-  contents     MemberContent[] // Aulas dentro do módulo
+  contents     MemberContent[] 
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
@@ -178,14 +182,14 @@ model MemberModule {
 }
 
 // ===================================
-// 🎯 MEMBER CONTENT (ATUALIZADO)
+// 🎯 MEMBER CONTENT
 // ===================================
 model MemberContent {
   id               String       @id @default(uuid())
   memberAreaId     String
   memberArea       MemberArea   @relation(fields: [memberAreaId], references: [id], onDelete: Cascade)
   
-  moduleId         String?      // ✅ ID do Módulo
+  moduleId         String?      
   module           MemberModule? @relation(fields: [moduleId], references: [id], onDelete: Cascade)
 
   title            String
@@ -195,8 +199,8 @@ model MemberContent {
   thumbnailUrl     String?
   textBody         String?      @db.Text
   
-  releaseDays      Int          @default(0) // ✅ Dias para liberação (Drip)
-  attachments      Json?        // ✅ Lista de anexos (JSON)
+  releaseDays      Int          @default(0) 
+  attachments      Json?        
 
   order            Int          @default(0)
   duration         Int?
