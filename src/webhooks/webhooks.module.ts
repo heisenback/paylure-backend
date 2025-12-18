@@ -6,7 +6,7 @@ import { ConfigModule } from '@nestjs/config';
 import { SocketModule } from 'src/gateway/socket.module';
 import { PushNotificationModule } from 'src/push-notification/push-notification.module';
 import { WebhooksController } from './webhooks.controller';
-import { MailModule } from 'src/mail/mail.module'; // <--- 1. VERIFIQUE SE ESTÁ IMPORTADO AQUI
+import { MailModule } from 'src/mail/mail.module'; // <--- 1. IMPORTAR
 
 @Module({
   imports: [
@@ -14,7 +14,7 @@ import { MailModule } from 'src/mail/mail.module'; // <--- 1. VERIFIQUE SE ESTÁ
     ConfigModule,
     SocketModule,
     PushNotificationModule,
-    MailModule, // <--- 2. OBRIGATÓRIO ESTAR AQUI DENTRO DE IMPORTS
+    MailModule, // <--- 2. ADICIONAR AQUI (Isso conserta o crash)
   ], 
   controllers: [WebhooksController],
   providers: [WebhooksService],
