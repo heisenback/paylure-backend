@@ -9,18 +9,75 @@ export class MemberAreaService {
   constructor(private readonly prisma: PrismaService) {}
 
   // ===================================
-  // MEMBER AREAS
+  // ACESSOS & PROGRESSO (MÉTODOS NOVOS)
+  // ===================================
+
+  async getStudentProgress(userId: string, memberAreaId: string) {
+    // Busca IDs das aulas concluídas pelo aluno nesta área
+    const progress = await this.prisma.lessonProgress.findMany({
+        where: { 
+            userId, 
+            content: { memberAreaId }, // Filtra pela área
+            completed: true 
+        },
+        select: { contentId: true }
+    });
+    // Retorna apenas um array de IDs: ['aula1-id', 'aula2-id']
+    return progress.map(p => p.contentId);
+  }
+
+  async toggleCompletion(userId: string, contentId: string) {
+    const exists = await this.prisma.lessonProgress.findUnique({
+        where: { userId_contentId: { userId, contentId } }
+    });
+
+    if (exists) {
+        // Se já existe, inverte o status (true -> false ou false -> true)
+        const updated = await this.prisma.lessonProgress.update({
+            where: { id: exists.id },
+            data: { completed: !exists.completed }
+        });
+        return { completed: updated.completed };
+    } else {
+        // Se não existe, cria como concluído (true)
+        await this.prisma.lessonProgress.create({
+            data: { userId, contentId, completed: true }
+        });
+        return { completed: true };
+    }
+  }
+
+  // ===================================
+  // COMENTÁRIOS (MÉTODOS NOVOS)
+  // ===================================
+
+  async getComments(contentId: string) {
+    return await this.prisma.comment.findMany({
+        where: { contentId },
+        include: { 
+            user: { 
+                select: { name: true, email: true } // Traz nome do aluno
+            } 
+        },
+        orderBy: { createdAt: 'desc' } // Mais recentes primeiro
+    });
+  }
+
+  async addComment(userId: string, contentId: string, text: string) {
+    return await this.prisma.comment.create({
+        data: { userId, contentId, text },
+        include: { user: { select: { name: true } } }
+    });
+  }
+
+  // ===================================
+  // MEMBER AREAS (EXISTENTES)
   // ===================================
 
   async createMemberArea(merchantId: string, data: any) {
-    const existing = await this.prisma.memberArea.findUnique({
-      where: { slug: data.slug },
-    });
-
-    if (existing) {
-      throw new BadRequestException('Este slug já está em uso');
-    }
-
+    const existing = await this.prisma.memberArea.findUnique({ where: { slug: data.slug } });
+    if (existing) throw new BadRequestException('Este slug já está em uso');
+    
     const area = await this.prisma.memberArea.create({
       data: {
         merchantId,
@@ -36,7 +93,6 @@ export class MemberAreaService {
     });
 
     this.logger.log(`✅ Área criada: ${area.name}`);
-
     return { area, message: 'Área de membros criada com sucesso!' };
   }
 
@@ -53,7 +109,6 @@ export class MemberAreaService {
       },
       orderBy: { createdAt: 'desc' },
     });
-
     return { memberAreas: areas };
   }
 
@@ -70,7 +125,6 @@ export class MemberAreaService {
     if (!area) {
       throw new NotFoundException('Área de membros não encontrada');
     }
-
     return { area };
   }
 
@@ -92,19 +146,13 @@ export class MemberAreaService {
       where: { id },
       data,
     });
-
     this.logger.log(`✅ Área atualizada: ${area.name}`);
-
     return { area, message: 'Área atualizada com sucesso!' };
   }
 
   async deleteMemberArea(id: string) {
-    await this.prisma.memberArea.delete({
-      where: { id },
-    });
-
+    await this.prisma.memberArea.delete({ where: { id } });
     this.logger.log(`✅ Área deletada: ${id}`);
-
     return { message: 'Área de membros deletada com sucesso!' };
   }
 
@@ -114,22 +162,16 @@ export class MemberAreaService {
 
   async createModule(memberAreaId: string, title: string) {
     const count = await this.prisma.memberModule.count({ where: { memberAreaId } });
-    const module = await this.prisma.memberModule.create({
-      data: {
-        memberAreaId,
-        title,
-        order: count + 1
-      }
+    return await this.prisma.memberModule.create({
+      data: { memberAreaId, title, order: count + 1 }
     });
-    return module;
   }
 
   async updateModule(moduleId: string, title: string) {
-    const module = await this.prisma.memberModule.update({
+    return await this.prisma.memberModule.update({
         where: { id: moduleId },
         data: { title }
     });
-    return module;
   }
 
   async deleteModule(moduleId: string) {
@@ -174,7 +216,6 @@ export class MemberAreaService {
     });
 
     this.logger.log(`✅ Conteúdo adicionado: ${content.title}`);
-
     return { content, message: 'Conteúdo adicionado com sucesso!' };
   }
 
@@ -193,24 +234,17 @@ export class MemberAreaService {
   }
 
   async deleteContent(contentId: string) {
-    await this.prisma.memberContent.delete({
-      where: { id: contentId },
-    });
-
+    await this.prisma.memberContent.delete({ where: { id: contentId } });
     this.logger.log(`✅ Conteúdo deletado: ${contentId}`);
-
     return { message: 'Conteúdo removido com sucesso!' };
   }
 
   // ===================================
-  // ACESSOS
+  // ACESSOS (GERAIS)
   // ===================================
 
   async grantAccess(memberAreaId: string, data: any) {
-    let user = await this.prisma.user.findUnique({
-      where: { email: data.userEmail },
-    });
-
+    let user = await this.prisma.user.findUnique({ where: { email: data.userEmail } });
     if (!user) {
       const randomPassword = Math.random().toString(36).slice(-12);
       user = await this.prisma.user.create({
@@ -226,49 +260,21 @@ export class MemberAreaService {
     }
 
     const access = await this.prisma.memberAccess.upsert({
-      where: {
-        userId_memberAreaId: {
-          userId: user.id,
-          memberAreaId,
-        },
-      },
-      create: {
-        userId: user.id,
-        memberAreaId,
-        grantedBy: data.grantedBy,
-        externalId: data.externalId,
-        expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
-      },
-      update: {
-        isActive: true,
-        expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
-      },
+      where: { userId_memberAreaId: { userId: user.id, memberAreaId } },
+      create: { userId: user.id, memberAreaId, grantedBy: data.grantedBy, externalId: data.externalId, expiresAt: data.expiresAt ? new Date(data.expiresAt) : null },
+      update: { isActive: true, expiresAt: data.expiresAt ? new Date(data.expiresAt) : null },
     });
 
     this.logger.log(`✅ Acesso concedido para: ${user.email}`);
-
-    return {
-      access,
-      user: { id: user.id, email: user.email, name: user.name },
-      message: 'Acesso concedido com sucesso!',
-    };
+    return { access, user: { id: user.id, email: user.email, name: user.name }, message: 'Acesso concedido com sucesso!' };
   }
 
   async revokeAccess(memberAreaId: string, userId: string) {
     await this.prisma.memberAccess.update({
-      where: {
-        userId_memberAreaId: {
-          userId,
-          memberAreaId,
-        },
-      },
-      data: {
-        isActive: false,
-      },
+      where: { userId_memberAreaId: { userId, memberAreaId } },
+      data: { isActive: false },
     });
-
     this.logger.log(`✅ Acesso revogado para userId: ${userId}`);
-
     return { message: 'Acesso revogado com sucesso!' };
   }
 
@@ -287,7 +293,6 @@ export class MemberAreaService {
       },
       orderBy: { createdAt: 'desc' },
     });
-
     return { members: accesses };
   }
 
@@ -311,7 +316,6 @@ export class MemberAreaService {
         },
       },
     });
-
     return { areas: accesses.map(a => a.memberArea) };
   }
 }
