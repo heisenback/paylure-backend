@@ -276,6 +276,77 @@ export class AuthService {
     };
   }
 
+  // ✅ NOVO: BUSCAR DADOS DE INDICAÇÃO (A FUNÇÃO QUE FALTAVA)
+  async getReferrals(userId: string) {
+    // 1. Busca o usuário com seus indicados e transações
+    const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+            referralCode: true,
+            referrals: {
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    createdAt: true,
+                    // Busca transações de VENDA (SALE) aprovadas deste indicado para calcular TPV
+                    transactions: {
+                        where: {
+                            type: 'SALE',
+                            status: { in: ['PAID', 'CONFIRMED', 'APPROVED', 'COMPLETED'] }
+                        },
+                        select: { amount: true }
+                    }
+                }
+            },
+            // Busca transações na MINHA conta que sejam comissões de indicação (GANHOS)
+            transactions: {
+                where: { type: 'REFERRAL_REWARD' },
+                select: { amount: true }
+            }
+        }
+    });
+
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    // 2. Processa a lista de indicados para o formato do Frontend
+    const referralsList = user.referrals.map(ref => {
+        // Soma total vendido pelo indicado (TPV)
+        const totalSalesCents = ref.transactions.reduce((acc, t) => acc + t.amount, 0);
+        
+        // Calcula comissão estimada (1%) baseada no volume vendido (apenas para visualização)
+        const estimatedCommission = Math.floor(totalSalesCents * 0.01);
+
+        return {
+            id: ref.id,
+            name: ref.name,
+            email: ref.email,
+            joinedAt: ref.createdAt,
+            // Se vendeu algo, é ativo. Se não, inativo.
+            status: totalSalesCents > 0 ? 'ACTIVE' : 'INACTIVE',
+            totalSales: totalSalesCents / 100, // Converte centavos para reais
+            commissionEarned: estimatedCommission / 100
+        };
+    });
+
+    // 3. Calcula totais para os Cards
+    const totalInvited = referralsList.length;
+    const activeInvited = referralsList.filter(r => r.status === 'ACTIVE').length;
+    
+    // Comissão TOTAL realmente recebida (saldo em conta do padrinho)
+    const totalCommissionCents = user.transactions.reduce((acc, t) => acc + t.amount, 0);
+
+    return {
+        code: user.referralCode,
+        stats: {
+            totalInvited,
+            activeInvited,
+            totalCommission: totalCommissionCents / 100
+        },
+        list: referralsList
+    };
+  }
+
   // ✅ NOVO MÉTODO: RECUPERAÇÃO DE SENHA PROFISSIONAL
   async forgotPassword(email: string) {
     this.logger.log(`🔒 Solicitação de reset para: ${email}`);
