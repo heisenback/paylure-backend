@@ -14,6 +14,7 @@ import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import * as uuid from 'uuid';
 import * as crypto from 'crypto';
+import { MailService } from 'src/mail/mail.service'; // ✅ IMPORTADO
 
 function generateApiKey(): string {
   const randomPart = crypto.randomBytes(16).toString('hex');
@@ -32,6 +33,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly mailService: MailService, // ✅ INJETADO
   ) {
     this.logger.log('🔧 AuthService inicializado');
   }
@@ -98,8 +100,6 @@ export class AuthService {
     const hashedApiSecret = await bcrypt.hash(apiSecret, salt);
 
     try {
-      // ⚠️ FIX CRÍTICO: 'as any' força o TypeScript a aceitar o campo 'phone' 
-      // mesmo que o build do Docker ainda esteja com o schema antigo na memória.
       const userWithMerchant: any = await this.prisma.user.create({
         data: {
           email: dto.email,
@@ -132,7 +132,6 @@ export class AuthService {
   }
 
   async login(dto: LoginAuthDto) {
-    // ⚠️ Usando any para evitar erro de tipagem no merchant
     let user: any = await this.prisma.user.findUnique({
       where: { email: dto.email },
       include: { merchant: true },
@@ -168,7 +167,6 @@ export class AuthService {
   }
 
   async getUserWithBalance(userId: string) {
-    // ⚠️ Usando any para evitar erro de tipagem
     let user: any = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { merchant: true },
@@ -206,6 +204,33 @@ export class AuthService {
     };
   }
 
+  // ✅ NOVO MÉTODO: RECUPERAÇÃO DE SENHA PROFISSIONAL
+  async forgotPassword(email: string) {
+    this.logger.log(`🔒 Solicitação de reset para: ${email}`);
+    
+    const user = await this.prisma.user.findUnique({ where: { email } });
+
+    // Se o usuário EXISTIR, geramos o token e enviamos o e-mail.
+    if (user) {
+      // Cria um token JWT válido por 1 hora apenas para o reset
+      const payload = { sub: user.id, email: user.email, type: 'password_reset' };
+      const token = await this.jwtService.signAsync(payload, { expiresIn: '1h' });
+
+      // Link para o frontend
+      const resetUrl = `${process.env.FRONTEND_URL || 'https://paylure.com.br'}/reset-password?token=${token}`;
+
+      // Dispara o e-mail de segurança
+      await this.mailService.sendPasswordResetEmail(user.email, user.name, resetUrl);
+    } 
+    // SE NÃO EXISTIR: Não fazemos nada, apenas logamos (opcional) e retornamos sucesso abaixo.
+
+    // 🛡️ SEGURANÇA: Retorno neutro para evitar enumeração de usuários.
+    // O hacker não saberá se o e-mail existe ou não.
+    return {
+      message: 'Se este e-mail estiver cadastrado em nossa base, você receberá um link de recuperação em instantes.'
+    };
+  }
+
   async changePassword(userId: string, currentPass: string, newPass: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('Usuário não encontrado');
@@ -222,6 +247,9 @@ export class AuthService {
       where: { id: userId },
       data: { password: hashedPassword },
     });
+
+    // Envia e-mail confirmando a alteração (Segurança)
+    await this.mailService.sendPasswordChangedEmail(user.email, user.name);
 
     this.logger.log(`🔐 Senha alterada com sucesso para o usuário ${user.email}`);
     return { success: true, message: 'Senha alterada com sucesso!' };
