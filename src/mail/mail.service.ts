@@ -5,52 +5,34 @@ import { Resend } from 'resend';
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private readonly resend: Resend;
+  private resend: Resend;
 
   constructor() {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      this.logger.warn(
-        '⚠️ RESEND_API_KEY não definido no ENV. Emails NÃO serão enviados.',
-      );
-    }
-    this.resend = new Resend(apiKey || ''); // não hardcode
+    // Inicializa o Resend. Se não tiver no ENV, usa a chave de teste fornecida.
+    this.resend = new Resend(process.env.RESEND_API_KEY || 're_fwiSDVRK_CsvXUcWeX6ddCuG6aMPHqf37');
   }
 
   private getFromEmail(): string {
-    // Você controla isso no ENV:
-    // RESEND_FROM="Paylure <noreply@paylure.com.br>"
-    // RESEND_DOMAIN_VERIFIED="true"
-    const verified = String(process.env.RESEND_DOMAIN_VERIFIED || '').toLowerCase() === 'true';
-
-    const fromVerified = process.env.RESEND_FROM?.trim();
-    const fromFallback = process.env.RESEND_FROM_FALLBACK?.trim() || 'Paylure <onboarding@resend.dev>';
-
-    if (verified && fromVerified) return fromVerified;
-    return fromFallback;
+    const isDomainVerified = false; // Mude para true quando configurar DNS
+    return isDomainVerified 
+      ? 'Paylure <noreply@paylure.com.br>' 
+      : 'Paylure <onboarding@resend.dev>';
   }
 
   // ======================================================
-  // 📦 E-MAILS DE PRODUTO
+  // 📦 E-MAILS DE PRODUTO (Chamado pelo Webhook)
   // ======================================================
-  async sendAccessEmail(
-    email: string,
-    productName: string,
-    accessLink: string,
-    password?: string,
-  ) {
-    if (!process.env.RESEND_API_KEY) {
-      this.logger.warn(`⚠️ Email ignorado (sem RESEND_API_KEY) para: ${email}`);
-      return;
-    }
 
+  async sendAccessEmail(email: string, productName: string, accessLink: string, password?: string) {
     const subject = `Seu acesso chegou! - ${productName}`;
-
+    
+    // Template Dark Clean para combinar com o Frontend
     const html = `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #020617; color: #cbd5e1;">
         <div style="background-color: #0f172a; padding: 40px; border-radius: 16px; border: 1px solid #1e293b;">
+          
           <h2 style="color: #ffffff; text-align: center; margin-top: 0;">Parabéns pela compra! 🚀</h2>
-
+          
           <p style="font-size: 16px; line-height: 1.6; color: #94a3b8;">
             Olá! O pagamento foi confirmado e seu acesso ao <strong>${productName}</strong> foi liberado.
           </p>
@@ -77,25 +59,20 @@ export class MailService {
       await this.resend.emails.send({
         from: this.getFromEmail(),
         to: [email],
-        subject,
-        html,
+        subject: subject,
+        html: html,
       });
-
       this.logger.log(`✅ E-mail de acesso enviado para: ${email}`);
-    } catch (error: any) {
-      this.logger.error(`❌ Erro ao enviar acesso para ${email}: ${error?.message || error}`);
+    } catch (error) {
+      this.logger.error(`❌ Erro ao enviar acesso para ${email}:`, error);
     }
   }
 
   // ======================================================
-  // 🔐 E-MAILS DE SISTEMA
+  // 🔐 E-MAILS DE SISTEMA (AUTH/API)
   // ======================================================
-  async sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<void> {
-    if (!process.env.RESEND_API_KEY) {
-      this.logger.warn(`⚠️ Email reset ignorado (sem RESEND_API_KEY) para: ${to}`);
-      return;
-    }
 
+  async sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<void> {
     try {
       await this.resend.emails.send({
         from: this.getFromEmail(),
@@ -104,18 +81,13 @@ export class MailService {
         html: this.getPasswordResetTemplate(name, resetUrl),
       });
       this.logger.log(`✅ Email de reset enviado para: ${to}`);
-    } catch (error: any) {
-      this.logger.error(`❌ Erro ao enviar reset para ${to}: ${error?.message || error}`);
+    } catch (error) {
+      this.logger.error(`❌ Erro ao enviar reset para ${to}:`, error);
       throw error;
     }
   }
 
   async sendPasswordChangedEmail(to: string, name: string): Promise<void> {
-    if (!process.env.RESEND_API_KEY) {
-      this.logger.warn(`⚠️ Email changed ignorado (sem RESEND_API_KEY) para: ${to}`);
-      return;
-    }
-
     try {
       await this.resend.emails.send({
         from: this.getFromEmail(),
@@ -124,17 +96,12 @@ export class MailService {
         html: this.getPasswordChangedTemplate(name),
       });
       this.logger.log(`✅ Email de confirmação enviado para: ${to}`);
-    } catch (error: any) {
-      this.logger.error(`❌ Erro ao enviar confirmação para ${to}: ${error?.message || error}`);
+    } catch (error) {
+      this.logger.error(`❌ Erro ao enviar confirmação para ${to}:`, error);
     }
   }
 
   async send2FACode(to: string, name: string, code: string): Promise<void> {
-    if (!process.env.RESEND_API_KEY) {
-      this.logger.warn(`⚠️ Email 2FA ignorado (sem RESEND_API_KEY) para: ${to}`);
-      return;
-    }
-
     try {
       await this.resend.emails.send({
         from: this.getFromEmail(),
@@ -143,38 +110,34 @@ export class MailService {
         html: this.get2FACodeTemplate(name, code),
       });
       this.logger.log(`✅ Código 2FA enviado para: ${to}`);
-    } catch (error: any) {
-      this.logger.error(`❌ Erro ao enviar 2FA para ${to}: ${error?.message || error}`);
+    } catch (error) {
+      this.logger.error(`❌ Erro ao enviar 2FA para ${to}:`, error);
       throw error;
     }
   }
 
   async sendAPICredentials(to: string, name: string, apiKey: string, apiSecret: string): Promise<void> {
-    if (!process.env.RESEND_API_KEY) {
-      this.logger.warn(`⚠️ Email API creds ignorado (sem RESEND_API_KEY) para: ${to}`);
-      return;
-    }
-
     try {
       const isReminder = apiSecret.includes('•');
       await this.resend.emails.send({
         from: this.getFromEmail(),
         to: [to],
         subject: isReminder ? '🔑 Suas Credenciais de API - Paylure' : '🔑 Novas Credenciais de API - Paylure',
-        html: isReminder
-          ? this.getAPICredentialsReminderTemplate(name, apiKey)
-          : this.getAPICredentialsTemplate(name, apiKey, apiSecret),
+        html: isReminder ? 
+          this.getAPICredentialsReminderTemplate(name, apiKey) : 
+          this.getAPICredentialsTemplate(name, apiKey, apiSecret),
       });
       this.logger.log(`✅ Credenciais enviadas para: ${to}`);
-    } catch (error: any) {
-      this.logger.error(`❌ Erro ao enviar credenciais para ${to}: ${error?.message || error}`);
+    } catch (error) {
+      this.logger.error(`❌ Erro ao enviar credenciais para ${to}:`, error);
       throw error;
     }
   }
 
   // ===================================
-  // TEMPLATES HTML
+  // TEMPLATES HTML (Dark Mode)
   // ===================================
+
   private getPasswordResetTemplate(name: string, resetUrl: string): string {
     return `
       <!DOCTYPE html>
@@ -190,7 +153,7 @@ export class MailService {
             <div style="text-align: center; margin: 30px 0;">
               <a href="${resetUrl}" style="display: inline-block; background: #10b981; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2);">Redefinir Senha</a>
             </div>
-            <p style="font-size: 13px; color: #64748b;">Se você não solicitou, ignore este email.</p>
+            <p style="font-size: 13px; color: #64748b;">Se você não solicitou, apenas ignore este email.</p>
           </div>
         </div>
       </body>

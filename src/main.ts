@@ -5,39 +5,24 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-
+  
   const app = await NestFactory.create(AppModule, {
-    rawBody: true,
+    rawBody: true, 
   });
 
+  // 👇 AQUI ESTAVA O DETALHE! 
+  // O seu Frontend está mandando '/api/v1', então precisamos dessa linha ativa.
   app.setGlobalPrefix('api/v1');
   logger.log('✅ Prefixo global configurado: /api/v1');
 
-  const allowedOrigins = (process.env.CORS_ORIGINS ??
-    'https://paylure.com.br,https://www.paylure.com.br,http://localhost:3000')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
+  // 👇 CORS SIMPLIFICADO (Funcionou perfeitamente no seu teste)
   app.enableCors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error(`CORS bloqueado para origin: ${origin}`), false);
-    },
+    origin: true, 
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Accept',
-      'Authorization',
-      'X-Requested-With',
-      'Origin',
-      'x-keyclub-signature',
-    ],
-    optionsSuccessStatus: 204,
+    allowedHeaders: 'Content-Type, Accept, Authorization, X-Requested-With, Origin, x-keyclub-signature',
   });
-
+  
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -53,7 +38,6 @@ async function bootstrap() {
   logger.log('🚀 ====================================');
   logger.log(`🚀 Backend rodando em http://0.0.0.0:${port}`);
   logger.log(`🌐 API disponível em http://0.0.0.0:${port}/api/v1`);
-  logger.log(`🔐 CORS liberado para: ${allowedOrigins.join(', ')}`);
   logger.log('🚀 ====================================');
 }
 bootstrap();
