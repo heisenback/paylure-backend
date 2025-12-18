@@ -82,7 +82,7 @@ export class ProductService {
 
   async create(dto: CreateProductDto, userId: string) {
     try {
-      const merchant = await this.prisma.merchant.findUnique({ where: { userId } });
+      const merchant = await this.prisma.merchant.findUnique({ where: { userId }, include: { user: true } });
       const ownerId = merchant ? merchant.id : userId;
       
       const priceVal = Number(dto.price);
