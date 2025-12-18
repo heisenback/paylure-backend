@@ -2,6 +2,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentGateway } from '../gateway/payment.gateway';
+import { MailService } from '../mail/mail.service'; // ✅ IMPORTADO
 
 @Injectable()
 export class WebhooksService {
@@ -10,6 +11,7 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly paymentGateway: PaymentGateway,
+    private readonly mailService: MailService, // ✅ INJETADO
   ) {}
 
   async handleKeyclubWebhook(payload: any) {
@@ -99,28 +101,44 @@ export class WebhooksService {
       }
     });
 
-    // 5️⃣ Notificações (opcional, mas mantido)
+    // 5️⃣ Notificações e Emails
     try {
       for (const transaction of transactions) {
         const freshUser = await this.prisma.user.findUnique({
           where: { id: transaction.userId },
         });
 
-        this.paymentGateway.emitToUser(transaction.userId, 'balance_updated', {
-          balance: freshUser?.balance || 0,
-        });
+        if (freshUser) {
+          // A. Enviar Socket (Tempo Real)
+          this.paymentGateway.emitToUser(transaction.userId, 'balance_updated', {
+            balance: freshUser.balance || 0,
+          });
 
-        this.paymentGateway.emitToUser(transaction.userId, 'transaction_completed', {
-          amount: transaction.amount,
-          type: transaction.type,
-          productId: transaction.productId,
-        });
+          this.paymentGateway.emitToUser(transaction.userId, 'transaction_completed', {
+            amount: transaction.amount,
+            type: transaction.type,
+            productId: transaction.productId,
+          });
+
+          // B. Enviar Email de Acesso / Boas-vindas (NOVO) ✅
+          // Como o usuário já existe (foi criado no checkout), mandamos o link de acesso.
+          // Se fosse um usuário criado AGORA, poderíamos passar a senha no 4º parâmetro.
+          const accessLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
+          const productName = 'Conteúdo Premium'; // Você pode tentar pegar do transaction.description se tiver
+
+          await this.mailService.sendAccessEmail(
+            freshUser.email,
+            productName,
+            accessLink,
+            // undefined // Senha: não enviamos aqui pois o usuário já tem senha definida no cadastro
+          );
+        }
       }
     } catch (e) {
-      this.logger.warn('⚠️ Erro ao emitir sockets');
+      this.logger.warn(`⚠️ Erro ao processar notificações: ${e.message}`);
     }
 
-    this.logger.log(`✅ Webhook processado com split congelado`);
+    this.logger.log(`✅ Webhook processado com sucesso`);
     return { message: 'Confirmed successfully' };
   }
 }

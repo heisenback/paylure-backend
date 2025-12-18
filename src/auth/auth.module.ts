@@ -21,7 +21,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
     PrismaModule,
     MailModule,
     PassportModule,
-    // 🔥 CORREÇÃO CRÍTICA: Usar ConfigService para pegar o JWT_SECRET do .env
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
