@@ -177,7 +177,7 @@ export class ProductService {
       });
       if (!product) throw new NotFoundException();
       
-      // ✅ DISPARAR CONVITE SE O EMAIL DE CO-PRODUÇÃO MUDOU
+      // ✅ DISPARAR CONVITE APENAS SE HOUVER UM E-MAIL VÁLIDO E ELE TIVER MUDADO
       if (dto.coproductionEmail && dto.coproductionEmail !== product.coproductionEmail) {
         await this.mailService.sendCoproductionInvite(
           dto.coproductionEmail,
@@ -187,6 +187,9 @@ export class ProductService {
         );
       }
 
+      // 🔍 LÓGICA DE REMOÇÃO: Se vier string vazia "", significa que o usuário apagou.
+      const isRemovingCopro = dto.coproductionEmail === '';
+
       const updated = await this.prisma.product.update({
           where: { id },
           data: { 
@@ -195,8 +198,16 @@ export class ProductService {
              ...(dto.imageUrl && { imageUrl: dto.imageUrl }),
              ...(dto.deliveryMethod && { deliveryMethod: dto.deliveryMethod }),
              ...(dto.checkoutConfig && { checkoutConfig: dto.checkoutConfig }),
-             ...(dto.coproductionEmail && { coproductionEmail: dto.coproductionEmail }),
-             ...(dto.coproductionPercent !== undefined && { coproductionPercent: Number(dto.coproductionPercent) }),
+             
+             // 🔥 CORREÇÃO: Se estiver removendo, salva NULL. Se não, salva o valor (se existir).
+             ...(dto.coproductionEmail !== undefined && { 
+                 coproductionEmail: isRemovingCopro ? null : dto.coproductionEmail 
+             }),
+             
+             // 🔥 CORREÇÃO: Zera a porcentagem se estiver removendo
+             ...(dto.coproductionPercent !== undefined && { 
+                 coproductionPercent: isRemovingCopro ? 0 : Number(dto.coproductionPercent) 
+             }),
           },
           include: { offers: true, coupons: true, memberArea: true }
       });
