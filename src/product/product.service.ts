@@ -10,12 +10,17 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { v4 as uuidv4 } from 'uuid'; 
+import { MailService } from 'src/mail/mail.service'; // ✅ IMPORTADO
 
 @Injectable()
 export class ProductService {
   private readonly logger = new Logger(ProductService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  // ✅ MailService injetado no construtor
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mailService: MailService 
+  ) {}
 
   private formatProduct(product: any) {
     if (!product) return null;
@@ -25,13 +30,11 @@ export class ProductService {
       amount: product.priceInCents,
       price: product.priceInCents / 100,
       image: product.imageUrl,
-      // ✅ Expõe a área para o frontend
       memberAreaId: product.memberAreaId, 
       memberArea: product.memberArea
     };
   }
 
-  // Normaliza configs visuais
   private normalizeCheckoutConfig(inputConfig: any, titleFallback: string, imageUrl?: string | null) {
     const cfg = inputConfig || {};
     const branding = cfg.branding || {};
@@ -60,7 +63,6 @@ export class ProductService {
     return products.map((p) => this.formatProduct(p));
   }
 
-  // ✅ CORREÇÃO CRÍTICA: Esta função estava faltando e quebrou o PublicApi
   async findAllByMerchant(merchantId: string) {
     const products = await this.prisma.product.findMany({
       where: { merchantId },
@@ -88,7 +90,6 @@ export class ProductService {
       
       const finalConfig = this.normalizeCheckoutConfig(dto.checkoutConfig, dto.title, dto.imageUrl);
 
-      // ✅ Tipagem correta para evitar erro no build
       let memberAreaId: string | null = null;
       
       if (dto.deliveryMethod === 'PAYLURE_MEMBERS') {
@@ -120,9 +121,7 @@ export class ProductService {
           deliveryUrl: dto.deliveryUrl || null,
           fileUrl: dto.fileUrl || null,
           fileName: dto.fileName || null,
-          
           memberAreaId: memberAreaId, 
-
           isAffiliationEnabled: Boolean(dto.isAffiliationEnabled),
           showInMarketplace: Boolean(dto.showInMarketplace),
           commissionPercent: Number(dto.commissionPercent || 0),
@@ -130,19 +129,27 @@ export class ProductService {
           materialLink: dto.materialLink || null,
           coproductionEmail: dto.coproductionEmail || null,
           coproductionPercent: Number(dto.coproductionPercent || 0),
-          
           checkoutConfig: finalConfig,
-          
           offers: { create: dto.offers?.map((o) => ({ name: o.name, priceInCents: Math.round(Number(o.price) * 100) })) || [] },
           coupons: { create: dto.coupons?.map((c) => ({ code: c.code.toUpperCase(), discountPercent: Number(c.discountPercent) })) || [] },
         },
-        include: { offers: true, coupons: true, memberArea: true },
+        include: { offers: true, coupons: true, memberArea: true, merchant: { include: { user: true } } },
       });
 
       if (dto.showInMarketplace) {
         await this.prisma.marketplaceProduct.create({
             data: { productId: newProduct.id, status: 'AVAILABLE', commissionRate: Number(dto.commissionPercent || 0) },
         }).catch((e) => this.logger.warn(e));
+      }
+
+      // ✅ DISPARAR CONVITE NA CRIAÇÃO
+      if (newProduct.coproductionEmail) {
+        await this.mailService.sendCoproductionInvite(
+          newProduct.coproductionEmail,
+          newProduct.name,
+          Number(newProduct.coproductionPercent || 0),
+          newProduct.merchant.user.name
+        );
       }
 
       return this.formatProduct(newProduct);
@@ -164,9 +171,22 @@ export class ProductService {
   }
 
   async update(id: string, userId: string, email: string, dto: UpdateProductDto) {
-      const product = await this.prisma.product.findUnique({ where: { id } });
+      const product = await this.prisma.product.findUnique({ 
+        where: { id },
+        include: { merchant: { include: { user: true } } }
+      });
       if (!product) throw new NotFoundException();
       
+      // ✅ DISPARAR CONVITE SE O EMAIL DE CO-PRODUÇÃO MUDOU
+      if (dto.coproductionEmail && dto.coproductionEmail !== product.coproductionEmail) {
+        await this.mailService.sendCoproductionInvite(
+          dto.coproductionEmail,
+          dto.title || product.name,
+          Number(dto.coproductionPercent || product.coproductionPercent || 0),
+          product.merchant.user.name
+        );
+      }
+
       const updated = await this.prisma.product.update({
           where: { id },
           data: { 
@@ -175,76 +195,36 @@ export class ProductService {
              ...(dto.imageUrl && { imageUrl: dto.imageUrl }),
              ...(dto.deliveryMethod && { deliveryMethod: dto.deliveryMethod }),
              ...(dto.checkoutConfig && { checkoutConfig: dto.checkoutConfig }),
-             // Se tiver lógica de ofertas/cupons, deve ser tratada aqui
+             ...(dto.coproductionEmail && { coproductionEmail: dto.coproductionEmail }),
+             ...(dto.coproductionPercent !== undefined && { coproductionPercent: Number(dto.coproductionPercent) }),
           },
           include: { offers: true, coupons: true, memberArea: true }
       });
       return this.formatProduct(updated);
   }
 
-  // ✅ METODO REMOVE AJUSTADO PARA LIMPEZA PROFUNDA (RESOLVE ERRO 500)
   async remove(id: string, userId: string) {
-    // 1. Verifica se o produto existe e busca suas dependências críticas
     const product = await this.prisma.product.findUnique({ 
         where: { id },
-        include: { 
-            marketplaceProduct: true, 
-            paymentLinks: true 
-        } 
+        include: { marketplaceProduct: true, paymentLinks: true } 
     });
     
-    if (!product) {
-        throw new NotFoundException('Produto não encontrado');
-    }
+    if (!product) throw new NotFoundException('Produto não encontrado');
 
-    // 2. Executa a exclusão em cascata manual (Transaction)
     await this.prisma.$transaction(async (tx) => {
-        
-        // --- ETAPA A: LIMPEZA DO MARKETPLACE ---
         if (product.marketplaceProduct) {
-            // A1. Remove Afiliados (que impedem deletar o MarketplaceProduct)
-            await tx.affiliate.deleteMany({
-                where: { marketplaceProductId: product.marketplaceProduct.id }
-            });
-
-            // A2. Remove o produto do Marketplace
-            await tx.marketplaceProduct.delete({
-                where: { id: product.marketplaceProduct.id }
-            });
+            await tx.affiliate.deleteMany({ where: { marketplaceProductId: product.marketplaceProduct.id } });
+            await tx.marketplaceProduct.delete({ where: { id: product.marketplaceProduct.id } });
         }
-
-        // --- ETAPA B: LIMPEZA DE LINKS DE PAGAMENTO ---
         if (product.paymentLinks.length > 0) {
             const linkIds = product.paymentLinks.map(link => link.id);
-            
-            // B1. Desvincula depósitos dos links (para não apagar histórico financeiro, mas liberar o link)
-            await tx.deposit.updateMany({
-                where: { paymentLinkId: { in: linkIds } },
-                data: { paymentLinkId: null }
-            });
-
-            // B2. Remove os Links de Pagamento
-            await tx.paymentLink.deleteMany({
-                where: { productId: id }
-            });
+            await tx.deposit.updateMany({ where: { paymentLinkId: { in: linkIds } }, data: { paymentLinkId: null } });
+            await tx.paymentLink.deleteMany({ where: { productId: id } });
         }
-
-        // --- ETAPA C: DESVINCULAR TRANSAÇÕES ---
-        // Desvincula transações financeiras do produto (mantém o registro da venda, mas sem o link)
-        await tx.transaction.updateMany({
-            where: { productId: id },
-            data: { productId: null }
-        });
-
-        // --- ETAPA D: LIMPEZA FINAL ---
-        // Apaga Ofertas e Cupons explicitamente (caso o banco não tenha cascade configurado)
+        await tx.transaction.updateMany({ where: { productId: id }, data: { productId: null } });
         await tx.offer.deleteMany({ where: { productId: id } });
         await tx.coupon.deleteMany({ where: { productId: id } });
-
-        // Finalmente, apaga o Produto
-        await tx.product.delete({
-            where: { id }
-        });
+        await tx.product.delete({ where: { id } });
     });
 
     return { message: 'Produto removido com sucesso' };
