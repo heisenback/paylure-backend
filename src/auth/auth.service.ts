@@ -14,7 +14,7 @@ import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import * as uuid from 'uuid';
 import * as crypto from 'crypto';
-import { MailService } from 'src/mail/mail.service'; // ✅ IMPORTADO
+import { MailService } from 'src/mail/mail.service'; 
 
 function generateApiKey(): string {
   const randomPart = crypto.randomBytes(16).toString('hex');
@@ -33,7 +33,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
-    private readonly mailService: MailService, // ✅ INJETADO
+    private readonly mailService: MailService, 
   ) {
     this.logger.log('🔧 AuthService inicializado');
   }
@@ -91,6 +91,69 @@ export class AuthService {
       throw new ConflictException('Este CPF já está cadastrado em outra conta.');
     }
 
+    // ===============================================
+    // 1. CÁLCULO DA TAXA DE LANÇAMENTO (AUTOMÁTICO)
+    // ===============================================
+    const now = new Date();
+    // Data limite da PROMOÇÃO 1: 26/12/2025 às 23:59
+    const launchEndDate = new Date('2025-12-26T23:59:59'); 
+    
+    let finalFeePercent = 8.0; // Padrão
+    let finalFeeFixed = 200;   // Padrão (R$ 2,00)
+    let isFounderUser = false; // Flag de Membro Fundador
+
+    if (now <= launchEndDate) {
+        // FASE 1: SEMANA DE LANÇAMENTO (19 a 26/12)
+        // Taxa: 4% + R$ 1,00
+        finalFeePercent = 4.0;
+        finalFeeFixed = 100;
+        isFounderUser = true; // Ganha selo de Fundador
+        this.logger.log(`🔥 Usuário entrou na PROMOÇÃO DE LANÇAMENTO (4% + R$1) - FOUNDER`);
+    } else {
+        // FASE 2: PÓS-LANÇAMENTO
+        // Verifica o total de usuários cadastrados até agora
+        const currentUsersCount = await this.prisma.user.count();
+
+        // Se tem MENOS de 100 usuários (contando todo mundo que já entrou)
+        if (currentUsersCount < 100) {
+            // FASE 2: Os 100 primeiros (tardios)
+            // Taxa: 5% + R$ 1,50
+            finalFeePercent = 5.0;
+            finalFeeFixed = 150;
+            isFounderUser = true; // Ganha selo de Fundador
+            this.logger.log(`🚀 Usuário entrou no lote dos 100 PRIMEIROS (5% + R$1,50) - FOUNDER`);
+        } else {
+            // FASE 3: PADRÃO
+            // Taxa: 8% + R$ 2,00
+            finalFeePercent = 8.0;
+            finalFeeFixed = 200;
+            isFounderUser = false;
+            this.logger.log(`👤 Usuário entrou na taxa PADRÃO (8% + R$2)`);
+        }
+    }
+
+    // ===============================================
+    // 2. LÓGICA DE INDICAÇÃO (REFERRAL)
+    // ===============================================
+    let referralData = {};
+    const inputCode = (dto as any).referralCode; // Pega o código da URL
+
+    if (inputCode) {
+       const referrer = await this.prisma.user.findUnique({ where: { referralCode: inputCode } });
+       if (referrer) {
+          // Calcula data de expiração da comissão (Hoje + 3 Meses)
+          const endsAt = new Date();
+          endsAt.setMonth(endsAt.getMonth() + 3);
+          
+          referralData = {
+             referredById: referrer.id,
+             referralEndsAt: endsAt,
+             referralCommissionRate: 0.01 // 1% de comissão
+          };
+          this.logger.log(`🔗 Usuário indicado por: ${referrer.email}`);
+       }
+    }
+
     const uniqueCnpj = uuid.v4().replace(/-/g, '').substring(0, 14);
     const defaultStoreName = `Loja-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     const apiKey = generateApiKey();
@@ -109,6 +172,15 @@ export class AuthService {
           password: hashedPassword,
           apiKey: apiKey,
           apiSecret: hashedApiSecret,
+          
+          // ✅ INJETA AS TAXAS CALCULADAS E A FLAG DE FUNDADOR
+          transactionFeePercent: finalFeePercent,
+          transactionFeeFixed: finalFeeFixed,
+          isFounder: isFounderUser,
+
+          // ✅ INJETA OS DADOS DE INDICAÇÃO
+          ...referralData,
+
           merchant: {
             create: {
               storeName: defaultStoreName,

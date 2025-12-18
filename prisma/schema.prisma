@@ -1,5 +1,3 @@
-// prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -20,6 +18,10 @@ model User {
   document             String?
   phone                String?
   role                 String       @default("USER")
+  
+  // ✅ NOVA FLAG: MEMBRO FUNDADOR (Para quem entrar no lançamento ou nos 100 primeiros)
+  isFounder            Boolean      @default(false)
+
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
   
@@ -28,14 +30,30 @@ model User {
   apiKey               String       @unique 
   apiSecret            String       @unique 
 
+  // --- TAXAS DE SAQUE ---
   withdrawalFeePercent Float?       @default(0.0)
   withdrawalFeeFixed   Int?         @default(0)
   isAutoWithdrawal     Boolean      @default(false)
 
+  // --- ✅ NOVAS TAXAS DE VENDA (AUTOMÁTICAS) ---
+  transactionFeePercent Float       @default(8.0) // Padrão 8%
+  transactionFeeFixed   Int         @default(200) // Padrão 200 cents (R$ 2,00)
+
+  // --- ✅ SISTEMA DE INDICAÇÃO (REFERRAL) ---
+  referralCode         String       @unique @default(cuid())
+  referredById         String?      
+  referredBy           User?        @relation("UserReferrals", fields: [referredById], references: [id])
+  referrals            User[]       @relation("UserReferrals")
+  
+  referralCommissionRate Float      @default(0.01) // 1%
+  referralEndsAt       DateTime?    // Data limite da comissão
+
+  // --- SEGURANÇA ---
   twoFactorEnabled     Boolean      @default(false)
   twoFactorMethod      String?      @default("APP")
   twoFactorSecret      String?
   
+  // --- RELAÇÕES ---
   merchant             Merchant?
   deposits             Deposit[]
   withdrawals          Withdrawal[]
@@ -45,8 +63,6 @@ model User {
   memberAccesses       MemberAccess[]
   transactions         Transaction[]
   pixels               Pixel[]
-  
-  // ✅ NOVAS RELAÇÕES
   lessonProgress       LessonProgress[]
   comments             Comment[]
 }
@@ -191,7 +207,7 @@ model MemberContent {
   memberAreaId     String
   memberArea       MemberArea   @relation(fields: [memberAreaId], references: [id], onDelete: Cascade)
   
-  moduleId         String?      
+  moduleId         String?
   module           MemberModule? @relation(fields: [moduleId], references: [id], onDelete: Cascade)
 
   title            String
@@ -202,15 +218,13 @@ model MemberContent {
   textBody         String?      @db.Text
   
   releaseDays      Int          @default(0) 
-  attachments      Json?        
-
+  attachments      Json?
   order            Int          @default(0)
   duration         Int?
   isPublic         Boolean      @default(false) 
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   
-  // ✅ NOVAS RELAÇÕES
   progress         LessonProgress[]
   comments         Comment[]
 
@@ -220,7 +234,7 @@ model MemberContent {
 }
 
 // ===================================
-// ✅ LESSON PROGRESS (NOVO)
+// ✅ LESSON PROGRESS
 // ===================================
 model LessonProgress {
   id        String        @id @default(uuid())
@@ -237,7 +251,7 @@ model LessonProgress {
 }
 
 // ===================================
-// ✅ COMMENT (NOVO)
+// ✅ COMMENT
 // ===================================
 model Comment {
   id        String        @id @default(uuid())
@@ -341,6 +355,7 @@ model Coupon {
   productId     String
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  
   @@index([productId])
   @@index([code])
 }
@@ -361,6 +376,7 @@ model PaymentLink {
   merchantId       String
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
+ 
   deposits         Deposit[]
 }
 
@@ -528,7 +544,7 @@ model Pixel {
   name        String
   platform    String   // FACEBOOK, GOOGLE, TIKTOK, etc.
   pixelId     String
-  accessToken String?  // Para API de Conversão (CAPI)
+  accessToken String?
   testCode    String?
   active      Boolean  @default(true)
   events      Json     
