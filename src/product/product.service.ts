@@ -182,9 +182,16 @@ export class ProductService {
       return this.formatProduct(updated);
   }
 
+  // ✅ METODO REMOVE AJUSTADO PARA LIMPEZA PROFUNDA (RESOLVE ERRO 500)
   async remove(id: string, userId: string) {
-    // 1. Verifica se existe
-    const product = await this.prisma.product.findUnique({ where: { id } });
+    // 1. Verifica se o produto existe e busca suas dependências críticas
+    const product = await this.prisma.product.findUnique({ 
+        where: { id },
+        include: { 
+            marketplaceProduct: true, 
+            paymentLinks: true 
+        } 
+    });
     
     if (!product) {
         throw new NotFoundException('Produto não encontrado');
@@ -192,26 +199,49 @@ export class ProductService {
 
     // 2. Executa a exclusão em cascata manual (Transaction)
     await this.prisma.$transaction(async (tx) => {
-        // A. Remove dependências do Marketplace se houver
-        await tx.marketplaceProduct.deleteMany({
-            where: { productId: id }
-        });
+        
+        // --- ETAPA A: LIMPEZA DO MARKETPLACE ---
+        if (product.marketplaceProduct) {
+            // A1. Remove Afiliados (que impedem deletar o MarketplaceProduct)
+            await tx.affiliate.deleteMany({
+                where: { marketplaceProductId: product.marketplaceProduct.id }
+            });
 
-        // B. Remove Links de Pagamento vinculados
-        await tx.paymentLink.deleteMany({
-            where: { productId: id }
-        });
+            // A2. Remove o produto do Marketplace
+            await tx.marketplaceProduct.delete({
+                where: { id: product.marketplaceProduct.id }
+            });
+        }
 
-        // C. Desvincula Transações financeiras (NÃO APAGA, apenas remove o ID do produto para manter histórico)
+        // --- ETAPA B: LIMPEZA DE LINKS DE PAGAMENTO ---
+        if (product.paymentLinks.length > 0) {
+            const linkIds = product.paymentLinks.map(link => link.id);
+            
+            // B1. Desvincula depósitos dos links (para não apagar histórico financeiro, mas liberar o link)
+            await tx.deposit.updateMany({
+                where: { paymentLinkId: { in: linkIds } },
+                data: { paymentLinkId: null }
+            });
+
+            // B2. Remove os Links de Pagamento
+            await tx.paymentLink.deleteMany({
+                where: { productId: id }
+            });
+        }
+
+        // --- ETAPA C: DESVINCULAR TRANSAÇÕES ---
+        // Desvincula transações financeiras do produto (mantém o registro da venda, mas sem o link)
         await tx.transaction.updateMany({
             where: { productId: id },
             data: { productId: null }
         });
 
-        // D. Remove Ofertas e Cupons (O Schema já tem Cascade, mas se não tiver, isso garante)
-        // Opcional se seu schema já estiver com onDelete: Cascade
-        
-        // E. Finalmente apaga o Produto
+        // --- ETAPA D: LIMPEZA FINAL ---
+        // Apaga Ofertas e Cupons explicitamente (caso o banco não tenha cascade configurado)
+        await tx.offer.deleteMany({ where: { productId: id } });
+        await tx.coupon.deleteMany({ where: { productId: id } });
+
+        // Finalmente, apaga o Produto
         await tx.product.delete({
             where: { id }
         });
