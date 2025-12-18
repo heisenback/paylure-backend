@@ -10,11 +10,12 @@ async function bootstrap() {
     rawBody: true, 
   });
 
-  // 🔴 REMOVIDO O PREFIXO 'api/v1' 
-  // O seu frontend chama "api.paylure.com.br/auth/..." direto.
-  // Se deixarmos o 'api/v1', o navegador recebe erro 404 e reclama de CORS.
+  // 👇 AQUI ESTAVA O DETALHE! 
+  // O seu Frontend está mandando '/api/v1', então precisamos dessa linha ativa.
+  app.setGlobalPrefix('api/v1');
+  logger.log('✅ Prefixo global configurado: /api/v1');
 
-  // 👇 CONFIGURAÇÃO DE CORS SIMPLIFICADA
+  // 👇 CORS SIMPLIFICADO (Funcionou perfeitamente no seu teste)
   app.enableCors({
     origin: true, 
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
@@ -22,8 +23,6 @@ async function bootstrap() {
     allowedHeaders: 'Content-Type, Accept, Authorization, X-Requested-With, Origin, x-keyclub-signature',
   });
   
-  logger.log('✅ CORS habilitado (origin: true)');
-
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -35,6 +34,10 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');
 
+  logger.log('');
+  logger.log('🚀 ====================================');
   logger.log(`🚀 Backend rodando em http://0.0.0.0:${port}`);
+  logger.log(`🌐 API disponível em http://0.0.0.0:${port}/api/v1`);
+  logger.log('🚀 ====================================');
 }
 bootstrap();
