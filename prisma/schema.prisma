@@ -174,7 +174,7 @@ model MemberModule {
   title        String
   order        Int             @default(0)
   
-  contents     MemberContent[] 
+  contents     MemberContent[] // Aulas dentro do módulo
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 

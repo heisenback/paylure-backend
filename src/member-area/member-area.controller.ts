@@ -28,7 +28,7 @@ class UpdateMemberAreaDto {
   @IsString() @IsOptional() primaryColor?: string;
   @IsString() @IsOptional() secondaryColor?: string;
   @IsBoolean() @IsOptional() isActive?: boolean;
-  @IsBoolean() @IsOptional() allowComments?: boolean; // ✅ CAMPO NOVO
+  @IsBoolean() @IsOptional() allowComments?: boolean; // ✅ Configuração de comentários
 }
 
 class CreateMemberContentDto {
@@ -40,6 +40,7 @@ class CreateMemberContentDto {
   @IsInt() @IsOptional() order?: number = 0;
   @IsInt() @IsOptional() duration?: number;
   @IsBoolean() @IsOptional() isPublic?: boolean = false;
+  
   @IsString() @IsOptional() moduleId?: string; 
   @IsInt() @IsOptional() releaseDays?: number;
   @IsOptional() attachments?: any; 
