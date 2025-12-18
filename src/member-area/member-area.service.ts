@@ -9,7 +9,7 @@ export class MemberAreaService {
   constructor(private readonly prisma: PrismaService) {}
 
   // ===================================
-  // ACESSOS & PROGRESSO (MÉTODOS NOVOS)
+  // ACESSOS & PROGRESSO
   // ===================================
 
   async getStudentProgress(userId: string, memberAreaId: string) {
@@ -17,7 +17,7 @@ export class MemberAreaService {
     const progress = await this.prisma.lessonProgress.findMany({
         where: { 
             userId, 
-            content: { memberAreaId }, // Filtra pela área
+            content: { memberAreaId },
             completed: true 
         },
         select: { contentId: true }
@@ -32,14 +32,14 @@ export class MemberAreaService {
     });
 
     if (exists) {
-        // Se já existe, inverte o status (true -> false ou false -> true)
+        // Se já existe, inverte o status
         const updated = await this.prisma.lessonProgress.update({
             where: { id: exists.id },
             data: { completed: !exists.completed }
         });
         return { completed: updated.completed };
     } else {
-        // Se não existe, cria como concluído (true)
+        // Se não existe, cria como concluído
         await this.prisma.lessonProgress.create({
             data: { userId, contentId, completed: true }
         });
@@ -48,7 +48,7 @@ export class MemberAreaService {
   }
 
   // ===================================
-  // COMENTÁRIOS (MÉTODOS NOVOS)
+  // COMENTÁRIOS
   // ===================================
 
   async getComments(contentId: string) {
@@ -56,10 +56,10 @@ export class MemberAreaService {
         where: { contentId },
         include: { 
             user: { 
-                select: { name: true, email: true } // Traz nome do aluno
+                select: { name: true, email: true } 
             } 
         },
-        orderBy: { createdAt: 'desc' } // Mais recentes primeiro
+        orderBy: { createdAt: 'desc' }
     });
   }
 
@@ -71,7 +71,7 @@ export class MemberAreaService {
   }
 
   // ===================================
-  // MEMBER AREAS (EXISTENTES)
+  // MEMBER AREAS (CRUD)
   // ===================================
 
   async createMemberArea(merchantId: string, data: any) {
@@ -296,7 +296,11 @@ export class MemberAreaService {
     return { members: accesses };
   }
 
+  // ===================================
+  // 🔥 LÓGICA HÍBRIDA (ALUNO + DONO)
+  // ===================================
   async getUserAccess(userId: string) {
+    // 1. Busca os cursos que o usuário COMPROU (MemberAccess)
     const accesses = await this.prisma.memberAccess.findMany({
       where: {
         userId,
@@ -309,13 +313,56 @@ export class MemberAreaService {
       include: {
         memberArea: {
           include: {
-            contents: {
-              orderBy: { order: 'asc' },
-            },
+            contents: { select: { id: true } }, // Traz só ID para contagem leve
           },
         },
       },
     });
-    return { areas: accesses.map(a => a.memberArea) };
+
+    // 2. Busca os cursos que o usuário É DONO (Merchant -> MemberArea)
+    const ownedAreas = await this.prisma.memberArea.findMany({
+      where: {
+        merchant: { userId: userId } // Verifica se o usuário é o dono do Merchant
+      },
+      include: {
+        contents: { select: { id: true } }
+      }
+    });
+
+    // 3. Formata a lista de Compras
+    const formattedPurchased = accesses.map(a => ({
+      id: a.memberArea.id,
+      title: a.memberArea.name,
+      description: a.memberArea.description,
+      slug: a.memberArea.slug,
+      imageUrl: a.memberArea.coverImageUrl,
+      deliveryMethod: 'PAYLURE_MEMBERS',
+      totalLessons: a.memberArea.contents.length,
+      isOwner: false // É aluno
+    }));
+
+    // 4. Formata a lista de Dono
+    const formattedOwned = ownedAreas.map(area => ({
+      id: area.id,
+      title: area.name,
+      description: area.description,
+      slug: area.slug,
+      imageUrl: area.coverImageUrl,
+      deliveryMethod: 'PAYLURE_MEMBERS',
+      totalLessons: area.contents.length,
+      isOwner: true // É o dono (admin)
+    }));
+
+    // 5. Junta tudo (Prioridade para Dono + Compras)
+    const allCourses = [...formattedOwned];
+
+    formattedPurchased.forEach(course => {
+      // Evita duplicar se você comprou seu próprio curso (já está na lista de owned)
+      if (!allCourses.find(c => c.id === course.id)) {
+        allCourses.push(course);
+      }
+    });
+
+    return { areas: allCourses };
   }
 }
