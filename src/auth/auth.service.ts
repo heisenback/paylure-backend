@@ -133,7 +133,7 @@ export class AuthService {
     }
 
     // ===============================================
-    // 2. LÓGICA DE INDICAÇÃO (REFERRAL)
+    // 2. LÓGICA DE INDICAÇÃO (REFERRAL) - Quem indicou este novo usuário?
     // ===============================================
     let referralData = {};
     const inputCode = (dto as any).referralCode; // Pega o código da URL
@@ -163,6 +163,9 @@ export class AuthService {
     const hashedApiSecret = await bcrypt.hash(apiSecret, salt);
 
     try {
+      // ✅ GERA CÓDIGO DE INDICAÇÃO PARA O NOVO USUÁRIO
+      const myReferralCode = uuid.v4().substring(0, 8).toUpperCase();
+
       const userWithMerchant: any = await this.prisma.user.create({
         data: {
           email: dto.email,
@@ -178,7 +181,10 @@ export class AuthService {
           transactionFeeFixed: finalFeeFixed,
           isFounder: isFounderUser,
 
-          // ✅ INJETA OS DADOS DE INDICAÇÃO
+          // ✅ CÓDIGO DELE PARA INDICAR OUTROS
+          referralCode: myReferralCode,
+
+          // ✅ QUEM INDICOU ELE
           ...referralData,
 
           merchant: {
@@ -238,48 +244,10 @@ export class AuthService {
     };
   }
 
-  async getUserWithBalance(userId: string) {
-    let user: any = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { merchant: true },
-    });
-
-    if (!user) throw new NotFoundException('Usuário não encontrado');
-
-    if (!user.merchant) {
-      const fixedUser: any = await this.fixMissingMerchant(userId, user.name);
-      if (fixedUser && fixedUser.merchant) {
-        user = { ...user, merchant: fixedUser.merchant };
-      }
-    }
-
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-
-    const depositsToday = await this.prisma.deposit.aggregate({
-      where: { userId: userId, status: 'CONFIRMED', createdAt: { gte: startOfDay } },
-      _sum: { netAmountInCents: true },
-    });
-
-    const totalTrans = await this.prisma.deposit.count({ where: { userId: userId, status: 'CONFIRMED' } }) + 
-                       await this.prisma.withdrawal.count({ where: { userId: userId, status: 'CONFIRMED' } });
-
-    const { password, apiSecret, ...safeUser } = user;
-
-    return {
-      user: safeUser,
-      balance: user.balance,
-      stats: {
-        depositsToday: depositsToday._sum.netAmountInCents || 0,
-        totalTransactions: totalTrans,
-      },
-    };
-  }
-
   // ✅ NOVO: BUSCAR DADOS DE INDICAÇÃO (A FUNÇÃO QUE FALTAVA)
   async getReferrals(userId: string) {
     // 1. Busca o usuário com seus indicados e transações
-    const user = await this.prisma.user.findUnique({
+    let user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: {
             referralCode: true,
@@ -308,6 +276,20 @@ export class AuthService {
     });
 
     if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    // 🚨 AUTO-FIX: Se o usuário for antigo e não tiver código, cria agora!
+    if (!user.referralCode) {
+        const newCode = uuid.v4().substring(0, 8).toUpperCase();
+        
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: { referralCode: newCode }
+        });
+        
+        // Atualiza a variável local para retornar o código correto
+        user.referralCode = newCode;
+        this.logger.log(`🔧 Código de indicação gerado para usuário antigo: ${userId}`);
+    }
 
     // 2. Processa a lista de indicados para o formato do Frontend
     const referralsList = user.referrals.map(ref => {
@@ -344,6 +326,44 @@ export class AuthService {
             totalCommission: totalCommissionCents / 100
         },
         list: referralsList
+    };
+  }
+
+  async getUserWithBalance(userId: string) {
+    let user: any = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { merchant: true },
+    });
+
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    if (!user.merchant) {
+      const fixedUser: any = await this.fixMissingMerchant(userId, user.name);
+      if (fixedUser && fixedUser.merchant) {
+        user = { ...user, merchant: fixedUser.merchant };
+      }
+    }
+
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+
+    const depositsToday = await this.prisma.deposit.aggregate({
+      where: { userId: userId, status: 'CONFIRMED', createdAt: { gte: startOfDay } },
+      _sum: { netAmountInCents: true },
+    });
+
+    const totalTrans = await this.prisma.deposit.count({ where: { userId: userId, status: 'CONFIRMED' } }) + 
+                       await this.prisma.withdrawal.count({ where: { userId: userId, status: 'CONFIRMED' } });
+
+    const { password, apiSecret, ...safeUser } = user;
+
+    return {
+      user: safeUser,
+      balance: user.balance,
+      stats: {
+        depositsToday: depositsToday._sum.netAmountInCents || 0,
+        totalTransactions: totalTrans,
+      },
     };
   }
 
