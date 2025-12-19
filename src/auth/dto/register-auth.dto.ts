@@ -1,11 +1,11 @@
 import { IsEmail, IsString, MinLength, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class RegisterAuthDto {
-  @IsEmail()
+  @IsEmail({}, { message: 'Insira um e-mail válido' })
   email: string;
 
   @IsString()
-  @MinLength(6)
+  @MinLength(6, { message: 'A senha deve ter no mínimo 6 caracteres' })
   password: string;
 
   @IsString()
@@ -18,11 +18,11 @@ export class RegisterAuthDto {
 
   @IsString()
   @IsNotEmpty({ message: 'O CPF é obrigatório' })
-  document: string; // 🔒 AGORA É OBRIGATÓRIO
+  document: string; 
 
   @IsString()
   @IsNotEmpty({ message: 'O WhatsApp é obrigatório' })
-  whatsapp: string; // 🔒 NOVO CAMPO OBRIGATÓRIO
+  whatsapp: string;
 
   @IsString()
   @IsOptional()
@@ -31,4 +31,9 @@ export class RegisterAuthDto {
   @IsString()
   @IsOptional()
   cnpj?: string;
+
+  // ✅ NOVO CAMPO: Essencial para o sistema de indicação funcionar
+  @IsString()
+  @IsOptional()
+  referralCode?: string;
 }
