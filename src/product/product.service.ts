@@ -10,13 +10,12 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { v4 as uuidv4 } from 'uuid'; 
-import { MailService } from 'src/mail/mail.service'; // ✅ IMPORTADO
+import { MailService } from 'src/mail/mail.service'; 
 
 @Injectable()
 export class ProductService {
   private readonly logger = new Logger(ProductService.name);
 
-  // ✅ MailService injetado no construtor
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService 
@@ -142,7 +141,6 @@ export class ProductService {
         }).catch((e) => this.logger.warn(e));
       }
 
-      // ✅ DISPARAR CONVITE NA CRIAÇÃO
       if (newProduct.coproductionEmail) {
         await this.mailService.sendCoproductionInvite(
           newProduct.coproductionEmail,
@@ -170,6 +168,7 @@ export class ProductService {
     return prods.map((p) => this.formatProduct(p));
   }
 
+  // 🔥 MÉTODO UPDATE CORRIGIDO 🔥
   async update(id: string, userId: string, email: string, dto: UpdateProductDto) {
       const product = await this.prisma.product.findUnique({ 
         where: { id },
@@ -177,7 +176,6 @@ export class ProductService {
       });
       if (!product) throw new NotFoundException();
       
-      // ✅ DISPARAR CONVITE APENAS SE HOUVER UM E-MAIL VÁLIDO E ELE TIVER MUDADO
       if (dto.coproductionEmail && dto.coproductionEmail !== product.coproductionEmail) {
         await this.mailService.sendCoproductionInvite(
           dto.coproductionEmail,
@@ -187,24 +185,37 @@ export class ProductService {
         );
       }
 
-      // 🔍 LÓGICA DE REMOÇÃO: Se vier string vazia "", significa que o usuário apagou.
       const isRemovingCopro = dto.coproductionEmail === '';
 
       const updated = await this.prisma.product.update({
           where: { id },
           data: { 
              ...(dto.title && { name: dto.title }),
+             ...(dto.description && { description: dto.description }), // Adicionado
              ...(dto.price && { priceInCents: Math.round(dto.price * 100) }),
              ...(dto.imageUrl && { imageUrl: dto.imageUrl }),
+             ...(dto.category && { category: dto.category }), // Adicionado
+             
+             // ✅ CORREÇÃO: AGORA SALVA OS LINKS!
+             ...(dto.salesPageUrl !== undefined && { salesPageUrl: dto.salesPageUrl }),
+             ...(dto.materialLink !== undefined && { materialLink: dto.materialLink }),
+             
              ...(dto.deliveryMethod && { deliveryMethod: dto.deliveryMethod }),
+             ...(dto.deliveryUrl !== undefined && { deliveryUrl: dto.deliveryUrl }),
+             ...(dto.fileUrl !== undefined && { fileUrl: dto.fileUrl }),
+             ...(dto.fileName !== undefined && { fileName: dto.fileName }),
+             
+             // ✅ CORREÇÃO: DADOS DE AFILIAÇÃO
+             ...(dto.isAffiliationEnabled !== undefined && { isAffiliationEnabled: dto.isAffiliationEnabled }),
+             ...(dto.showInMarketplace !== undefined && { showInMarketplace: dto.showInMarketplace }),
+             ...(dto.commissionPercent !== undefined && { commissionPercent: dto.commissionPercent }),
+             ...(dto.affiliationType !== undefined && { affiliationType: dto.affiliationType }),
+
              ...(dto.checkoutConfig && { checkoutConfig: dto.checkoutConfig }),
              
-             // 🔥 CORREÇÃO: Se estiver removendo, salva NULL. Se não, salva o valor (se existir).
              ...(dto.coproductionEmail !== undefined && { 
                  coproductionEmail: isRemovingCopro ? null : dto.coproductionEmail 
              }),
-             
-             // 🔥 CORREÇÃO: Zera a porcentagem se estiver removendo
              ...(dto.coproductionPercent !== undefined && { 
                  coproductionPercent: isRemovingCopro ? 0 : Number(dto.coproductionPercent) 
              }),
