@@ -94,34 +94,31 @@ export class ProductService {
   // --- CRIAÇÃO ---
   async create(dto: CreateProductDto, userId: string) {
     try {
-      // Garante que existe merchant
+      // 1. Busca ou Cria o Merchant
       let merchant = await this.prisma.merchant.findUnique({ where: { userId }, include: { user: true } });
-      let ownerId = merchant ? merchant.id : null;
-
-      if (!ownerId) {
-         // Se não tiver merchant, cria um temporário/padrão para não quebrar a lógica
-         const user = await this.prisma.user.findUnique({ where: { id: userId } });
-         if (!user) throw new NotFoundException('Usuário inválido');
-         
-         const newMerchant = await this.prisma.merchant.create({
-             data: {
-                 userId: user.id,
-                 storeName: user.name || 'Minha Loja',
-                 cnpj: user.document || `CPF-${uuidv4().substring(0,8)}` // Fallback
-             },
-             include: { user: true }
-         });
-         merchant = newMerchant;
-         ownerId = newMerchant.id;
-      }
       
+      if (!merchant) {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new NotFoundException('Usuário não encontrado');
+
+        merchant = await this.prisma.merchant.create({
+          data: {
+            userId: user.id,
+            storeName: user.name ? `Loja de ${user.name}` : 'Minha Loja',
+            cnpj: user.document || `CPF-${user.id.substring(0,8)}`,
+          },
+          include: { user: true }
+        });
+      }
+
+      const ownerId = merchant.id; 
       const priceVal = Number(dto.price);
       const priceInCents = isNaN(priceVal) ? 0 : Math.round(priceVal * 100);
       const finalConfig = this.normalizeCheckoutConfig(dto.checkoutConfig, dto.title, dto.imageUrl);
 
       let memberAreaId: string | null = null;
       
-      // 1. Cria Área se for o método escolhido
+      // 2. Criação da Área de Membros
       if (dto.deliveryMethod === 'PAYLURE_MEMBERS') {
           const newArea = await this.prisma.memberArea.create({
               data: {
@@ -133,10 +130,10 @@ export class ProductService {
               }
           });
           memberAreaId = newArea.id;
-          this.logger.log(`📚 Área Criada Automaticamente: ${newArea.name}`);
+          this.logger.log(`📚 Área Criada: ${newArea.name}`);
       }
 
-      // 2. Cria Produto
+      // 3. Criação do Produto
       const newProduct = await this.prisma.product.create({
         data: {
           name: dto.title,
@@ -158,8 +155,11 @@ export class ProductService {
           commissionPercent: Number(dto.commissionPercent || 0),
           affiliationType: dto.affiliationType || 'OPEN',
           materialLink: dto.materialLink || null,
+          
+          // ✅ GARANTINDO QUE OS DADOS DE COPRODUÇÃO ESTÃO VINDO
           coproductionEmail: dto.coproductionEmail || null,
           coproductionPercent: Number(dto.coproductionPercent || 0),
+          
           checkoutConfig: finalConfig,
           offers: { create: dto.offers?.map((o) => ({ name: o.name, priceInCents: Math.round(Number(o.price) * 100) })) || [] },
           coupons: { create: dto.coupons?.map((c) => ({ code: c.code.toUpperCase(), discountPercent: Number(c.discountPercent) })) || [] },
@@ -167,31 +167,42 @@ export class ProductService {
         include: { offers: true, coupons: true, memberArea: true, merchant: { include: { user: true } } },
       });
 
-      // 3. Marketplace
+      // 4. Integração com Marketplace
       if (dto.showInMarketplace) {
         await this.prisma.marketplaceProduct.create({
             data: { productId: newProduct.id, status: 'AVAILABLE', commissionRate: Number(dto.commissionPercent || 0) },
-        }).catch((e) => this.logger.warn(e));
+        }).catch((e) => this.logger.warn("Erro ao criar marketplace entry: " + e.message));
       }
 
-      // 4. Email Co-produtor
-      if (newProduct.coproductionEmail && merchant) {
-        await this.mailService.sendCoproductionInvite(
-          newProduct.coproductionEmail,
-          newProduct.name,
-          Number(newProduct.coproductionPercent || 0),
-          merchant.user.name
-        );
+      // 5. Envio de convite Co-Produção (COM LOGS DE DEBUG)
+      if (newProduct.coproductionEmail) {
+        this.logger.log(`📩 Iniciando envio de convite para: ${newProduct.coproductionEmail}`);
+        try {
+          await this.mailService.sendCoproductionInvite(
+            newProduct.coproductionEmail,
+            newProduct.name,
+            Number(newProduct.coproductionPercent || 0),
+            newProduct.merchant.user.name // Aqui garantimos que o nome do produtor vai
+          );
+          this.logger.log(`✅ Convite enviado com sucesso!`);
+        } catch (mailError) {
+          this.logger.error(`❌ Erro CRÍTICO ao enviar email de co-produção: ${mailError}`);
+        }
+      } else {
+        this.logger.log(`ℹ️ Produto criado sem co-produtor definido.`);
       }
 
       return this.formatProduct(newProduct);
     } catch (error: any) {
-      this.logger.error(`Erro create: ${error?.message || error}`);
-      throw new BadRequestException('Erro ao criar produto: ' + error.message);
+      this.logger.error(`Erro create product: ${error?.message || error}`);
+      if (error instanceof NotFoundException || error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(`Erro ao criar produto: ${error.message}`);
     }
   }
 
-  // --- UPDATE ---
+  // --- ATUALIZAÇÃO ---
   async update(id: string, userId: string, email: string, dto: UpdateProductDto) {
       const product = await this.prisma.product.findUnique({ 
         where: { id },
@@ -199,21 +210,21 @@ export class ProductService {
       });
       if (!product) throw new NotFoundException('Produto não encontrado');
       
-      // Lógica de Co-produção
+      // Envio de convite se mudou o co-produtor
       if (dto.coproductionEmail && dto.coproductionEmail !== product.coproductionEmail) {
+        this.logger.log(`📩 Enviando convite de co-produção (UPDATE) para ${dto.coproductionEmail}`);
         try {
-            await this.mailService.sendCoproductionInvite(
+          await this.mailService.sendCoproductionInvite(
             dto.coproductionEmail,
             dto.title || product.name,
             Number(dto.coproductionPercent || product.coproductionPercent || 0),
             product.merchant.user.name
-            );
-        } catch(e) { this.logger.error("Erro email copro: " + e); }
+          );
+        } catch(e) { this.logger.error(`❌ Erro no envio (Update): ${e}`); }
       }
 
       const isRemovingCopro = dto.coproductionEmail === '';
 
-      // Atualiza Produto
       const updated = await this.prisma.product.update({
           where: { id },
           data: { 
@@ -222,17 +233,22 @@ export class ProductService {
              ...(dto.price && { priceInCents: Math.round(dto.price * 100) }),
              ...(dto.imageUrl && { imageUrl: dto.imageUrl }),
              ...(dto.category && { category: dto.category }),
+             
              ...(dto.salesPageUrl !== undefined && { salesPageUrl: dto.salesPageUrl }),
              ...(dto.materialLink !== undefined && { materialLink: dto.materialLink }),
+             
              ...(dto.deliveryMethod && { deliveryMethod: dto.deliveryMethod }),
              ...(dto.deliveryUrl !== undefined && { deliveryUrl: dto.deliveryUrl }),
              ...(dto.fileUrl !== undefined && { fileUrl: dto.fileUrl }),
              ...(dto.fileName !== undefined && { fileName: dto.fileName }),
+             
              ...(dto.isAffiliationEnabled !== undefined && { isAffiliationEnabled: dto.isAffiliationEnabled }),
              ...(dto.showInMarketplace !== undefined && { showInMarketplace: dto.showInMarketplace }),
              ...(dto.commissionPercent !== undefined && { commissionPercent: dto.commissionPercent }),
              ...(dto.affiliationType !== undefined && { affiliationType: dto.affiliationType }),
+
              ...(dto.checkoutConfig && { checkoutConfig: dto.checkoutConfig }),
+             
              ...(dto.coproductionEmail !== undefined && { 
                  coproductionEmail: isRemovingCopro ? null : dto.coproductionEmail 
              }),
@@ -242,22 +258,10 @@ export class ProductService {
           },
           include: { offers: true, coupons: true, memberArea: true }
       });
-
-      // 🔥 Sincroniza nome/capa com a Área de Membros se ela existir
-      if (product.memberAreaId && (dto.title || dto.imageUrl)) {
-          await this.prisma.memberArea.update({
-              where: { id: product.memberAreaId },
-              data: {
-                  ...(dto.title && { name: dto.title }),
-                  ...(dto.imageUrl && { coverImageUrl: dto.imageUrl })
-              }
-          }).catch(e => this.logger.warn("Erro ao sync member area: " + e));
-      }
-
       return this.formatProduct(updated);
   }
 
-  // --- REMOVE (AGORA DELETA A ÁREA TAMBÉM) ---
+  // --- REMOVE ---
   async remove(id: string, userId: string) {
     const product = await this.prisma.product.findUnique({ 
         where: { id },
@@ -267,33 +271,33 @@ export class ProductService {
     if (!product) throw new NotFoundException('Produto não encontrado');
 
     await this.prisma.$transaction(async (tx) => {
-        // 1. Limpa Marketplace/Afiliados
+        // Limpezas...
         if (product.marketplaceProduct) {
             await tx.affiliate.deleteMany({ where: { marketplaceProductId: product.marketplaceProduct.id } });
             await tx.marketplaceProduct.delete({ where: { id: product.marketplaceProduct.id } });
         }
-        
-        // 2. Limpa Links de Pagamento
         if (product.paymentLinks.length > 0) {
             const linkIds = product.paymentLinks.map(link => link.id);
             await tx.deposit.updateMany({ where: { paymentLinkId: { in: linkIds } }, data: { paymentLinkId: null } });
             await tx.paymentLink.deleteMany({ where: { productId: id } });
         }
         
-        // 3. Limpa dependências diretas
         await tx.transaction.updateMany({ where: { productId: id }, data: { productId: null } });
         await tx.offer.deleteMany({ where: { productId: id } });
         await tx.coupon.deleteMany({ where: { productId: id } });
         
-        // 4. DELETA O PRODUTO
         await tx.product.delete({ where: { id } });
 
-        // 5. 🔥 DELETA A ÁREA DE MEMBROS (FIM DOS FANTASMAS) 🔥
+        // Remove área de membros órfã
         if (product.memberAreaId) {
-            // Verifica se a área existe antes de tentar deletar
             const areaExists = await tx.memberArea.findUnique({ where: { id: product.memberAreaId } });
             if (areaExists) {
-                await tx.memberArea.delete({ where: { id: product.memberAreaId } });
+                const otherProductsUsingArea = await tx.product.count({
+                    where: { memberAreaId: product.memberAreaId }
+                });
+                if (otherProductsUsingArea === 0) {
+                    await tx.memberArea.delete({ where: { id: product.memberAreaId } });
+                }
             }
         }
     });
