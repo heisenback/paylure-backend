@@ -1,14 +1,11 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
 import { ConfigModule } from '@nestjs/config';
-
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { DepositModule } from './deposit/deposit.module';
 import { WithdrawalModule } from './withdrawal/withdrawal.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
-import { KeyclubModule } from './keyclub/keyclub.module';
 import { XflowModule } from './xflow/xflow.module';
 import { ProductModule } from './product/product.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
@@ -25,7 +22,7 @@ import { PushNotificationModule } from './push-notification/push-notification.mo
 import { AdminModule } from './admin/admin.module';
 import { CheckoutModule } from './checkout/checkout.module';
 import { PixelsModule } from './pixels/pixels.module';
-import { MemberAreaModule } from './member-area/member-area.module'; 
+import { MemberAreaModule } from './member-area/member-area.module';
 
 @Module({
   imports: [
@@ -39,7 +36,6 @@ import { MemberAreaModule } from './member-area/member-area.module';
     WithdrawalModule,
     TransactionsModule,
     WebhooksModule,
-    KeyclubModule,
     XflowModule,
     ProductModule,
     MarketplaceModule,
@@ -56,9 +52,9 @@ import { MemberAreaModule } from './member-area/member-area.module';
     AdminModule,
     CheckoutModule,
     PixelsModule,
-    MemberAreaModule, 
+    MemberAreaModule,
   ],
-  controllers: [AppController],
+  controllers: [],
   providers: [],
 })
 export class AppModule {}

@@ -1,8 +1,7 @@
 // src/webhooks/webhooks.service.ts
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentGateway } from '../gateway/payment.gateway';
-import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class WebhooksService {
@@ -11,113 +10,43 @@ export class WebhooksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly paymentGateway: PaymentGateway,
-    private readonly mailService: MailService,
   ) {}
 
-  // ✅ Reaproveita a mesma lógica para Keyclub e Xflow
-  private async processDepositWebhook(payload: any, providerLabel: string) {
-    this.logger.log(`🔥 [Webhook:${providerLabel}] Payload recebido`);
+  async handleXflowWebhook(payload: any) {
+    this.logger.log(`🌊 Recebido Webhook XFlow: ${JSON.stringify(payload)}`);
 
-    const transactionId =
-      payload.transaction_id ||
-      payload.transactionId ||
-      payload.id ||
-      payload.external_id ||
-      payload.externalId;
+    const transactionId = payload.transaction_id || payload.external_id;
+    const status = String(payload.status).toUpperCase();
 
-    const rawStatus = payload.status || payload.payment_status || '';
-    const status = String(rawStatus).toUpperCase();
-
-    if (!transactionId) {
-      throw new NotFoundException('transaction_id required');
-    }
-
-    const deposit = await this.prisma.deposit.findUnique({
-      where: { externalId: String(transactionId) },
-    });
-
-    if (!deposit) {
-      this.logger.error(`❌ Depósito não encontrado: ${transactionId}`);
-      throw new NotFoundException('Depósito não encontrado');
-    }
-
-    if (deposit.status === 'CONFIRMED' || deposit.status === 'PAID') {
-      return { message: 'Already processed' };
-    }
-
-    const approvedStatuses = ['PAID', 'COMPLETED', 'APPROVED', 'SUCCEEDED', 'CONFIRMED'];
-
-    if (!approvedStatuses.includes(status)) {
-      return { message: `Status ignored: ${status}` };
-    }
-
-    const transactions = await this.prisma.transaction.findMany({
-      where: {
-        OR: [{ externalId: deposit.externalId }, { referenceId: deposit.id }, { referenceId: deposit.externalId }],
-        status: 'PENDING',
-      },
-    });
-
-    if (transactions.length === 0) {
-      this.logger.warn(`⚠️ Nenhuma transação pendente para ${deposit.externalId}`);
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.deposit.update({
-        where: { id: deposit.id },
-        data: { status: 'CONFIRMED' },
+    if (status === 'COMPLETED') {
+      // Busca o depósito no banco
+      const deposit = await this.prisma.deposit.findUnique({
+        where: { externalId: String(transactionId) },
       });
 
-      for (const transaction of transactions) {
-        await tx.transaction.update({
-          where: { id: transaction.id },
-          data: { status: 'COMPLETED' },
-        });
+      if (deposit && deposit.status !== 'COMPLETED') {
+        // Atualiza status e adiciona saldo ao usuário (Transaction segura)
+        await this.prisma.$transaction([
+          this.prisma.deposit.update({
+            where: { id: deposit.id },
+            data: { status: 'COMPLETED', confirmedAt: new Date() },
+          }),
+          this.prisma.user.update({
+            where: { id: deposit.userId },
+            data: { balance: { increment: deposit.amountInCents } },
+          }),
+        ]);
 
-        await tx.user.update({
-          where: { id: transaction.userId },
-          data: { balance: { increment: transaction.amount } },
-        });
-      }
-    });
+        this.logger.log(`💰 Saldo Creditado: R$ ${deposit.amountInCents/100} para User: ${deposit.userId}`);
 
-    try {
-      for (const transaction of transactions) {
-        const freshUser = await this.prisma.user.findUnique({
-          where: { id: transaction.userId },
-        });
-
-        if (freshUser) {
-          this.paymentGateway.emitToUser(transaction.userId, 'balance_updated', {
-            balance: freshUser.balance || 0,
-          });
-
-          this.paymentGateway.emitToUser(transaction.userId, 'transaction_completed', {
-            amount: transaction.amount,
-            type: transaction.type,
-            productId: transaction.productId,
-          });
-
-          const accessLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/login`;
-          const productName = 'Conteúdo Premium';
-
-          await this.mailService.sendAccessEmail(freshUser.email, productName, accessLink);
+        // Notifica o frontend via Socket para o saldo subir na tela na hora
+        const updatedUser = await this.prisma.user.findUnique({ where: { id: deposit.userId } });
+        if (updatedUser) {
+          this.paymentGateway.notifyBalanceUpdate(deposit.userId, updatedUser.balance);
         }
       }
-    } catch (e: any) {
-      this.logger.warn(`⚠️ Erro ao processar notificações: ${e?.message || e}`);
     }
 
-    this.logger.log(`✅ Webhook:${providerLabel} processado com sucesso`);
-    return { message: 'Confirmed successfully' };
-  }
-
-  async handleKeyclubWebhook(payload: any) {
-    return this.processDepositWebhook(payload, 'KEYCLUB');
-  }
-
-  // ✅ NOVO
-  async handleXflowWebhook(payload: any) {
-    return this.processDepositWebhook(payload, 'XFLOW');
+    return { received: true };
   }
 }
