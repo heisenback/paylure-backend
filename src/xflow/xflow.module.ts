@@ -1,3 +1,4 @@
+// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { ConfigModule } from '@nestjs/config';
@@ -9,7 +10,6 @@ import { WithdrawalModule } from './withdrawal/withdrawal.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { KeyclubModule } from './keyclub/keyclub.module';
-import { XflowModule } from './xflow/xflow.module';
 import { ProductModule } from './product/product.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
@@ -25,7 +25,11 @@ import { PushNotificationModule } from './push-notification/push-notification.mo
 import { AdminModule } from './admin/admin.module';
 import { CheckoutModule } from './checkout/checkout.module';
 import { PixelsModule } from './pixels/pixels.module';
-import { MemberAreaModule } from './member-area/member-area.module'; 
+
+import { MemberAreaModule } from './member-area/member-area.module';
+
+// ✅ NOVO
+import { XflowModule } from './xflow/xflow.module';
 
 @Module({
   imports: [
@@ -40,7 +44,7 @@ import { MemberAreaModule } from './member-area/member-area.module';
     TransactionsModule,
     WebhooksModule,
     KeyclubModule,
-    XflowModule,
+    XflowModule, // ✅ ADICIONADO
     ProductModule,
     MarketplaceModule,
     AffiliateModule,
@@ -56,7 +60,7 @@ import { MemberAreaModule } from './member-area/member-area.module';
     AdminModule,
     CheckoutModule,
     PixelsModule,
-    MemberAreaModule, 
+    MemberAreaModule,
   ],
   controllers: [AppController],
   providers: [],
