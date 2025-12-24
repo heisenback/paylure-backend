@@ -29,16 +29,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    
-    # ✅ ESTA É A FORMA CORRETA
-    # Esta linha lê o seu arquivo .env e passa TODAS
-    # as variáveis (DB, Keyclub, e VAPID) para o contêiner.
+
+    # ✅ Lê o .env e injeta no container
     env_file:
       - .env
 
-    # ❌ O bloco 'environment:' que estava aqui foi removido
-    # porque ele estava sobrescrevendo as chaves VAPID
-    # e passando-as em BRANCO.
+    # (Opcional) Se quiser forçar algumas envs aqui:
+    # environment:
+    #   - DATABASE_URL=${DATABASE_URL}
+    #   - RESEND_API_KEY=${RESEND_API_KEY}
 
     ports:
       - "3030:3000"
