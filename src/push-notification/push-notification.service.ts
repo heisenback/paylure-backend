@@ -1,37 +1,49 @@
-// src/push-notification/push-notification.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import * as webpush from 'web-push';
-// 💡 AJUSTE CRÍTICO: Importar PrismaClientKnownRequestError explicitamente
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library'; 
-
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 @Injectable()
 export class PushNotificationService {
   private readonly logger = new Logger(PushNotificationService.name);
+  private isConfigured = false;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {
-    const publicKey = this.configService.get<string>('VAPID_PUBLIC_KEY')!;
-    const privateKey = this.configService.get<string>('VAPID_PRIVATE_KEY')!;
-    const email = this.configService.get<string>('VAPID_EMAIL')!;
+    const publicKey = this.configService.get<string>('VAPID_PUBLIC_KEY');
+    const privateKey = this.configService.get<string>('VAPID_PRIVATE_KEY');
+    const email = this.configService.get<string>('VAPID_EMAIL');
 
-    webpush.setVapidDetails(`mailto:${email}`, publicKey, privateKey);
-    this.logger.log('✅ Push Notification Service inicializado');
+    // 🛡️ PROTEÇÃO CONTRA CRASH: Verifica se as chaves existem antes de iniciar
+    if (!publicKey || !privateKey || !email) {
+      this.logger.warn('⚠️ VAPID Keys não configuradas no .env. Notificações Push DESATIVADAS.');
+      this.isConfigured = false;
+      return;
+    }
+
+    try {
+      webpush.setVapidDetails(`mailto:${email}`, publicKey, privateKey);
+      this.isConfigured = true;
+      this.logger.log('✅ Push Notification Service inicializado com sucesso.');
+    } catch (error) {
+      this.logger.error('❌ Falha ao configurar WebPush:', error);
+      this.isConfigured = false;
+    }
   }
 
   async subscribe(userId: string, subscription: any, deviceInfo?: string) {
+    if (!this.isConfigured) return null;
+
     try {
-      // 💡 AJUSTE DE REFORÇO: Trocar findUnique por findFirst para maior robustez
       const existing = await this.prisma.pushSubscription.findFirst({
         where: { endpoint: subscription.endpoint },
       });
 
       if (existing) {
-        this.logger.log(`Subscription já existe para usuário ${userId}`);
+        // this.logger.log(`Subscription já existe para usuário ${userId}`);
         return existing;
       }
 
@@ -48,62 +60,51 @@ export class PushNotificationService {
       this.logger.log(`✅ Nova subscription criada para usuário ${userId}`);
       return newSub;
     } catch (error) {
-      // 💡 REFORÇO DE TRATAMENTO DE ERRO: Usar o tipo importado
       if (error instanceof PrismaClientKnownRequestError && error.code === 'P2021') {
         this.logger.error(
-          `P2021 PERSISTENTE: Tabela PushSubscription não existe no DB. Necessário 'docker compose exec api npx prisma migrate deploy'.`,
-          error,
+          `P2021: Tabela PushSubscription não existe. Rode as migrations.`,
         );
-        // O erro continua sendo relançado, gerando o 500 no endpoint
       }
       this.logger.error('Erro ao salvar subscription', error);
-      throw error;
+      // Não relança o erro para não quebrar o frontend
+      return null;
     }
   }
-  
-  // RESTANTE DO CÓDIGO PERMANECE O MESMO
+
   async unsubscribe(userId: string, endpoint: string) {
     try {
       await this.prisma.pushSubscription.deleteMany({
         where: { userId, endpoint },
       });
-      this.logger.log(`Subscription removida para usuário ${userId}`);
     } catch (error) {
       this.logger.error('Erro ao remover subscription', error);
     }
   }
 
   async sendNotification(userId: string, payload: any) {
+    if (!this.isConfigured) return;
+
     const subscriptions = await this.prisma.pushSubscription.findMany({
       where: { userId, isActive: true },
     });
 
-    if (subscriptions.length === 0) {
-      this.logger.warn(`Usuário ${userId} não possui subscriptions ativas`);
-      return;
-    }
+    if (subscriptions.length === 0) return;
 
     const notificationPayload = JSON.stringify(payload);
+    
     const results = await Promise.allSettled(
       subscriptions.map(async (sub) => {
         try {
           await webpush.sendNotification(
             {
               endpoint: sub.endpoint,
-              keys: {
-                p256dh: sub.p256dh,
-                auth: sub.auth,
-              },
+              keys: { p256dh: sub.p256dh, auth: sub.auth },
             },
             notificationPayload,
           );
-          this.logger.log(`📱 Notificação enviada para ${userId}`);
         } catch (error: any) {
           if (error.statusCode === 410) {
-            await this.prisma.pushSubscription.delete({
-              where: { id: sub.id },
-            });
-            this.logger.warn(`Subscription expirada removida: ${sub.id}`);
+            await this.prisma.pushSubscription.delete({ where: { id: sub.id } });
           } else {
             this.logger.error(`Erro ao enviar push: ${error.message}`);
           }
@@ -121,12 +122,7 @@ export class PushNotificationService {
       icon: '/icons/icon-192x192.png',
       badge: '/icons/icon-72x72.png',
       tag: 'pix-generated',
-      data: {
-        type: 'PIX_GENERATED',
-        amount,
-        pixKey,
-        url: '/dashboard/transactions',
-      },
+      data: { type: 'PIX_GENERATED', amount, pixKey, url: '/dashboard/transactions' },
     });
   }
 
@@ -137,12 +133,7 @@ export class PushNotificationService {
       icon: '/icons/icon-192x192.png',
       badge: '/icons/icon-72x72.png',
       tag: 'payment-received',
-      data: {
-        type: 'PAYMENT_RECEIVED',
-        amount,
-        payerName,
-        url: '/dashboard/transactions',
-      },
+      data: { type: 'PAYMENT_RECEIVED', amount, payerName, url: '/dashboard/transactions' },
     });
   }
 
@@ -156,12 +147,7 @@ export class PushNotificationService {
       icon: '/icons/icon-192x192.png',
       badge: '/icons/icon-72x72.png',
       tag: 'withdrawal-processed',
-      data: {
-        type: 'WITHDRAWAL_PROCESSED',
-        amount,
-        status,
-        url: '/dashboard/transactions',
-      },
+      data: { type: 'WITHDRAWAL_PROCESSED', amount, status, url: '/dashboard/transactions' },
     });
   }
 }
