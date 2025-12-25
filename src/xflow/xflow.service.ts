@@ -27,7 +27,7 @@ export class XflowService {
     const now = Date.now();
     // Reutiliza token se ainda for válido por mais 5 min
     if (this.cachedToken && now < this.tokenExpiration - 300000) {
-      return this.cachedToken;
+      return this.cachedToken!; // ✅ Adicionado '!' para forçar string
     }
 
     try {
@@ -42,7 +42,7 @@ export class XflowService {
       this.cachedToken = response.data.token;
       // Define expiração segura (50 min)
       this.tokenExpiration = now + (50 * 60 * 1000); 
-      return this.cachedToken;
+      return this.cachedToken!; // ✅ Adicionado '!' para forçar string
     } catch (error: any) {
       this.logger.error('❌ Erro auth XFlow:', error.message);
       throw new HttpException('Falha na autenticação da adquirente', HttpStatus.BAD_GATEWAY);

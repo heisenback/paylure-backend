@@ -6,8 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { XflowService } from '../xflow/xflow.service'; // ✅ NOVA
-// import { KeyclubService } from 'src/keyclub/keyclub.service'; // ⚠️ COMENTADO (LEGADO)
+import { XflowService } from '../xflow/xflow.service';
 import { SystemSettingsService } from 'src/admin/system-settings.service';
 import { CreateWithdrawalDto } from './dto/create-withdrawal.dto';
 import { v4 as uuidv4 } from 'uuid';
@@ -18,8 +17,7 @@ export class WithdrawalService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly xflowService: XflowService, // ✅ XFlow Service Injetado
-    // private readonly keyclubService: KeyclubService, // ⚠️ Keyclub Service Comentado
+    private readonly xflowService: XflowService,
     private readonly systemSettings: SystemSettingsService,
   ) {}
 
@@ -102,26 +100,9 @@ export class WithdrawalService {
       if (isAuto && withdrawalRecordId) {
         this.logger.log(`🚀 [Auto] Processando saque automático via XFLOW...`);
         
-        // --- ⬇️ CÓDIGO KEYCLUB ANTIGO (COMENTADO) ⬇️ ---
-        /*
-        const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
-        const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br'; 
-        const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
-        
-        await this.keyclubService.createWithdrawal({
-          amount: netAmountInReais,
-          externalId: externalId,
-          pixKey: dto.pix_key,
-          pixKeyType: keyTypeForKeyclub,
-          clientCallbackUrl: callbackUrl, 
-          description: dto.description || 'Saque Paylure'
-        });
-        */
-        // --- ⬆️ FIM CÓDIGO ANTIGO ⬆️ ---
-
-        // --- ✅ CÓDIGO NOVO XFLOW ---
-        // Ajuste de Key Type para XFlow (EVP -> RANDOM)
-        const keyTypeXflow = dto.key_type === 'EVP' ? 'RANDOM' : dto.key_type;
+        // --- ✅ CÓDIGO NOVO XFLOW (CORRIGIDO) ---
+        // Adicionado "as string" para o TS não reclamar da comparação com 'EVP'
+        const keyTypeXflow = (dto.key_type as string) === 'EVP' ? 'RANDOM' : dto.key_type;
 
         await this.xflowService.createWithdrawal({
           amount: netAmountInReais, // Float
@@ -131,8 +112,6 @@ export class WithdrawalService {
           description: dto.description || 'Saque Paylure',
         });
 
-        // Mantemos PENDING para esperar o Webhook da XFlow confirmar
-        // ou PROCESSING se quiser indicar que já foi enviado
         this.logger.log(`[Withdrawal] ✅ Saque enviado para XFlow. Aguardando webhook.`);
 
         return {
@@ -140,7 +119,7 @@ export class WithdrawalService {
           message: 'Saque enviado com sucesso.',
           transactionId: externalId,
           requestedAmount: requestedAmountInCents,
-          status: 'PROCESSING', // Mudança de status para indicar envio
+          status: 'PROCESSING', 
           fee: feeInfo.feeInCents,
           netAmount: feeInfo.netAmountInCents,
         };
