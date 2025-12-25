@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentGateway } from '../gateway/payment.gateway';
+import { Deposit } from '@prisma/client'; // ✅ Importação necessária para a tipagem
 
 @Injectable()
 export class WebhooksService {
@@ -29,7 +30,9 @@ export class WebhooksService {
     this.logger.log(`🔍 Processando Webhook. Status: ${status} | IDs Possíveis: [${queryEid}, ${xflowId}]`);
 
     // --- BUSCA O DEPÓSITO ---
-    let deposit = null;
+    
+    // 🔥 CORREÇÃO DO ERRO DE BUILD: Tipagem explícita
+    let deposit: Deposit | null = null;
 
     // Tentativa 1: Pelo External ID (Nosso UUID)
     if (queryEid) {
@@ -61,14 +64,14 @@ export class WebhooksService {
             await this.prisma.$transaction(async (tx) => {
                 // 1. Atualiza Status do Depósito
                 await tx.deposit.update({
-                    where: { id: deposit.id },
+                    where: { id: deposit!.id }, // Usa ! porque já checamos que deposit existe
                     data: { status: 'COMPLETED' },
                 });
                 
                 // 2. Adiciona Saldo ao Usuário
                 const updatedUser = await tx.user.update({
-                    where: { id: deposit.userId },
-                    data: { balance: { increment: deposit.amountInCents } },
+                    where: { id: deposit!.userId },
+                    data: { balance: { increment: deposit!.amountInCents } },
                 });
 
                 // 3. Atualiza o Extrato (Transaction) para aparecer no Dash
@@ -76,7 +79,7 @@ export class WebhooksService {
                     where: { 
                         // Atualiza pela referência externa OU interna para garantir
                         OR: [
-                            { externalId: deposit.externalId },
+                            { externalId: deposit!.externalId },
                             { referenceId: String(xflowId) }
                         ]
                     },
@@ -84,13 +87,13 @@ export class WebhooksService {
                 });
 
                 // 4. Notifica o Frontend (Socket) para atualizar a tela sem F5
-                this.paymentGateway.notifyDepositConfirmed(deposit.userId, {
-                    amount: deposit.amountInCents,
+                this.paymentGateway.notifyDepositConfirmed(deposit!.userId, {
+                    amount: deposit!.amountInCents,
                     status: 'COMPLETED',
-                    externalId: deposit.externalId
+                    externalId: deposit!.externalId
                 });
                 
-                this.paymentGateway.notifyBalanceUpdate(deposit.userId, updatedUser.balance);
+                this.paymentGateway.notifyBalanceUpdate(deposit!.userId, updatedUser.balance);
             });
 
             this.logger.log(`✅ SUCESSO: Saldo liberado para o usuário ${deposit.userId}`);
