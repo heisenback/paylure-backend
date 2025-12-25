@@ -27,7 +27,6 @@ export class XflowService {
     }
 
     try {
-      // this.logger.log('🔄 Autenticando na XFlow...');
       const response = await axios.post(`${this.apiUrl}/api/auth/login`, {
         client_id: this.clientId,
         client_secret: this.clientSecret,
@@ -52,7 +51,7 @@ export class XflowService {
     payerDocument: string;
   }) {
     const token = await this.getToken();
-    // Passamos o externalId na Query String para o webhook saber quem é quem
+    // Passamos o externalId na URL para garantir rastreio, mas vamos salvar o ID da XFlow também
     const webhookUrl = `${this.baseUrl}/api/v1/webhooks/xflow?eid=${data.externalId}`;
     
     const documentClean = data.payerDocument.replace(/\D/g, '');
@@ -77,9 +76,10 @@ export class XflowService {
 
       this.logger.log(`📥 Resposta XFlow: ${JSON.stringify(response.data)}`);
 
-      // 🔥 CORREÇÃO CRÍTICA AQUI: Mapeando corretamente a resposta aninhada
+      // 🔥 CORREÇÃO: Verifica se a resposta veio aninhada em 'qrCodeResponse'
       const responseData = response.data.qrCodeResponse || response.data;
 
+      // Busca o QR Code em todos os campos possíveis
       const qrCode = 
         responseData.qrcode || 
         responseData.pix_code || 
@@ -87,12 +87,15 @@ export class XflowService {
         responseData.payload ||
         responseData.qr_code;
 
+      // Busca o ID da Transação da XFlow (Importante para o Webhook!)
+      const xflowId = responseData.transactionId || responseData.transaction_id;
+
       if (!qrCode) {
         this.logger.error('⚠️ QR Code não encontrado na resposta da XFlow!');
       }
 
       return {
-        transactionId: responseData.transactionId || responseData.transaction_id || data.externalId,
+        transactionId: xflowId || data.externalId, // Retorna o ID da XFlow se existir
         qrcode: qrCode,
         status: 'PENDING'
       };
