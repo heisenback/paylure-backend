@@ -1,3 +1,4 @@
+// src/push-notification/push-notification.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,9 +18,9 @@ export class PushNotificationService {
     const privateKey = this.configService.get<string>('VAPID_PRIVATE_KEY');
     const email = this.configService.get<string>('VAPID_EMAIL');
 
-    // 🛡️ PROTEÇÃO CONTRA CRASH: Verifica se as chaves existem antes de iniciar
+    // 🛡️ PROTEÇÃO: Se faltar chave, apenas avisa e segue a vida (não derruba a API)
     if (!publicKey || !privateKey || !email) {
-      this.logger.warn('⚠️ VAPID Keys não configuradas no .env. Notificações Push DESATIVADAS.');
+      this.logger.warn('⚠️ Chaves VAPID não configuradas. Notificações Push desativadas.');
       this.isConfigured = false;
       return;
     }
@@ -27,9 +28,9 @@ export class PushNotificationService {
     try {
       webpush.setVapidDetails(`mailto:${email}`, publicKey, privateKey);
       this.isConfigured = true;
-      this.logger.log('✅ Push Notification Service inicializado com sucesso.');
+      this.logger.log('✅ Push Notification Service inicializado.');
     } catch (error) {
-      this.logger.error('❌ Falha ao configurar WebPush:', error);
+      this.logger.error('❌ Erro na configuração do WebPush:', error);
       this.isConfigured = false;
     }
   }
@@ -42,10 +43,7 @@ export class PushNotificationService {
         where: { endpoint: subscription.endpoint },
       });
 
-      if (existing) {
-        // this.logger.log(`Subscription já existe para usuário ${userId}`);
-        return existing;
-      }
+      if (existing) return existing;
 
       const newSub = await this.prisma.pushSubscription.create({
         data: {
@@ -56,17 +54,12 @@ export class PushNotificationService {
           deviceInfo,
         },
       });
-
-      this.logger.log(`✅ Nova subscription criada para usuário ${userId}`);
       return newSub;
     } catch (error) {
       if (error instanceof PrismaClientKnownRequestError && error.code === 'P2021') {
-        this.logger.error(
-          `P2021: Tabela PushSubscription não existe. Rode as migrations.`,
-        );
+        this.logger.error('Tabela PushSubscription não existe. Rode o db push.');
       }
       this.logger.error('Erro ao salvar subscription', error);
-      // Não relança o erro para não quebrar o frontend
       return null;
     }
   }
@@ -92,7 +85,7 @@ export class PushNotificationService {
 
     const notificationPayload = JSON.stringify(payload);
     
-    const results = await Promise.allSettled(
+    await Promise.allSettled(
       subscriptions.map(async (sub) => {
         try {
           await webpush.sendNotification(
@@ -106,13 +99,11 @@ export class PushNotificationService {
           if (error.statusCode === 410) {
             await this.prisma.pushSubscription.delete({ where: { id: sub.id } });
           } else {
-            this.logger.error(`Erro ao enviar push: ${error.message}`);
+            this.logger.error(`Erro envio push: ${error.message}`);
           }
         }
       }),
     );
-
-    return results;
   }
 
   async notifyPixGenerated(userId: string, amount: number, pixKey: string) {
@@ -120,8 +111,6 @@ export class PushNotificationService {
       title: '🔑 Pix Gerado!',
       body: `Novo Pix de R$ ${(amount / 100).toFixed(2)} gerado`,
       icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-72x72.png',
-      tag: 'pix-generated',
       data: { type: 'PIX_GENERATED', amount, pixKey, url: '/dashboard/transactions' },
     });
   }
@@ -131,22 +120,16 @@ export class PushNotificationService {
       title: '💰 Pagamento Recebido!',
       body: `Você recebeu R$ ${(amount / 100).toFixed(2)} de ${payerName}`,
       icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-72x72.png',
-      tag: 'payment-received',
       data: { type: 'PAYMENT_RECEIVED', amount, payerName, url: '/dashboard/transactions' },
     });
   }
 
   async notifyWithdrawalProcessed(userId: string, amount: number, status: string) {
-    const emoji = status === 'COMPLETED' ? '✅' : '❌';
-    const title = status === 'COMPLETED' ? 'Saque Concluído!' : 'Saque Falhou';
-
+    const title = status === 'COMPLETED' ? '✅ Saque Concluído!' : '❌ Saque Falhou';
     await this.sendNotification(userId, {
-      title: `${emoji} ${title}`,
+      title,
       body: `Saque de R$ ${(amount / 100).toFixed(2)} - Status: ${status}`,
       icon: '/icons/icon-192x192.png',
-      badge: '/icons/icon-72x72.png',
-      tag: 'withdrawal-processed',
       data: { type: 'WITHDRAWAL_PROCESSED', amount, status, url: '/dashboard/transactions' },
     });
   }
