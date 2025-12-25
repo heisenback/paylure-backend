@@ -2,9 +2,8 @@ import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
 import { XflowService } from './xflow.service';
-import { XflowController } from './xflow.controller';
-import { SocketModule } from '../gateway/socket.module'; [cite_start]// [cite: 1]
-import { PrismaService } from '../prisma/prisma.service'; // Assumindo que você tem um global
+import { SocketModule } from '../gateway/socket.module'; 
+import { PrismaService } from '../prisma/prisma.service';
 
 @Module({
   imports: [
@@ -12,8 +11,8 @@ import { PrismaService } from '../prisma/prisma.service'; // Assumindo que você
     ConfigModule,
     SocketModule
   ],
-  controllers: [XflowController],
-  providers: [XflowService, PrismaService], // Adicionado PrismaService
+  controllers: [], // Controller removido pois o WebhooksController já lida com tudo
+  providers: [XflowService, PrismaService],
   exports: [XflowService],
 })
 export class XflowModule {}

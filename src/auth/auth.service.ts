@@ -38,20 +38,35 @@ export class AuthService {
     this.logger.log('🔧 AuthService inicializado');
   }
 
-  private isValidCPF(cpf: string): boolean {
-    cpf = cpf.replace(/[^\d]+/g, '');
-    if (cpf.length !== 11 || !!cpf.match(/(\d)\1{10}/)) return false;
-    let add = 0;
-    for (let i = 0; i < 9; i++) add += parseInt(cpf.charAt(i)) * (10 - i);
-    let rev = 11 - (add % 11);
-    if (rev === 10 || rev === 11) rev = 0;
-    if (rev !== parseInt(cpf.charAt(9))) return false;
-    add = 0;
-    for (let i = 0; i < 10; i++) add += parseInt(cpf.charAt(i)) * (11 - i);
-    rev = 11 - (add % 11);
-    if (rev === 10 || rev === 11) rev = 0;
-    if (rev !== parseInt(cpf.charAt(10))) return false;
-    return true;
+  // ✅ NOVO MÉTODO: Resgata usuário com saldo (usado pelo Controller)
+  async getUserWithBalance(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        balance: true,
+        isFounder: true,
+        role: true,
+        merchant: true,
+      }
+    });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+    return user;
+  }
+
+  // ✅ NOVO MÉTODO: Resgata indicações (Referrals)
+  async getReferrals(userId: string) {
+    return this.prisma.user.findMany({
+      where: { referredById: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        createdAt: true,
+      }
+    });
   }
 
   async register(dto: RegisterAuthDto) {
@@ -115,7 +130,6 @@ export class AuthService {
     });
 
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
-    // CORREÇÃO AQUI: sendPasswordResetEmail -> sendPasswordReset
     await this.mailService.sendPasswordReset(user.email, user.name, resetUrl);
 
     return { message: 'E-mail de recuperação enviado.' };
@@ -136,7 +150,6 @@ export class AuthService {
       data: { password: hashedPassword, resetToken: null, resetTokenExpires: null },
     });
 
-    // CORREÇÃO AQUI: sendPasswordChangedEmail -> sendPasswordChanged
     await this.mailService.sendPasswordChanged(user.email, user.name);
 
     return { success: true };
@@ -157,9 +170,16 @@ export class AuthService {
     };
   }
 
-  async changePassword(userId: string, newPass: string) {
+  // ✅ CORRIGIDO: Agora aceita 3 argumentos para satisfazer o Controller
+  async changePassword(userId: string, currentPass: string, newPass: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('Usuário inexistente.');
+
+    // Verifica senha atual
+    const isMatch = await bcrypt.compare(currentPass, user.password);
+    if (!isMatch) {
+      throw new BadRequestException('A senha atual está incorreta.');
+    }
 
     const salt = await bcrypt.genSalt();
     const hashedPassword = await bcrypt.hash(newPass, salt);
@@ -169,7 +189,6 @@ export class AuthService {
       data: { password: hashedPassword },
     });
 
-    // CORREÇÃO AQUI: sendPasswordChangedEmail -> sendPasswordChanged
     await this.mailService.sendPasswordChanged(user.email, user.name);
 
     return { success: true, message: 'Senha alterada com sucesso!' };

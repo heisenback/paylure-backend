@@ -19,7 +19,7 @@ model User {
   phone                String?
   role                 String       @default("USER")
   
-  // ✅ NOVA FLAG: MEMBRO FUNDADOR (Para quem entrar no lançamento ou nos 100 primeiros)
+  // ✅ NOVA FLAG: MEMBRO FUNDADOR
   isFounder            Boolean      @default(false)
 
   createdAt            DateTime     @default(now())
@@ -30,23 +30,27 @@ model User {
   apiKey               String       @unique 
   apiSecret            String       @unique 
 
+  // --- CAMPOS FALTANTES (ADICIONADOS AGORA) ---
+  resetToken           String?
+  resetTokenExpires    DateTime?
+
   // --- TAXAS DE SAQUE ---
   withdrawalFeePercent Float?       @default(0.0)
   withdrawalFeeFixed   Int?         @default(0)
   isAutoWithdrawal     Boolean      @default(false)
 
-  // --- ✅ NOVAS TAXAS DE VENDA (AUTOMÁTICAS) ---
-  transactionFeePercent Float       @default(8.0) // Padrão 8%
-  transactionFeeFixed   Int         @default(200) // Padrão 200 cents (R$ 2,00)
+  // --- TAXAS DE VENDA ---
+  transactionFeePercent Float       @default(8.0)
+  transactionFeeFixed   Int         @default(200)
 
-  // --- ✅ SISTEMA DE INDICAÇÃO (REFERRAL) ---
+  // --- SISTEMA DE INDICAÇÃO ---
   referralCode         String?      @unique @default(cuid())
-  referredById         String?      
+  referredById         String?
   referredBy           User?        @relation("UserReferrals", fields: [referredById], references: [id])
   referrals            User[]       @relation("UserReferrals")
   
-  referralCommissionRate Float      @default(0.01) // 1%
-  referralEndsAt       DateTime?    // Data limite da comissão
+  referralCommissionRate Float      @default(0.01)
+  referralEndsAt       DateTime?
 
   // --- SEGURANÇA ---
   twoFactorEnabled     Boolean      @default(false)
@@ -103,7 +107,7 @@ model TwoFactorCode {
   id               String       @id @default(uuid())
   userId           String
   user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  code             String       
+  code             String 
   expiresAt        DateTime
   used             Boolean      @default(false)
   createdAt        DateTime     @default(now())
@@ -395,6 +399,7 @@ model Deposit {
   payerEmail           String
   payerDocument        String
   webhookToken         String      @unique
+ 
   user                 User        @relation(fields: [userId], references: [id])
   userId               String
   merchant             Merchant?   @relation(fields: [merchantId], references: [id])
