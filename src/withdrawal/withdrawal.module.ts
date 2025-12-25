@@ -1,16 +1,17 @@
-// src/withdrawal/withdrawal.module.ts
 import { Module } from '@nestjs/common';
-import { WithdrawalController } from './withdrawal.controller';
 import { WithdrawalService } from './withdrawal.service';
+import { WithdrawalController } from './withdrawal.controller';
 import { PrismaModule } from 'src/prisma/prisma.module';
-import { KeyclubModule } from 'src/keyclub/keyclub.module';
-import { AdminModule } from 'src/admin/admin.module'; // 👈 ADICIONE ESTA LINHA!
+import { ConfigModule } from '@nestjs/config';
+import { XflowModule } from '../xflow/xflow.module'; // ✅ Importação Essencial
+import { AdminModule } from 'src/admin/admin.module'; // Necessário para o SystemSettingsService
 
 @Module({
   imports: [
     PrismaModule,
-    KeyclubModule,
-    AdminModule, // 👈 ADICIONE ESTA LINHA!
+    ConfigModule,
+    XflowModule, // <--- O PULO DO GATO: Disponibiliza o XflowService
+    AdminModule, // <--- Importa o módulo que exporta o SystemSettingsService
   ],
   controllers: [WithdrawalController],
   providers: [WithdrawalService],
