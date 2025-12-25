@@ -20,14 +20,10 @@ export class XflowService {
     this.baseUrl = this.config.get<string>('BASE_URL') || 'https://api.paylure.com.br';
   }
 
-  /**
-   * 🔐 Autenticação (Cacheada)
-   */
   private async getToken(): Promise<string> {
     const now = Date.now();
-    // Reutiliza token se ainda for válido por mais 5 min
     if (this.cachedToken && now < this.tokenExpiration - 300000) {
-      return this.cachedToken!; // ✅ Adicionado '!' para forçar string
+      return this.cachedToken!;
     }
 
     try {
@@ -40,30 +36,25 @@ export class XflowService {
       if (!response.data?.token) throw new Error('Token não retornado');
       
       this.cachedToken = response.data.token;
-      // Define expiração segura (50 min)
       this.tokenExpiration = now + (50 * 60 * 1000); 
-      return this.cachedToken!; // ✅ Adicionado '!' para forçar string
+      return this.cachedToken!;
     } catch (error: any) {
       this.logger.error('❌ Erro auth XFlow:', error.message);
       throw new HttpException('Falha na autenticação da adquirente', HttpStatus.BAD_GATEWAY);
     }
   }
 
-  /**
-   * 💰 Criação de Depósito (PIX)
-   */
   async createDeposit(data: {
-    amount: number; // Em REAIS (float)
+    amount: number;
     externalId: string;
     payerName: string;
     payerEmail: string;
     payerDocument: string;
   }) {
     const token = await this.getToken();
-    
-    // Passamos o ID interno na Query String para recuperar fácil no Webhook
     const webhookUrl = `${this.baseUrl}/api/v1/webhooks/xflow?eid=${data.externalId}`;
-
+    
+    // Remove caracteres não numéricos do documento
     const documentClean = data.payerDocument.replace(/\D/g, '');
 
     const payload = {
@@ -78,13 +69,30 @@ export class XflowService {
     };
 
     try {
+      this.logger.log(`📤 Enviando payload XFlow: ${JSON.stringify(payload)}`);
+
       const response = await axios.post(`${this.apiUrl}/api/payments/deposit`, payload, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
+      // LOG DE DEBUG IMPORTANTE: Veja isso no terminal para saber onde o QR Code está vindo
+      this.logger.log(`📥 Resposta XFlow: ${JSON.stringify(response.data)}`);
+
+      // Tenta pegar o QR Code de todas as formas possíveis que a API pode retornar
+      const qrCode = 
+        response.data.pix_code || 
+        response.data.qrcode || 
+        response.data.emv || 
+        response.data.payload ||
+        response.data.qr_code;
+
+      if (!qrCode) {
+        this.logger.error('⚠️ QR Code não encontrado na resposta da XFlow!');
+      }
+
       return {
         transactionId: response.data.transaction_id || data.externalId,
-        qrcode: response.data.pix_code || response.data.qrcode || response.data.emv,
+        qrcode: qrCode,
         status: 'PENDING'
       };
     } catch (error: any) {
@@ -93,11 +101,8 @@ export class XflowService {
     }
   }
 
-  /**
-   * 💸 Solicitação de Saque
-   */
   async createWithdrawal(data: {
-    amount: number; // Em REAIS (float)
+    amount: number;
     externalId: string;
     pixKey: string;
     pixKeyType: string;
