@@ -2,14 +2,14 @@
 import { Module } from '@nestjs/common';
 import { DepositController } from './deposit.controller';
 import { DepositService } from './deposit.service';
-import { PrismaModule } from 'src/prisma/prisma.module'; // 👈 CORRIGIDO: de 'srcsrc/' para 'src/'
-import { KeyclubModule } from 'src/keyclub/keyclub.module'; 
+import { PrismaModule } from 'src/prisma/prisma.module';
+import { XflowModule } from '../xflow/xflow.module'; // ✅ CORREÇÃO: Importando Xflow
 import { AuthModule } from 'src/auth/auth.module';
 
 @Module({
   imports: [
-    PrismaModule, 
-    KeyclubModule,
+    PrismaModule,
+    XflowModule, // <--- Isso resolve o erro "UnknownDependenciesException"
     AuthModule,
   ],
   controllers: [DepositController],
