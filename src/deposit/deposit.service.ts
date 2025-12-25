@@ -17,48 +17,50 @@ export class DepositService {
       throw new BadRequestException('Valor mínimo de depósito é R$ 1,00');
     }
 
-    // 1. Busca dados completos do usuário para enviar à XFlow
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new BadRequestException('Usuário não encontrado');
     
+    // Este é o NOSSO ID (que enviamos para a XFlow)
     const externalId = crypto.randomUUID();
     const webhookToken = crypto.randomBytes(20).toString('hex');
 
-    // Prioriza os dados do DTO (Front), senão usa do Banco, senão usa padrão
     const payerName = dto.payerName || user.name || 'Cliente Paylure';
     const payerEmail = dto.payerEmail || user.email;
     const payerDocument = dto.payerDocument || user.document || '00000000000';
 
     try {
-      this.logger.log(`🚀 Iniciando depósito para ${payerName} (Doc: ${payerDocument})`);
+      this.logger.log(`🚀 Iniciando depósito para ${payerName}`);
 
-      // 2. Chama a XFlow
+      // Chama a XFlow
       const xflowResult = await this.xflow.createDeposit({
-        amount: dto.amount / 100, // Envia em Reais (Float)
+        amount: dto.amount / 100,
         externalId: externalId,
         payerName: payerName,
         payerEmail: payerEmail,
         payerDocument: payerDocument,
       });
 
-      // 3. Transação de Banco de Dados (Atomicidade)
+      // Se a XFlow retornou um ID dela, usamos ele como referência secundária
+      // Mas o externalId principal continua sendo o nosso UUID
+      const xflowTransactionId = xflowResult.transactionId;
+
       await this.prisma.$transaction(async (tx) => {
-        // A) Cria na tabela específica de Depósitos
+        // Cria Depósito
         await tx.deposit.create({
           data: {
-            externalId: externalId,
+            externalId: externalId, // Nosso ID (usado na URL do webhook ?eid=...)
             amountInCents: dto.amount,
             netAmountInCents: dto.amount,
             status: 'PENDING',
             payerName: payerName,
             payerEmail: payerEmail,
             payerDocument: payerDocument,
-            webhookToken: webhookToken,
+            webhookToken: webhookToken, // Pode ser usado para guardar o ID da XFlow se quiser
             user: { connect: { id: userId } },
           },
         });
 
-        // B) CORREÇÃO: Cria na tabela de Extrato (Transactions) para aparecer no Dash
+        // Cria Transação no Extrato
         await tx.transaction.create({
           data: {
             userId: userId,
@@ -67,14 +69,15 @@ export class DepositService {
             status: 'PENDING',
             description: 'Depósito via PIX',
             externalId: externalId,
+            referenceId: xflowTransactionId, // 🔥 Salvamos o ID da XFlow aqui para referência
             paymentMethod: 'PIX',
-            pixQrCode: xflowResult.qrcode, // Salva o QR Code no banco para consulta futura
+            pixQrCode: xflowResult.qrcode, 
             pixCopyPaste: xflowResult.qrcode,
           }
         });
       });
 
-      this.logger.log(`✅ Depósito registrado e QR Code gerado: ${externalId}`);
+      this.logger.log(`✅ Depósito ${externalId} criado. XFlow ID: ${xflowTransactionId}`);
 
       return {
         transactionId: externalId,
