@@ -1,4 +1,3 @@
-// src/deposit/deposit.service.ts
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { XflowService } from '../xflow/xflow.service';
@@ -13,19 +12,18 @@ export class DepositService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async createDeposit(userId: string, dto: { amount: number; payerDocument: string }) {
-    // Validação: valor vem em centavos do front (ex: 1000 = R$ 10,00)
+  async createDeposit(userId: string, dto: any) {
     if (!dto.amount || dto.amount < 100) {
       throw new BadRequestException('Valor mínimo de depósito é R$ 1,00');
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new BadRequestException('Usuário não encontrado');
-
+    
     const externalId = crypto.randomUUID();
+    const webhookToken = crypto.randomBytes(20).toString('hex');
 
     try {
-      // Chama Xflow (valor convertido para Reais)
       const xflowResult = await this.xflow.createDeposit({
         amount: dto.amount / 100,
         externalId: externalId,
@@ -34,7 +32,6 @@ export class DepositService {
         payerDocument: dto.payerDocument || '00000000000',
       });
 
-      // Salva no seu Banco de Dados
       const deposit = await this.prisma.deposit.create({
         data: {
           externalId: externalId,
@@ -43,7 +40,8 @@ export class DepositService {
           status: 'PENDING',
           payerName: user.name || 'Cliente',
           payerEmail: user.email,
-          payerDocument: dto.payerDocument,
+          payerDocument: dto.payerDocument || '00000000000',
+          webhookToken: webhookToken,
           user: { connect: { id: userId } },
         },
       });
@@ -53,10 +51,10 @@ export class DepositService {
         qrcode: xflowResult.qrcode,
         status: 'PENDING',
         amount: dto.amount,
+        message: 'Depósito criado com sucesso.'
       };
     } catch (err: any) {
-      this.logger.error(`❌ Falha no depósito: ${err.message}`);
-      throw new BadRequestException(err.message || 'Erro ao gerar pagamento.');
+      throw new BadRequestException('Erro ao gerar pagamento.');
     }
   }
 }

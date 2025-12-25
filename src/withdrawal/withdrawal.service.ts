@@ -6,7 +6,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { KeyclubService } from 'src/keyclub/keyclub.service';
+import { XflowService } from '../xflow/xflow.service'; // ✅ NOVA
+// import { KeyclubService } from 'src/keyclub/keyclub.service'; // ⚠️ COMENTADO (LEGADO)
 import { SystemSettingsService } from 'src/admin/system-settings.service';
 import { CreateWithdrawalDto } from './dto/create-withdrawal.dto';
 import { v4 as uuidv4 } from 'uuid';
@@ -17,46 +18,16 @@ export class WithdrawalService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly keyclubService: KeyclubService,
+    private readonly xflowService: XflowService, // ✅ XFlow Service Injetado
+    // private readonly keyclubService: KeyclubService, // ⚠️ Keyclub Service Comentado
     private readonly systemSettings: SystemSettingsService,
   ) {}
 
-  // 🔥 HELPER: Formatação de Chave Pix
-  private formatPixKey(key: string, type: string): string {
-    const clean = key.replace(/\D/g, ''); 
-
-    // CPF: Obriga pontos e traço
-    if (type === 'CPF') {
-      if (clean.length === 11) {
-         return clean.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
-      }
-    }
-    // CNPJ: Obriga formatação
-    if (type === 'CNPJ') {
-      if (clean.length === 14) {
-        return clean.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
-      }
-    }
-    // TELEFONE: Manda limpo
-    if (type === 'PHONE' || type === 'TELEFONE') {
-      return clean; 
-    }
-    return key;
-  }
-
-  // Cálculo de Taxas
-  private async calculateWithdrawalFee(
-    userId: string,
-    amountInCents: number,
-  ): Promise<{
-    feePercent: number;
-    feeFixed: number;
-    feeInCents: number;
-    netAmountInCents: number;
-  }> {
+  // Helper de Taxas
+  private async calculateWithdrawalFee(userId: string, amountInCents: number) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { withdrawalFeePercent: true, withdrawalFeeFixed: true, name: true },
+      select: { withdrawalFeePercent: true, withdrawalFeeFixed: true },
     });
 
     if (!user) throw new BadRequestException('Usuário não encontrado.');
@@ -84,14 +55,14 @@ export class WithdrawalService {
   async create(user: any, dto: CreateWithdrawalDto) {
     const userId = String(user.id);
     const externalId = uuidv4();
-    const webhookToken = uuidv4();
+    const webhookToken = uuidv4(); 
     const requestedAmountInCents = dto.amount;
 
     const feeInfo = await this.calculateWithdrawalFee(userId, requestedAmountInCents);
 
     if (feeInfo.netAmountInCents <= 0) throw new BadRequestException(`Valor líquido inválido.`);
     const netAmountInReais = Number((feeInfo.netAmountInCents / 100).toFixed(2));
-    if (netAmountInReais < 1) throw new BadRequestException(`Valor mínimo R$ 1,00.`);
+    if (netAmountInReais < 1) throw new BadRequestException(`Valor líquido mínimo R$ 1,00.`);
 
     const userWithBalance = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!userWithBalance) throw new InternalServerErrorException('Usuário não encontrado.');
@@ -127,51 +98,55 @@ export class WithdrawalService {
         withdrawalRecordId = withdrawal.id;
       });
 
-      // 2. SE FOR AUTOMÁTICO -> Envia e ATUALIZA O STATUS IMEDIATAMENTE
+      // 2. SE FOR AUTOMÁTICO -> Envia e ATUALIZA O STATUS
       if (isAuto && withdrawalRecordId) {
-        this.logger.log(`🚀 [Auto] Processando saque automático...`);
+        this.logger.log(`🚀 [Auto] Processando saque automático via XFLOW...`);
         
+        // --- ⬇️ CÓDIGO KEYCLUB ANTIGO (COMENTADO) ⬇️ ---
+        /*
         const keyTypeForKeyclub = dto.key_type === 'RANDOM' ? 'EVP' : dto.key_type;
         const apiUrl = process.env.API_URL || process.env.BASE_URL || 'https://api.paylure.com.br'; 
         const callbackUrl = `${apiUrl}/api/v1/webhooks/keyclub/${webhookToken}`;
-        const formattedKey = this.formatPixKey(dto.pix_key, dto.key_type);
-
-        // Envia para Keyclub
+        
         await this.keyclubService.createWithdrawal({
           amount: netAmountInReais,
           externalId: externalId,
-          pixKey: formattedKey,
+          pixKey: dto.pix_key,
           pixKeyType: keyTypeForKeyclub,
           clientCallbackUrl: callbackUrl, 
           description: dto.description || 'Saque Paylure'
         });
+        */
+        // --- ⬆️ FIM CÓDIGO ANTIGO ⬆️ ---
 
-        // 🔥 CORREÇÃO CRÍTICA AQUI 🔥
-        // Atualiza IMEDIATAMENTE para 'COMPLETED' (Concluído)
-        // Isso impede que ele apareça na lista de pendentes do Admin
-        await this.prisma.withdrawal.update({
-          where: { id: withdrawalRecordId },
-          data: { 
-            status: 'COMPLETED',
-            description: 'Saque Automático (Enviado com Sucesso)'
-          }
+        // --- ✅ CÓDIGO NOVO XFLOW ---
+        // Ajuste de Key Type para XFlow (EVP -> RANDOM)
+        const keyTypeXflow = dto.key_type === 'EVP' ? 'RANDOM' : dto.key_type;
+
+        await this.xflowService.createWithdrawal({
+          amount: netAmountInReais, // Float
+          externalId: externalId,
+          pixKey: dto.pix_key,
+          pixKeyType: keyTypeXflow,
+          description: dto.description || 'Saque Paylure',
         });
 
-        this.logger.log(`[Withdrawal] ✅ Saque auto enviado e status atualizado para COMPLETED.`);
+        // Mantemos PENDING para esperar o Webhook da XFlow confirmar
+        // ou PROCESSING se quiser indicar que já foi enviado
+        this.logger.log(`[Withdrawal] ✅ Saque enviado para XFlow. Aguardando webhook.`);
 
         return {
           success: true,
           message: 'Saque enviado com sucesso.',
           transactionId: externalId,
           requestedAmount: requestedAmountInCents,
-          status: 'COMPLETED', // Retorna como concluído para o front
+          status: 'PROCESSING', // Mudança de status para indicar envio
           fee: feeInfo.feeInCents,
           netAmount: feeInfo.netAmountInCents,
-          feeDetails: { percent: feeInfo.feePercent, fixed: feeInfo.feeFixed },
         };
 
       } else {
-        // 3. SE FOR MANUAL -> Deixa PENDING para você aprovar
+        // 3. SE FOR MANUAL
         this.logger.log(`👀 [Manual] Saque retido como PENDING.`);
         return {
           success: true,
@@ -181,7 +156,6 @@ export class WithdrawalService {
           status: 'PENDING_APPROVAL',
           fee: feeInfo.feeInCents,
           netAmount: feeInfo.netAmountInCents,
-          feeDetails: { percent: feeInfo.feePercent, fixed: feeInfo.feeFixed },
         };
       }
 
