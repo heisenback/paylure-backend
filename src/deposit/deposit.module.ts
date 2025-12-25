@@ -9,7 +9,7 @@ import { AuthModule } from 'src/auth/auth.module';
 @Module({
   imports: [
     PrismaModule,
-    XflowModule, // <--- Isso resolve o erro "UnknownDependenciesException"
+    XflowModule, // <--- Isso resolve o erro "UnknownDependenciesException" do DepositService
     AuthModule,
   ],
   controllers: [DepositController],
