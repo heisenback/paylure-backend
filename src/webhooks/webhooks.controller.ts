@@ -1,5 +1,4 @@
-// src/webhooks/webhooks.controller.ts
-import { Controller, Post, Body, Req, Headers, Logger } from '@nestjs/common';
+import { Controller, Post, Body, Req, Headers, Logger, Query, HttpCode, HttpStatus } from '@nestjs/common';
 import { WebhooksService } from './webhooks.service';
 import type { Request } from 'express';
 import type { RawBodyRequest } from '@nestjs/common';
@@ -16,14 +15,19 @@ export class WebhooksController {
     @Req() req: RawBodyRequest<Request>,
     @Body() payload: any,
   ) {
-    this.logger.log(`🔥 Recebido webhook da KeyClub: ${JSON.stringify(payload)}`);
     return await this.webhooksService.handleKeyclubWebhook(payload);
   }
 
-  // ✅ NOVA ROTA ADICIONADA PARA A XFLOW
   @Post('xflow')
-  async handleXflowWebhook(@Body() payload: any) {
-    this.logger.log(`🌊 Recebido webhook da XFlow: ${JSON.stringify(payload)}`);
-    return await this.webhooksService.handleXflowWebhook(payload);
+  @HttpCode(HttpStatus.OK)
+  async handleXflowWebhook(
+    @Body() payload: any,
+    @Query('eid') eid?: string 
+  ) {
+    // Log para ver o que a XFlow mandou
+    this.logger.log(`🌊 [Webhook XFlow] EID URL: ${eid || 'N/A'}`);
+    this.logger.log(`📦 [Webhook XFlow] Payload: ${JSON.stringify(payload)}`);
+    
+    return await this.webhooksService.handleXflowWebhook(payload, eid);
   }
 }

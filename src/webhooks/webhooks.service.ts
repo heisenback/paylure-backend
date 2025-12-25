@@ -12,57 +12,69 @@ export class WebhooksService {
   ) {}
 
   async handleXflowWebhook(payload: any, queryEid?: string) {
-    // ID que vem no corpo do webhook (geralmente é o ID da XFlow)
-    const xflowId = payload.transaction_id || payload.external_id;
-    // Nosso ID que tentamos passar na URL
-    const ourId = queryEid;
-    
+    // XFlow manda 'transaction_id' ou 'external_id'
+    const xflowId = payload.transaction_id || payload.id || payload.external_id;
     const status = String(payload.status || '').toUpperCase();
 
-    this.logger.log(`🔍 Webhook XFlow: ID Externo=${xflowId} | Nosso ID=${ourId} | Status=${status}`);
+    // Prioridade de busca:
+    // 1. Pelo ID interno que passamos na URL (?eid=...)
+    // 2. Pelo ID da transação da XFlow que salvamos no campo webhookToken
+    const searchId = queryEid || xflowId;
 
-    if (!xflowId && !ourId) {
-        this.logger.warn('⚠️ Webhook ignorado: Nenhum ID encontrado.');
+    if (!searchId) {
+        this.logger.warn('⚠️ Webhook ignorado: Payload sem ID identificável.');
         return { received: true };
     }
 
-    // 1. Tenta achar pelo nosso ID (externalId)
+    this.logger.log(`🔍 Processando Webhook. Status: ${status} | IDs Possíveis: [${queryEid}, ${xflowId}]`);
+
+    // --- BUSCA O DEPÓSITO ---
     let deposit = null;
-    if (ourId) {
-        deposit = await this.prisma.deposit.findUnique({ where: { externalId: ourId } });
+
+    // Tentativa 1: Pelo External ID (Nosso UUID)
+    if (queryEid) {
+        deposit = await this.prisma.deposit.findUnique({ where: { externalId: queryEid } });
     }
 
-    // 2. Se não achou, tenta achar pelo ID da XFlow (salvo no webhookToken)
+    // Tentativa 2: Pelo Webhook Token (Onde salvamos o ID da XFlow)
     if (!deposit && xflowId) {
         deposit = await this.prisma.deposit.findUnique({ where: { webhookToken: String(xflowId) } });
     }
 
+    // Se ainda não achou, pode ser que o xflowId seja o externalId (caso a XFlow devolva nosso ID)
+    if (!deposit && xflowId) {
+        deposit = await this.prisma.deposit.findUnique({ where: { externalId: String(xflowId) } });
+    }
+
     if (!deposit) {
-        this.logger.warn(`⚠️ Depósito não encontrado no banco. (XFlow ID: ${xflowId})`);
-        // Retornamos 200 para a XFlow não ficar reenviando, pois o erro é nosso de não ter achado
+        this.logger.warn(`⚠️ Depósito não encontrado no banco de dados.`);
         return { received: true }; 
     }
 
-    // --- PROCESSAR PAGAMENTO ---
-    if (status === 'COMPLETED' || status === 'PAID') {
+    // --- LÓGICA DE APROVAÇÃO ---
+    // Aceita COMPLETED, PAID ou APPROVED
+    if (['COMPLETED', 'PAID', 'APPROVED', 'SUCCEEDED'].includes(status)) {
+        
         if (deposit.status !== 'COMPLETED') {
+            this.logger.log(`💰 Aprovando Depósito ${deposit.externalId}...`);
+
             await this.prisma.$transaction(async (tx) => {
-                // Atualiza status do depósito
+                // 1. Atualiza Status do Depósito
                 await tx.deposit.update({
                     where: { id: deposit.id },
                     data: { status: 'COMPLETED' },
                 });
                 
-                // Credita saldo ao usuário
+                // 2. Adiciona Saldo ao Usuário
                 const updatedUser = await tx.user.update({
                     where: { id: deposit.userId },
                     data: { balance: { increment: deposit.amountInCents } },
                 });
 
-                // Atualiza o extrato (Transaction)
-                // Tenta achar pela externalId ou pela referenceId (XFlow ID)
+                // 3. Atualiza o Extrato (Transaction) para aparecer no Dash
                 await tx.transaction.updateMany({
                     where: { 
+                        // Atualiza pela referência externa OU interna para garantir
                         OR: [
                             { externalId: deposit.externalId },
                             { referenceId: String(xflowId) }
@@ -71,16 +83,32 @@ export class WebhooksService {
                     data: { status: 'COMPLETED' }
                 });
 
-                // Notifica o Frontend via Socket
+                // 4. Notifica o Frontend (Socket) para atualizar a tela sem F5
                 this.paymentGateway.notifyDepositConfirmed(deposit.userId, {
                     amount: deposit.amountInCents,
-                    status: 'COMPLETED'
+                    status: 'COMPLETED',
+                    externalId: deposit.externalId
                 });
+                
                 this.paymentGateway.notifyBalanceUpdate(deposit.userId, updatedUser.balance);
             });
-            this.logger.log(`✅ Pagamento aprovado! R$ ${(deposit.amountInCents/100).toFixed(2)} creditados para usuário ${deposit.userId}`);
+
+            this.logger.log(`✅ SUCESSO: Saldo liberado para o usuário ${deposit.userId}`);
         } else {
             this.logger.log(`ℹ️ Depósito ${deposit.externalId} já estava pago. Ignorando duplicidade.`);
+        }
+    } 
+    else if (status === 'FAILED' || status === 'CANCELED') {
+        if (deposit.status === 'PENDING') {
+             await this.prisma.deposit.update({
+                where: { id: deposit.id },
+                data: { status: 'FAILED' },
+            });
+            await this.prisma.transaction.updateMany({
+                where: { externalId: deposit.externalId },
+                data: { status: 'FAILED' }
+            });
+            this.logger.log(`❌ Depósito ${deposit.externalId} marcado como falho.`);
         }
     }
 
