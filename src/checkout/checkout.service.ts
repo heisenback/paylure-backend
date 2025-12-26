@@ -1,7 +1,6 @@
-// src/checkout/checkout.service.ts
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { KeyclubService } from 'src/keyclub/keyclub.service';
+import { XflowService } from 'src/xflow/xflow.service'; // ✅ Trocado Keyclub por Xflow
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import * as crypto from 'crypto';
 import { User } from '@prisma/client';
@@ -12,7 +11,7 @@ export class CheckoutService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly keyclubService: KeyclubService,
+    private readonly xflowService: XflowService, // ✅ Injeção da Xflow
   ) {}
 
   private onlyDigits(v?: string) {
@@ -59,10 +58,7 @@ export class CheckoutService {
     let affiliateUser: User | null = null;
     let commissionRate = 0;
 
-    // OBS: aqui você está tratando dto.ref como ID do user do afiliado.
-    // Se o seu ref for um "código" (slug), depois a gente adapta quando você mandar affiliate.service.ts / payment-link.service.ts.
     if (dto.ref) {
-      // Só tenta se existir marketplaceProduct (produto no marketplace)
       const mpProduct = await this.prisma.marketplaceProduct.findUnique({
         where: { productId: product.id },
       });
@@ -77,9 +73,6 @@ export class CheckoutService {
           },
         });
 
-        // Regra: se for APPROVAL, precisa estar aprovado.
-        // Se for OPEN, pode aceitar mesmo sem registro aprovado (depende do seu model),
-        // mas como seu banco parece registrar afiliados, mantive seguro.
         const requiresApproval = product.affiliationType === 'APPROVAL';
 
         if (
@@ -97,12 +90,8 @@ export class CheckoutService {
             `✅ Venda com afiliado: ${affiliateUser?.email || affiliateId} | Comissão: ${commissionRate}%`,
           );
         } else {
-          this.logger.warn(
-            `⚠️ ref recebido (${dto.ref}) mas afiliação não aprovada/válida para este produto (affiliationType=${product.affiliationType}).`,
-          );
+          this.logger.warn(`⚠️ ref ignorado ou inválido: ${dto.ref}`);
         }
-      } else {
-        this.logger.warn(`⚠️ Produto ${product.id} não possui marketplaceProduct. ref ignorado.`);
       }
     }
 
@@ -113,23 +102,21 @@ export class CheckoutService {
     if (!finalDocument || finalDocument.length < 11) {
       if (affiliateUser?.document) {
         finalDocument = this.onlyDigits(affiliateUser.document);
-        this.logger.log(`Using Affiliate Document for fallback: ${finalDocument}`);
       } else {
         finalDocument =
           this.onlyDigits(sellerUser.document || '') ||
           this.onlyDigits(product.merchant.cnpj || '') ||
           '00000000000';
-        this.logger.log(`Using Seller Document for fallback: ${finalDocument}`);
       }
     }
 
     if (!finalDocument || finalDocument.length < 11) finalDocument = '00000000000';
 
     // 5) IDs e valores
-    const externalId = `chk_${crypto.randomUUID()}`; // seu id interno
+    const externalId = `chk_${crypto.randomUUID()}`; // Nosso ID interno
     const amountInBRL = totalAmountInCents / 100;
 
-    // 6) Congela split (snapshot)
+    // 6) Congela split (snapshot para uso interno)
     const affiliateAmountInCents =
       affiliateId && commissionRate > 0
         ? Math.round(totalAmountInCents * (commissionRate / 100))
@@ -142,41 +129,44 @@ export class CheckoutService {
     }
 
     try {
-      // 7) Cria depósito no gateway
-      const keyclubResult = await this.keyclubService.createDeposit({
+      this.logger.log(`🚀 Iniciando Checkout XFlow: ${product.name} - R$ ${amountInBRL}`);
+
+      // 7) Cria depósito na XFlow (Adquirente)
+      // Nota: A XFlow cobra o valor cheio. O split (afiliado) é feito internamente no nosso banco.
+      const xflowResult = await this.xflowService.createDeposit({
         amount: amountInBRL,
         externalId: externalId,
         payerName: dto.customer.name,
         payerEmail: dto.customer.email,
         payerDocument: finalDocument,
-        payerPhone: finalPhone,
       });
 
-      // 8) Salva Depósito
-      // ✅ FIX CRÍTICO: netAmountInCents deve ser o líquido do produtor (sellerAmountInCents)
+      // ID da transação na XFlow (importante para o Webhook)
+      const xflowTransactionId = xflowResult.transactionId;
+
+      // 8) Salva Depósito no Banco
       await this.prisma.deposit.create({
         data: {
-          id: externalId,
-          externalId: keyclubResult.transactionId,
+          id: externalId, // Usamos nosso ID gerado
+          externalId: externalId,
           amountInCents: totalAmountInCents,
-          netAmountInCents: sellerAmountInCents,
+          netAmountInCents: sellerAmountInCents, // O que vai pro saldo do produtor
           status: 'PENDING',
           payerName: dto.customer.name,
           payerEmail: dto.customer.email,
           payerDocument: finalDocument,
-          webhookToken: crypto.randomBytes(16).toString('hex'),
+          // 🔥 IMPORTANTE: Salvamos o ID da XFlow aqui para o Webhook encontrar depois
+          webhookToken: xflowTransactionId || 'PENDING', 
           userId: sellerUser.id,
           merchantId: product.merchant.id,
-          // se seu model tiver metadata, vale adicionar aqui também (se não tiver, ignora)
-          // metadata: { affiliateId, commissionRate, affiliateAmountInCents, sellerAmountInCents, offerId: dto.offerId, refRaw: dto.ref }
         } as any,
       });
 
-      // 9) Transação do produtor (líquida)
+      // 9) Transação do produtor (Extrato)
       await this.prisma.transaction.create({
         data: {
           id: externalId,
-          amount: sellerAmountInCents,
+          amount: sellerAmountInCents, // Valor líquido do produtor
           status: 'PENDING',
           type: 'SALE',
           paymentMethod: 'PIX',
@@ -187,10 +177,10 @@ export class CheckoutService {
           customerEmail: dto.customer.email,
           customerDoc: finalDocument,
           customerPhone: finalPhone,
-          externalId: keyclubResult.transactionId,
-          referenceId: keyclubResult.transactionId,
-          pixQrCode: keyclubResult.qrcode,
-          pixCopyPaste: keyclubResult.qrcode,
+          externalId: externalId, // Nosso ID
+          referenceId: xflowTransactionId, // Link com a XFlow
+          pixQrCode: xflowResult.qrcode,
+          pixCopyPaste: xflowResult.qrcode,
           metadata: {
             ref: affiliateId,
             refRaw: dto.ref,
@@ -204,7 +194,7 @@ export class CheckoutService {
         },
       });
 
-      // 10) Transação do afiliado (pendente)
+      // 10) Transação do afiliado (Comissão Pendente)
       if (affiliateId && affiliateAmountInCents > 0) {
         await this.prisma.transaction.create({
           data: {
@@ -218,8 +208,8 @@ export class CheckoutService {
             productId: product.id,
             customerName: dto.customer.name,
             customerEmail: dto.customer.email,
-            externalId: keyclubResult.transactionId,
-            referenceId: externalId,
+            externalId: externalId, // Amarrado à venda principal
+            referenceId: xflowTransactionId,
             metadata: {
               isAffiliateCommission: true,
               originalTransactionId: externalId,
@@ -231,21 +221,21 @@ export class CheckoutService {
         });
 
         this.logger.log(
-          `✅ Comissão criada: R$ ${(affiliateAmountInCents / 100).toFixed(2)} para afiliado ${affiliateId}`,
+          `✅ Comissão registrada: R$ ${(affiliateAmountInCents / 100).toFixed(2)} para afiliado ${affiliateId}`,
         );
       }
 
       return {
         success: true,
         pix: {
-          qrCode: keyclubResult.qrcode,
-          copyPaste: keyclubResult.qrcode,
-          transactionId: keyclubResult.transactionId,
+          qrCode: xflowResult.qrcode,
+          copyPaste: xflowResult.qrcode,
+          transactionId: externalId, // Retorna nosso ID para o front fazer polling
         },
       };
     } catch (error: any) {
       this.logger.error(`Checkout Error: ${error.message}`);
-      throw new BadRequestException('Erro ao gerar PIX. Verifique os dados ou tente novamente.');
+      throw new BadRequestException('Erro ao gerar PIX. Tente novamente.');
     }
   }
 
